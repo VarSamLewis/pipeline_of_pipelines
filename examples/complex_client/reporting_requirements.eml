@@ -1,0 +1,9 @@
+From: data-team@example.com
+To: onboarding@example.com
+Subject: Revenue Reporting Requirements
+
+Finance requires:
+- revenue rounded to 2 decimal places
+- one row per customer for the customer summary
+- one row per order line for the order detail
+

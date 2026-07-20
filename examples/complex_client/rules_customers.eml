@@ -1,0 +1,10 @@
+From: data-team@example.com
+To: onboarding@example.com
+Subject: Customer Data Quality Rules
+
+Please ensure:
+- customer_id is unique and not null
+- customer_name is trimmed and title-cased
+- region is expanded to full region name
+- signup_date is a valid ISO date
+

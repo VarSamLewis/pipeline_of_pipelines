@@ -1,0 +1,10 @@
+From: data-team@example.com
+To: onboarding@example.com
+Subject: Region Code Mapping
+
+Use the following mapping for region_cd:
+NE -> North-East
+SW -> South-West
+NW -> North-West
+SE -> South-East
+

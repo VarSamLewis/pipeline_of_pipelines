@@ -1,0 +1,8 @@
+From: data-team@example.com
+To: onboarding@example.com
+Subject: Urgent: Known Data Issues - March
+
+The March extract has a known issue where customer 103 name is misspelled.
+Correct 'Soylent Corp' to 'Soylent Corporation' before loading.
+Also exclude any test orders with order_id starting with 9999.
+

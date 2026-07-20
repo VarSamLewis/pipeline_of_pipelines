@@ -1,0 +1,85 @@
+{
+  "client_code": "complexclient",
+  "name": "default",
+  "description": "Curated customer and order data for Global Retail onboarding",
+  "tables": [
+    {
+      "name": "customers",
+      "description": "Cleaned customer summary with lifetime revenue",
+      "columns": [
+        {
+          "name": "customer_id",
+          "dtype": "Int64",
+          "required": true,
+          "unique": true
+        },
+        {
+          "name": "customer_name",
+          "dtype": "String",
+          "required": true
+        },
+        {
+          "name": "region",
+          "dtype": "String",
+          "required": false
+        },
+        {
+          "name": "signup_date",
+          "dtype": "Date",
+          "required": false
+        },
+        {
+          "name": "total_revenue",
+          "dtype": "Float64",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "orders",
+      "description": "Cleaned order line detail",
+      "columns": [
+        {
+          "name": "order_id",
+          "dtype": "Int64",
+          "required": true
+        },
+        {
+          "name": "customer_id",
+          "dtype": "Int64",
+          "required": true
+        },
+        {
+          "name": "product_name",
+          "dtype": "String",
+          "required": false
+        },
+        {
+          "name": "category",
+          "dtype": "String",
+          "required": false
+        },
+        {
+          "name": "quantity",
+          "dtype": "Int64",
+          "required": false
+        },
+        {
+          "name": "unit_price",
+          "dtype": "Float64",
+          "required": false
+        },
+        {
+          "name": "order_date",
+          "dtype": "Date",
+          "required": false
+        },
+        {
+          "name": "line_total",
+          "dtype": "Float64",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

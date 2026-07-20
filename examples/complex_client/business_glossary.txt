@@ -1,0 +1,9 @@
+Business Glossary
+
+customer_id: unique identifier for a customer account.
+customer_name: official registered trading name of the customer.
+region: geographic sales region written as full words.
+signup_date: date the customer account was created.
+total_revenue: lifetime revenue for the customer.
+order_id: unique identifier for a sales transaction.
+line_total: revenue for a single order line.

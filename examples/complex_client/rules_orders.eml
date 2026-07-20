@@ -1,0 +1,10 @@
+From: data-team@example.com
+To: onboarding@example.com
+Subject: Order Validation Rules
+
+For every order line:
+- order_id must not be null
+- qty must be a positive integer
+- unit_price must be a positive number
+- line_total = qty * unit_price
+

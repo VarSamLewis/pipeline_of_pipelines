@@ -1,0 +1,6 @@
+Data Provenance Notes
+
+Customer master data comes from the CRM export.
+Order data comes from the ERP transaction log.
+Product data comes from the product catalogue system.
+PDFs were produced by the data governance team.

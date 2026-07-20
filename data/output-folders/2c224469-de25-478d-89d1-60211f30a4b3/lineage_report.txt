@@ -1,0 +1,827 @@
+======================================================================
+Mapping lineage / LLM provenance
+======================================================================
+
+Target: packaging_submission._data_quality_filter
+  type: filter
+  logic: Exclude rows flagged TEST or DUPLICATE
+  source columns:
+    - packaging_data.csv.Data Quality Flag
+
+Target: packaging_submission.submission_id
+  type: expression
+  logic: concat(col('Record ID'), '-', col('Period'), '-', col('Site Ref'), '-', col('Packaging Material Code'))
+  polars: concat(col('Record ID'), '-', col('Period'), '-', col('Site Ref'), '-', col('Packaging Material Code'))
+  source columns:
+    - packaging_data.csv.Record ID
+    - packaging_data.csv.Period
+    - packaging_data.csv.Site Ref
+    - packaging_data.csv.Packaging Material Code
+  evidence cited:
+    - evidence 0fe8bf3b-4545-4137-92d4-7265367d7892
+      from raw file: ea_submission_requirements.txt
+      content: Environment Agency Packaging Data Submission Requirements  Target schema: packaging_submission  submission_id (String, required, unique):     A unique identifier for each record. Combine Record ID, reporting period,     site_id and packaging material code, separated by hyphens.  reporting_period (St
+
+Target: packaging_submission.reporting_period
+  type: expression
+  logic: Normalise period formats to YYYY-QN case-insensitively
+  polars: when(col('Period').str.contains(r'(?i)Q1')).then(pl.lit('2024-Q1')).when(col('Period').str.contains(r'(?i)Q2')).then(pl.lit('2024-Q2')).when(col('Period').str.contains(r'(?i)Q3')).then(pl.lit('2024-Q3')).when(col('Period').str.contains(r'(?i)Q4')).then(pl.lit('2024-Q4')).otherwise(null)
+  source columns:
+    - packaging_data.csv.Period
+  evidence cited:
+    - evidence 0fe8bf3b-4545-4137-92d4-7265367d7892
+      from raw file: ea_submission_requirements.txt
+      content: Environment Agency Packaging Data Submission Requirements  Target schema: packaging_submission  submission_id (String, required, unique):     A unique identifier for each record. Combine Record ID, reporting period,     site_id and packaging material code, separated by hyphens.  reporting_period (St
+
+Target: packaging_submission.organisation_id
+  type: expression
+  logic: col('Org Code')
+  polars: col('Org Code')
+  source columns:
+    - packaging_data.csv.Org Code
+  evidence cited:
+    - evidence 0fe8bf3b-4545-4137-92d4-7265367d7892
+      from raw file: ea_submission_requirements.txt
+      content: Environment Agency Packaging Data Submission Requirements  Target schema: packaging_submission  submission_id (String, required, unique):     A unique identifier for each record. Combine Record ID, reporting period,     site_id and packaging material code, separated by hyphens.  reporting_period (St
+
+Target: packaging_submission.site_id
+  type: expression
+  logic: col('Site Ref')
+  polars: col('Site Ref')
+  source columns:
+    - packaging_data.csv.Site Ref
+  evidence cited:
+    - evidence 0fe8bf3b-4545-4137-92d4-7265367d7892
+      from raw file: ea_submission_requirements.txt
+      content: Environment Agency Packaging Data Submission Requirements  Target schema: packaging_submission  submission_id (String, required, unique):     A unique identifier for each record. Combine Record ID, reporting period,     site_id and packaging material code, separated by hyphens.  reporting_period (St
+
+Target: packaging_submission.nation
+  type: lookup
+  logic: lookup('site_locations.csv', 'site_ref', 'nation')
+  source columns:
+    - packaging_data.csv.Site Ref
+  evidence cited:
+    - evidence 0fe8bf3b-4545-4137-92d4-7265367d7892
+      from raw file: ea_submission_requirements.txt
+      content: Environment Agency Packaging Data Submission Requirements  Target schema: packaging_submission  submission_id (String, required, unique):     A unique identifier for each record. Combine Record ID, reporting period,     site_id and packaging material code, separated by hyphens.  reporting_period (St
+    - evidence 990ad29a-8ae9-4496-bbb8-4eb9792c1442
+      from raw file: business_rules.eml
+      content: Hi team,  Please ensure the 2024 packaging submission follows these business rules:  1. All weights must be reported in tonnes. If the source unit is kilograms,    divide by 1000.  2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.    Treat "transport" as Tertiary.  3. Acti
+
+Target: packaging_submission.packaging_material
+  type: lookup
+  logic: lookup('material_reference.csv', 'internal_code', 'ea_material_name')
+  source columns:
+    - packaging_data.csv.Packaging Material Code
+  evidence cited:
+    - evidence 0fe8bf3b-4545-4137-92d4-7265367d7892
+      from raw file: ea_submission_requirements.txt
+      content: Environment Agency Packaging Data Submission Requirements  Target schema: packaging_submission  submission_id (String, required, unique):     A unique identifier for each record. Combine Record ID, reporting period,     site_id and packaging material code, separated by hyphens.  reporting_period (St
+    - evidence a2076dcc-3748-4793-ba03-17b4998c765c
+      from raw file: ea_submission_requirements.txt
+      content: Wales, Northern Ireland.     If a site is not found, default to 'England'.  packaging_material (String, required):     Lookup 'Packaging Material Code' in material_reference.csv and return     ea_material_name. Allowed values: Plastic, Glass, Aluminium, Steel,     Paper/card, Fibre-based composite, 
+
+Target: packaging_submission.packaging_class
+  type: expression
+  logic: Map packaging type case-insensitively to allowed class
+  polars: when(col('Packaging Type').str.contains(r'(?i)Primary')).then(pl.lit('Primary')).when(col('Packaging Type').str.contains(r'(?i)Secondary')).then(pl.lit('Secondary')).when(col('Packaging Type').str.contains(r'(?i)Shipment')).then(pl.lit('Shipment')).when(col('Packaging Type').str.contains(r'(?i)Tertiary')).then(pl.lit('Tertiary')).otherwise(null)
+  source columns:
+    - packaging_data.csv.Packaging Type
+  evidence cited:
+    - evidence 990ad29a-8ae9-4496-bbb8-4eb9792c1442
+      from raw file: business_rules.eml
+      content: Hi team,  Please ensure the 2024 packaging submission follows these business rules:  1. All weights must be reported in tonnes. If the source unit is kilograms,    divide by 1000.  2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.    Treat "transport" as Tertiary.  3. Acti
+
+Target: packaging_submission.activity
+  type: expression
+  logic: Trim and map activity case-insensitively
+  polars: when(col('Activity Type').str.strip_chars().str.contains(r'(?i)supplied')).then(pl.lit('Supplied as goods')).when(col('Activity Type').str.strip_chars().str.contains(r'(?i)import')).then(pl.lit('Imported')).when(col('Activity Type').str.strip_chars().str.contains(r'(?i)export')).then(pl.lit('Exported')).otherwise(null)
+  source columns:
+    - packaging_data.csv.Activity Type
+  evidence cited:
+    - evidence 990ad29a-8ae9-4496-bbb8-4eb9792c1442
+      from raw file: business_rules.eml
+      content: Hi team,  Please ensure the 2024 packaging submission follows these business rules:  1. All weights must be reported in tonnes. If the source unit is kilograms,    divide by 1000.  2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.    Treat "transport" as Tertiary.  3. Acti
+
+Target: packaging_submission.weight_tonnes
+  type: expression
+  logic: Convert kg to tonnes, keep tonnes as-is
+  polars: when(col('Unit').str.strip_chars().str.contains(r'(?i)^kg$')).then(col('Weight').cast(pl.Float64) / 1000).when(col('Unit').str.strip_chars().str.contains(r'(?i)tonnes')).then(col('Weight').cast(pl.Float64)).otherwise(null)
+  source columns:
+    - packaging_data.csv.Weight
+    - packaging_data.csv.Unit
+  evidence cited:
+    - evidence 990ad29a-8ae9-4496-bbb8-4eb9792c1442
+      from raw file: business_rules.eml
+      content: Hi team,  Please ensure the 2024 packaging submission follows these business rules:  1. All weights must be reported in tonnes. If the source unit is kilograms,    divide by 1000.  2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.    Treat "transport" as Tertiary.  3. Acti
+    - evidence b6df0f40-cf78-40ae-80f5-1e94e519d0f3
+      from raw file: ea_submission_requirements.txt
+      content: ', divide by 1000.     If Unit is 'tonnes', keep the value as-is. Missing weights should     result in null and fail validation.  submission_date (Date):     Normalise 'Record Date' to a date. Try formats d/m/Y, Y-m-d, d-M-Y     using coalesce.  Data quality rules: - Exclude rows where Data Quality 
+
+Target: packaging_submission.submission_date
+  type: expression
+  logic: Parse multiple date formats using coalesce
+  polars: coalesce(col('Record Date').str.to_date('%d/%m/%Y', strict=False),col('Record Date').str.to_date('%Y-%m-%d', strict=False),col('Record Date').str.to_date('%d-%b-%Y', strict=False))
+  source columns:
+    - packaging_data.csv.Record Date
+  evidence cited:
+    - evidence b6df0f40-cf78-40ae-80f5-1e94e519d0f3
+      from raw file: ea_submission_requirements.txt
+      content: ', divide by 1000.     If Unit is 'tonnes', keep the value as-is. Missing weights should     result in null and fail validation.  submission_date (Date):     Normalise 'Record Date' to a date. Try formats d/m/Y, Y-m-d, d-M-Y     using coalesce.  Data quality rules: - Exclude rows where Data Quality 
+
+======================================================================
+Generated pipeline.py
+======================================================================
+
+"""Auto-generated single-file Polars transformation pipeline.
+
+Reads mapping.json from the same directory, loads source files from the
+provided source folder, applies the approved mappings (including filters,
+lookups, and aggregations), and writes one CSV per target table.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import polars as pl
+
+
+def load_mapping_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def discover_source_files(source_folder: Path) -> dict[str, Path]:
+    """Map logical source table names to CSV or Excel file paths."""
+    mapping = {}
+    for p in sorted(source_folder.iterdir()):
+        if not p.is_file():
+            continue
+        name = p.stem
+        if p.suffix.lower() == ".csv":
+            mapping[name] = p
+        elif p.suffix.lower() in {".xlsx", ".xls"}:
+            mapping[name] = p
+    return mapping
+
+
+def load_source_dataframes(source_folder: Path) -> dict[str, pl.DataFrame]:
+    """Load every source file into a DataFrame keyed by file/sheet name."""
+    source_files = discover_source_files(source_folder)
+    result: dict[str, pl.DataFrame] = {}
+    for name, path in source_files.items():
+        if path.suffix.lower() == ".csv":
+            result[name] = pl.read_csv(path)
+        elif path.suffix.lower() in {".xlsx", ".xls"}:
+            # Read every sheet and add it to the source pool
+            sheets = pl.read_excel(path, sheet_id=None, engine="openpyxl")
+            if isinstance(sheets, dict):
+                for sheet_name, df in sheets.items():
+                    result[str(sheet_name)] = df
+            else:
+                result[name] = sheets
+    return result
+
+
+def _concat_str(*args: Any) -> pl.Expr:
+    """Concatenate a variadic list of strings/expressions with pl.concat_str."""
+    exprs = [pl.lit(a) if not isinstance(a, pl.Expr) else a for a in args]
+    return pl.concat_str(exprs)
+
+
+def _eval_globals() -> dict[str, Any]:
+    """Return the namespace used to evaluate polars_expression strings."""
+    return {
+        "pl": pl,
+        "col": pl.col,
+        "when": pl.when,
+        "concat": _concat_str,
+        "coalesce": pl.coalesce,
+        "null": None,
+        "Int64": pl.Int64,
+        "Float64": pl.Float64,
+        "String": pl.String,
+        "Date": pl.Date,
+        "Datetime": pl.Datetime,
+        "Boolean": pl.Boolean,
+    }
+
+
+def apply_row_expression(
+    df: pl.DataFrame,
+    mapping: dict[str, Any],
+) -> pl.DataFrame:
+    """Apply a per-row Polars expression to a DataFrame."""
+    target_column = mapping["target_column"]
+    source_columns = mapping.get("source_columns", [])
+    expression = mapping.get("polars_expression")
+
+    if not source_columns:
+        return df.with_columns(pl.lit(None).alias(target_column))
+
+    first_source = source_columns[0]["source_column"]
+    if expression:
+        local_vars = {
+            ref["source_column"]: df[ref["source_column"]]
+            for ref in source_columns
+            if ref["source_column"] in df.columns
+        }
+        try:
+            result = eval(expression, _eval_globals(), local_vars)
+            return df.with_columns(result.alias(target_column))
+        except Exception:
+            return df.with_columns(pl.lit(None).alias(target_column))
+    if first_source in df.columns:
+        return df.with_columns(pl.col(first_source).alias(target_column))
+    return df.with_columns(pl.lit(None).alias(target_column))
+
+
+def apply_filter(
+    df: pl.DataFrame,
+    mapping: dict[str, Any],
+) -> pl.DataFrame:
+    """Apply a Polars filter expression to a DataFrame."""
+    expression = mapping.get("filter_expression")
+    if not expression:
+        return df
+    local_vars = {name: df[name] for name in df.columns}
+    try:
+        mask = eval(expression, _eval_globals(), local_vars)
+        return df.filter(mask)
+    except Exception:
+        return df
+
+
+def apply_lookup(
+    df: pl.DataFrame,
+    mapping: dict[str, Any],
+    source_dfs: dict[str, pl.DataFrame],
+) -> pl.DataFrame:
+    """Join a lookup table and bring in a value column."""
+    target_column = mapping["target_column"]
+    lookup_table = mapping.get("lookup_source_table")
+    lookup_key = mapping.get("lookup_key")
+    lookup_value = mapping.get("lookup_value")
+    source_columns = mapping.get("source_columns", [])
+
+    if not lookup_table:
+        return df.with_columns(pl.lit(None).alias(target_column))
+    if lookup_table not in source_dfs:
+        lookup_table = Path(lookup_table).stem
+    if lookup_table not in source_dfs:
+        return df.with_columns(pl.lit(None).alias(target_column))
+    if not lookup_key or not lookup_value:
+        return df.with_columns(pl.lit(None).alias(target_column))
+
+    left_key = source_columns[0]["source_column"] if source_columns else lookup_key
+    # LLMs sometimes confuse the lookup-table column name with the source column;
+    # fall back to case- and punctuation-insensitive matches on the current DataFrame.
+    def _normalise(name: str) -> str:
+        return name.lower().replace(" ", "_").replace("-", "_")
+
+    if left_key not in df.columns:
+        left_key = next(
+            (
+                c
+                for c in df.columns
+                if c.lower() == left_key.lower()
+                or _normalise(c) == _normalise(left_key)
+            ),
+            left_key,
+        )
+    if left_key not in df.columns:
+        return df.with_columns(pl.lit(None).alias(target_column))
+
+    right = source_dfs[lookup_table].select([lookup_key, lookup_value]).unique()
+    return df.join(right, left_on=left_key, right_on=lookup_key, how="left").rename(
+        {lookup_value: target_column}
+    )
+
+
+def apply_aggregation(
+    df: pl.DataFrame,
+    mapping: dict[str, Any],
+    source_dfs: dict[str, pl.DataFrame],
+) -> pl.DataFrame:
+    """Aggregate a source table and join the result back to the base table."""
+    target_column = mapping["target_column"]
+    agg_table = mapping.get("aggregation_source_table")
+    agg_key = mapping.get("aggregation_group_key")
+    agg_expression = mapping.get("aggregation_expression")
+    source_columns = mapping.get("source_columns", [])
+
+    if not agg_table or not agg_key or not agg_expression:
+        return df.with_columns(pl.lit(None).alias(target_column))
+    if agg_table not in source_dfs:
+        agg_table = Path(agg_table).stem
+    if agg_table not in source_dfs:
+        return df.with_columns(pl.lit(None).alias(target_column))
+
+    base_key = source_columns[0]["source_column"] if source_columns else agg_key
+
+    agg_df = source_dfs[agg_table]
+    local_vars = {name: agg_df[name] for name in agg_df.columns}
+    try:
+        agg_expr = eval(agg_expression, _eval_globals(), local_vars)
+    except Exception:
+        return df.with_columns(pl.lit(None).alias(target_column))
+
+    grouped = agg_df.group_by(agg_key).agg(agg_expr.alias(target_column))
+    return df.join(grouped, left_on=base_key, right_on=agg_key, how="left")
+
+
+def apply_mapping(
+    df: pl.DataFrame,
+    mapping: dict[str, Any],
+    source_dfs: dict[str, pl.DataFrame],
+) -> pl.DataFrame:
+    """Apply a single mapping to the working DataFrame."""
+    ttype = mapping.get("transformation_type", "expression")
+    if ttype == "filter":
+        return apply_filter(df, mapping)
+    if ttype == "lookup":
+        return apply_lookup(df, mapping, source_dfs)
+    if ttype == "aggregation":
+        return apply_aggregation(df, mapping, source_dfs)
+    return apply_row_expression(df, mapping)
+
+
+def enforce_dtypes(
+    df: pl.DataFrame,
+    target_table: str,
+    target_schema: dict[str, Any],
+) -> pl.DataFrame:
+    """Cast columns to the dtypes declared in the target schema."""
+    table = next(
+        (t for t in target_schema.get("tables", []) if t["name"] == target_table),
+        None,
+    )
+    if table is None:
+        return df
+    casts = []
+    for col in table.get("columns", []):
+        dtype = col.get("dtype")
+        name = col["name"]
+        if not dtype or name not in df.columns:
+            continue
+        current_dtype = str(df[name].dtype).lower()
+        if "null" in current_dtype:
+            continue
+        if dtype == "Date":
+            if "date" in current_dtype and "datetime" not in current_dtype:
+                continue
+            if "datetime" in current_dtype:
+                casts.append(pl.col(name).dt.date().alias(name))
+            else:
+                casts.append(pl.col(name).str.to_date(strict=False).alias(name))
+        elif dtype == "Datetime":
+            if "datetime" in current_dtype:
+                continue
+            casts.append(pl.col(name).str.to_datetime(strict=False).alias(name))
+        else:
+            polars_dtype = getattr(pl, dtype, None)
+            if polars_dtype is not None:
+                casts.append(pl.col(name).cast(polars_dtype, strict=False))
+    if casts:
+        df = df.with_columns(casts)
+    return df
+
+
+def build_target_tables(
+    mapping_spec: dict[str, Any],
+    source_folder: Path,
+) -> dict[str, pl.DataFrame]:
+    """Build all target tables from the source files and mappings."""
+    source_dfs = load_source_dataframes(source_folder)
+    target_schema = mapping_spec.get("target_schema_json", {})
+
+    columns_by_table: dict[str, list[dict[str, Any]]] = {}
+    for col in mapping_spec["columns"]:
+        columns_by_table.setdefault(col["target_table"], []).append(col)
+
+    result: dict[str, pl.DataFrame] = {}
+    for target_table, columns in columns_by_table.items():
+        # Determine base source table from the first non-aggregation/lookup mapping
+        base_source = target_table
+        for col in columns:
+            if col.get("source_columns"):
+                base_source = col["source_columns"][0]["source_table"]
+                break
+
+        # Source table keys are file stems; the LLM may use the full filename.
+        source_key = base_source
+        if source_key not in source_dfs:
+            stem_key = Path(base_source).stem
+            source_key = stem_key if stem_key in source_dfs else base_source
+        if source_key not in source_dfs:
+            raise ValueError(f"Source table not found: {base_source}")
+
+        df = source_dfs[source_key].clone()
+
+        # Apply filters first
+        for col in columns:
+            if col.get("transformation_type") == "filter":
+                df = apply_mapping(df, col, source_dfs)
+
+        # Apply remaining mappings
+        for col in columns:
+            if col.get("transformation_type") != "filter":
+                df = apply_mapping(df, col, source_dfs)
+
+        target_cols = [c["target_column"] for c in columns]
+        df = df.select([c for c in target_cols if c in df.columns])
+        df = enforce_dtypes(df, target_table, target_schema)
+        result[target_table] = df
+
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source-folder", required=True, type=Path)
+    parser.add_argument("--output-folder", default=".", type=Path)
+    args = parser.parse_args()
+
+    pipeline_dir = Path(__file__).parent
+    mapping_spec = load_mapping_json(pipeline_dir / "mapping.json")
+    tables = build_target_tables(mapping_spec, args.source_folder)
+
+    args.output_folder.mkdir(parents=True, exist_ok=True)
+    # Write every target table so multi-table specs are complete.
+    for name, df in tables.items():
+        df.write_csv(args.output_folder / f"{name}.csv")
+
+
+if __name__ == "__main__":
+    main()
+
+
+======================================================================
+Generated mapping.json (mappings only)
+======================================================================
+
+[
+  {
+    "id": "d765a273-6824-4ef4-b877-cb8e80b0d8e2",
+    "target_table": "packaging_submission",
+    "target_column": "submission_id",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Record ID"
+      },
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Period"
+      },
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Site Ref"
+      },
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Packaging Material Code"
+      }
+    ],
+    "transformation_logic": "concat(col('Record ID'), '-', col('Period'), '-', col('Site Ref'), '-', col('Packaging Material Code'))",
+    "polars_expression": "concat(col('Record ID'), '-', col('Period'), '-', col('Site Ref'), '-', col('Packaging Material Code'))",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null",
+      "unique"
+    ],
+    "evidence_ids": [
+      "0fe8bf3b-4545-4137-92d4-7265367d7892"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 0
+  },
+  {
+    "id": "4a0bf1b6-149e-4610-ae45-0102540bae9c",
+    "target_table": "packaging_submission",
+    "target_column": "reporting_period",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Period"
+      }
+    ],
+    "transformation_logic": "Normalise period formats to YYYY-QN case-insensitively",
+    "polars_expression": "when(col('Period').str.contains(r'(?i)Q1')).then(pl.lit('2024-Q1')).when(col('Period').str.contains(r'(?i)Q2')).then(pl.lit('2024-Q2')).when(col('Period').str.contains(r'(?i)Q3')).then(pl.lit('2024-Q3')).when(col('Period').str.contains(r'(?i)Q4')).then(pl.lit('2024-Q4')).otherwise(null)",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "0fe8bf3b-4545-4137-92d4-7265367d7892"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 1
+  },
+  {
+    "id": "f6d4a9e2-192a-4b1e-a055-a3f293d6cc94",
+    "target_table": "packaging_submission",
+    "target_column": "organisation_id",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Org Code"
+      }
+    ],
+    "transformation_logic": "col('Org Code')",
+    "polars_expression": "col('Org Code')",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "0fe8bf3b-4545-4137-92d4-7265367d7892"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 2
+  },
+  {
+    "id": "5d2ab351-5cc5-4028-bfd0-2965f6b04497",
+    "target_table": "packaging_submission",
+    "target_column": "site_id",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Site Ref"
+      }
+    ],
+    "transformation_logic": "col('Site Ref')",
+    "polars_expression": "col('Site Ref')",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "0fe8bf3b-4545-4137-92d4-7265367d7892"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 3
+  },
+  {
+    "id": "03a6968a-1335-41fc-abd1-345b67e3fca1",
+    "target_table": "packaging_submission",
+    "target_column": "nation",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Site Ref"
+      }
+    ],
+    "transformation_logic": "lookup('site_locations.csv', 'site_ref', 'nation')",
+    "polars_expression": null,
+    "transformation_type": "lookup",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": "site_locations.csv",
+    "lookup_key": "site_ref",
+    "lookup_value": "nation",
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "0fe8bf3b-4545-4137-92d4-7265367d7892",
+      "990ad29a-8ae9-4496-bbb8-4eb9792c1442"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 4
+  },
+  {
+    "id": "feedc65a-5eb4-4e6a-b1eb-01661f3df5e0",
+    "target_table": "packaging_submission",
+    "target_column": "packaging_material",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Packaging Material Code"
+      }
+    ],
+    "transformation_logic": "lookup('material_reference.csv', 'internal_code', 'ea_material_name')",
+    "polars_expression": null,
+    "transformation_type": "lookup",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": "material_reference.csv",
+    "lookup_key": "internal_code",
+    "lookup_value": "ea_material_name",
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "0fe8bf3b-4545-4137-92d4-7265367d7892",
+      "a2076dcc-3748-4793-ba03-17b4998c765c"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 5
+  },
+  {
+    "id": "010287da-d81c-4b84-ac4f-20ea81a357ba",
+    "target_table": "packaging_submission",
+    "target_column": "packaging_class",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Packaging Type"
+      }
+    ],
+    "transformation_logic": "Map packaging type case-insensitively to allowed class",
+    "polars_expression": "when(col('Packaging Type').str.contains(r'(?i)Primary')).then(pl.lit('Primary')).when(col('Packaging Type').str.contains(r'(?i)Secondary')).then(pl.lit('Secondary')).when(col('Packaging Type').str.contains(r'(?i)Shipment')).then(pl.lit('Shipment')).when(col('Packaging Type').str.contains(r'(?i)Tertiary')).then(pl.lit('Tertiary')).otherwise(null)",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "990ad29a-8ae9-4496-bbb8-4eb9792c1442"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 6
+  },
+  {
+    "id": "866afada-0402-4b71-856c-46e69c279021",
+    "target_table": "packaging_submission",
+    "target_column": "submission_date",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Record Date"
+      }
+    ],
+    "transformation_logic": "Parse multiple date formats using coalesce",
+    "polars_expression": "coalesce(col('Record Date').str.to_date('%d/%m/%Y', strict=False),col('Record Date').str.to_date('%Y-%m-%d', strict=False),col('Record Date').str.to_date('%d-%b-%Y', strict=False))",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "b6df0f40-cf78-40ae-80f5-1e94e519d0f3"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 9
+  },
+  {
+    "id": "97dcff66-d7b7-446a-98d0-895322ce3021",
+    "target_table": "packaging_submission",
+    "target_column": "weight_tonnes",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Weight"
+      },
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Unit"
+      }
+    ],
+    "transformation_logic": "Convert kg to tonnes, keep tonnes as-is",
+    "polars_expression": "when(col('Unit').str.strip_chars().str.contains(r'(?i)^kg$')).then(col('Weight').cast(pl.Float64) / 1000).when(col('Unit').str.strip_chars().str.contains(r'(?i)tonnes')).then(col('Weight').cast(pl.Float64)).otherwise(null)",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "990ad29a-8ae9-4496-bbb8-4eb9792c1442",
+      "b6df0f40-cf78-40ae-80f5-1e94e519d0f3"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 8
+  },
+  {
+    "id": "bedb8c2d-5787-4410-9f84-7048d1a01b8c",
+    "target_table": "packaging_submission",
+    "target_column": "activity",
+    "source_columns": [
+      {
+        "raw_file_id": null,
+        "source_table": "packaging_data.csv",
+        "source_column": "Activity Type"
+      }
+    ],
+    "transformation_logic": "Trim and map activity case-insensitively",
+    "polars_expression": "when(col('Activity Type').str.strip_chars().str.contains(r'(?i)supplied')).then(pl.lit('Supplied as goods')).when(col('Activity Type').str.strip_chars().str.contains(r'(?i)import')).then(pl.lit('Imported')).when(col('Activity Type').str.strip_chars().str.contains(r'(?i)export')).then(pl.lit('Exported')).otherwise(null)",
+    "transformation_type": "expression",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": null,
+    "tests": [
+      "not_null"
+    ],
+    "evidence_ids": [
+      "990ad29a-8ae9-4496-bbb8-4eb9792c1442"
+    ],
+    "business_rule_ids": [],
+    "confidence": 0.95,
+    "sort_order": 7
+  },
+  {
+    "id": "8843047f-8bf7-41b5-82c6-36cd3cad5ac3",
+    "target_table": "packaging_submission",
+    "target_column": "_data_quality_filter",
+    "source_columns": [
+      {
+        "source_table": "packaging_data.csv",
+        "source_column": "Data Quality Flag"
+      }
+    ],
+    "transformation_logic": "Exclude rows flagged TEST or DUPLICATE",
+    "polars_expression": null,
+    "transformation_type": "filter",
+    "aggregation_source_table": null,
+    "aggregation_expression": null,
+    "aggregation_group_key": null,
+    "lookup_source_table": null,
+    "lookup_key": null,
+    "lookup_value": null,
+    "filter_expression": "~col('Data Quality Flag').str.strip_chars().str.to_uppercase().is_in(['TEST', 'DUPLICATE'])",
+    "tests": [],
+    "evidence_ids": [],
+    "business_rule_ids": [],
+    "confidence": null,
+    "sort_order": -1
+  }
+]
