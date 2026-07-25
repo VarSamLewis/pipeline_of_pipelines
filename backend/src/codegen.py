@@ -870,6 +870,7 @@ def compute_data_quality_profile(
 
 
 def record_execution_run(
+    client_id: uuid.UUID,
     spec_id: uuid.UUID,
     artifact_set_id: uuid.UUID | None,
     target_environment: str,
@@ -881,6 +882,7 @@ def record_execution_run(
     from models import ExecutionRun, ExecutionStatus
 
     run = ExecutionRun(
+        client_id=client_id,
         mapping_spec_id=spec_id,
         artifact_set_id=artifact_set_id,
         target_environment=target_environment,

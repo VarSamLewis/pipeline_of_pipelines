@@ -175,11 +175,17 @@ def enforce_target_schema_dtypes(
             try:
                 if col.dtype == "Date":
                     casts.append(
-                        pl.col(col.name).str.to_date(strict=False).alias(col.name)
+                        pl.col(col.name)
+                        .cast(pl.String, strict=False)
+                        .str.to_date(strict=False)
+                        .alias(col.name)
                     )
                 elif col.dtype == "Datetime":
                     casts.append(
-                        pl.col(col.name).str.to_datetime(strict=False).alias(col.name)
+                        pl.col(col.name)
+                        .cast(pl.String, strict=False)
+                        .str.to_datetime(strict=False)
+                        .alias(col.name)
                     )
                 else:
                     polars_dtype = getattr(pl, col.dtype)
@@ -389,6 +395,7 @@ def compute_quality_profile(df: pl.DataFrame) -> dict[str, Any]:
 
 
 def record_execution_run(
+    client_id: uuid.UUID,
     spec_id: uuid.UUID,
     target_environment: str,
 ) -> uuid.UUID:
@@ -398,6 +405,7 @@ def record_execution_run(
     from models import ExecutionRun, ExecutionStatus
 
     run = ExecutionRun(
+        client_id=client_id,
         mapping_spec_id=spec_id,
         target_environment=target_environment,
         status=ExecutionStatus.SUCCESS,

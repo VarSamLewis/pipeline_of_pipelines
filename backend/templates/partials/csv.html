@@ -1,0 +1,31 @@
+<div id="csv-view">
+  <p class="muted">Rows {{ start_row }} - {{ end_row }} of {{ total_rows }}</p>
+
+  <table>
+    <thead>
+      <tr>
+        {% for col in columns %}
+          <th>{{ col }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          {% for col in columns %}
+            <td>{{ row.get(col, '') }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+    {% if page > 1 %}
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page - 1 }}" hx-target="#results-view">Previous</button>
+    {% endif %}
+    {% if page < total_pages %}
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page + 1 }}" hx-target="#results-view">Next</button>
+    {% endif %}
+  </div>
+</div>

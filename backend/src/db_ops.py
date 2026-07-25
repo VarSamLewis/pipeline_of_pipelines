@@ -374,6 +374,7 @@ def _parse_raw_file(
         embedding = get_embedding(chunk["content"])
         create_extracted_evidence(
             session=session,
+            client_id=raw_file.client_id,
             raw_file_id=raw_file.id,
             evidence_type=chunk["evidence_type"],
             content=chunk["content"],
@@ -419,6 +420,7 @@ def get_spreadsheet_profile(
 
 def create_extracted_evidence(
     session: Session,
+    client_id: uuid.UUID,
     raw_file_id: uuid.UUID,
     evidence_type: str,
     content: str,
@@ -429,6 +431,7 @@ def create_extracted_evidence(
 ) -> ExtractedEvidence:
     """Store a piece of extracted evidence and optionally its vector embedding."""
     evidence = ExtractedEvidence(
+        client_id=client_id,
         raw_file_id=raw_file_id,
         evidence_type=evidence_type,
         content=content,
@@ -455,7 +458,7 @@ def search_evidence(
         distance
     )
     if client_id:
-        statement = statement.join(RawFile).where(RawFile.client_id == client_id)
+        statement = statement.where(ExtractedEvidence.client_id == client_id)
     statement = statement.limit(top_k)
     results = session.exec(statement).all()
     return [r[0] for r in results]
@@ -716,6 +719,7 @@ def write_audit_log(
     event_type: str,
     entity_type: str,
     entity_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
     actor: str | None,
     payload: dict[str, Any],
 ) -> AuditLog:
@@ -724,6 +728,7 @@ def write_audit_log(
         event_type=event_type,
         entity_type=entity_type,
         entity_id=entity_id,
+        actor_user_id=actor_user_id,
         actor=actor,
         payload=payload,
     )

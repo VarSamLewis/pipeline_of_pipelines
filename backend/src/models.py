@@ -69,6 +69,15 @@ class ValidationSeverity(str, enum.Enum):
     ERROR = "error"
 
 
+class UserRole(str, enum.Enum):
+    """Authorization roles enforced by the WorkOS-backed auth layer."""
+
+    CREATOR = "creator"
+    REVIEWER = "reviewer"
+    APPROVER = "approver"
+    ADMIN = "admin"
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request/response models
 # ---------------------------------------------------------------------------
@@ -466,6 +475,11 @@ class ExtractedEvidence(SQLModel, table=True):
     """Searchable evidence extracted from raw files."""
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    client_id: uuid.UUID = SQLField(
+        foreign_key="client.id",
+        index=True,
+        description="Owning client; allows tenant filtering without joining RawFile.",
+    )
     raw_file_id: uuid.UUID = SQLField(foreign_key="rawfile.id", index=True)
     evidence_type: str = SQLField(
         description="Type: text_chunk, table, kv_pair, email_header, etc.",
@@ -589,6 +603,11 @@ class ExecutionRun(SQLModel, table=True):
     """A run of generated artifacts against the target environment."""
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    client_id: uuid.UUID = SQLField(
+        foreign_key="client.id",
+        index=True,
+        description="Owning client for direct tenant filtering.",
+    )
     mapping_spec_id: uuid.UUID = SQLField(
         foreign_key="mappingspec.id",
         index=True,
@@ -658,6 +677,24 @@ class StagingColumn(SQLModel, table=True):
     unique_count: int | None = SQLField(default=None)
 
 
+class User(SQLModel, table=True):
+    """Platform user provisioned from WorkOS AuthKit.
+
+    WorkOS remains the source of truth for identity and role metadata. The local
+    record caches the latest role for fast permission checks and audit lineage.
+    """
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    workos_user_id: str = SQLField(unique=True, index=True)
+    email: str = SQLField(index=True)
+    name: str | None = SQLField(default=None)
+    role: UserRole = SQLField(default=UserRole.CREATOR)
+    last_login_at: datetime.datetime | None = SQLField(default=None)
+    created_at: datetime.datetime = SQLField(
+        default_factory=datetime.datetime.utcnow,
+    )
+
+
 class AuditLog(SQLModel, table=True):
     """Append-only audit log of all significant platform events."""
 
@@ -665,6 +702,11 @@ class AuditLog(SQLModel, table=True):
     event_type: str = SQLField(index=True)
     entity_type: str = SQLField(index=True)
     entity_id: uuid.UUID = SQLField(index=True)
+    actor_user_id: uuid.UUID | None = SQLField(
+        default=None,
+        foreign_key="user.id",
+        index=True,
+    )
     actor: str | None = SQLField(default=None)
     payload: dict[str, Any] = SQLField(default={}, sa_column=Column("payload", JSON))
     recorded_at: datetime.datetime = SQLField(

@@ -17,13 +17,14 @@ a Polars-based target pipeline, and records full column-level lineage.
 - Polars for target transformations
 - dbt for optional SQL artifact generation
 - OpenAI-compatible LLM for mapping proposals
-- No authentication in this phase
+- WorkOS AuthKit for authentication and role-based authorization
 
 ## Repository layout
 
 ```
 backend/src/
   app.py          FastAPI routers
+  auth_service.py WorkOS AuthKit authentication and role dependencies
   models.py       Pydantic + SQLModel schemas
   file_ops.py     Object store abstraction and file utilities
   parser.py       Parsers and profilers for heterogeneous files
@@ -31,6 +32,8 @@ backend/src/
   mapping.py      LLM-assisted mapping proposal
   codegen.py      dbt/SQL artifact generation
   pipeline.py     Single-file Polars target transformation pipeline
+  workflow.py     Simplified upload → review mapping → review results orchestration
+  ui.py           HTMX UI for the three-step wizard
 ```
 
 ## Coding conventions
@@ -72,6 +75,18 @@ Set an OpenAI API key before running the server or tests:
 export OPENAI_API_KEY="sk-..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
+
+For WorkOS authentication in production, configure:
+
+```bash
+export WORKOS_CLIENT_ID="client_..."
+export WORKOS_API_KEY="sk_test_..."
+export WORKOS_REDIRECT_URI="http://localhost:8000/auth/callback"
+export SESSION_SECRET_KEY="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"
+```
+
+Local scripts and tests bypass WorkOS when `AUTH_BYPASS_LOCAL=true`.
+Roles are stored in WorkOS user metadata under the key `role` and synced on login.
 
 ## Testing
 

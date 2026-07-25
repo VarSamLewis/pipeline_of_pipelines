@@ -28,10 +28,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import json
+import secrets
 import uuid
 from pathlib import Path
 from typing import Any
 
+from auth_service import (
+    AUTH_BYPASS_LOCAL,
+    SESSION_MAX_AGE_SECONDS,
+    SESSION_SECRET_KEY,
+    clear_session,
+    create_session,
+    get_authkit_url,
+    require_auth,
+    require_role,
+    update_user_role,
+)
 from codegen import (
     generate_artifact_set,
     generate_output_folder,
@@ -59,8 +71,18 @@ from db_ops import (
     search_evidence_by_text,
     write_audit_log,
 )
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from file_ops import (
     LocalObjectStore,
     build_storage_key,
@@ -81,6 +103,8 @@ from pipeline import (
     run_pipeline,
     run_validation_tests,
 )
+from starlette.middleware.sessions import SessionMiddleware
+from ui import router as ui_router
 
 app = FastAPI(
     title="Pipeline of Pipelines",
@@ -90,17 +114,158 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Mount encrypted cookie session middleware.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET_KEY,
+    session_cookie="session",
+    max_age=SESSION_MAX_AGE_SECONDS,
+    same_site="lax",
+    https_only=False,  # Set True in production / Azure behind HTTPS.
+    path="/",
+)
+
 # Global state (replaced by proper dependency injection in production)
 _object_store: LocalObjectStore | None = None
 _output_folders: dict[uuid.UUID, Path] = {}
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+# Static assets and HTMX UI routes.
+STATIC_DIR = Path(__file__).parent.parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(ui_router)
+
+
+@app.get("/login")
+def login_page(request: Request) -> RedirectResponse:
+    """Redirect to the upload page or WorkOS AuthKit login."""
+    if AUTH_BYPASS_LOCAL:
+        return RedirectResponse(url="/upload")
+    return RedirectResponse(url="/auth/login")
 
 
 def get_object_store() -> LocalObjectStore:
     """Return the singleton local object store."""
     global _object_store
     if _object_store is None:
-        _object_store = LocalObjectStore("data/object-store")
+        project_root = Path(__file__).parent.parent.parent
+        _object_store = LocalObjectStore(
+            str(project_root / "data" / "object-store")
+        )
     return _object_store
+
+
+# ---------------------------------------------------------------------------
+# Root redirect
+# ---------------------------------------------------------------------------
+
+
+@app.get("/")
+def root(request: Request) -> RedirectResponse:
+    """Redirect the root URL to the upload page."""
+    return RedirectResponse(url="/upload")
+
+
+# ---------------------------------------------------------------------------
+# WorkOS AuthKit routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/auth/login")
+def login(request: Request) -> RedirectResponse:
+    """Redirect the browser to WorkOS AuthKit for authentication."""
+    if AUTH_BYPASS_LOCAL:
+        return RedirectResponse(url="/upload")
+    state = secrets.token_urlsafe(32)
+    request.session["auth_state"] = state
+    url = get_authkit_url(state)
+    return RedirectResponse(url=url)
+
+
+@app.get("/auth/callback")
+def auth_callback(
+    request: Request,
+    code: str,
+    state: str | None = None,
+) -> RedirectResponse:
+    """Handle the WorkOS AuthKit callback and establish a session."""
+    if AUTH_BYPASS_LOCAL:
+        return RedirectResponse(url="/upload")
+
+    stored_state = request.session.pop("auth_state", None)
+    if state is None or stored_state is None or state != stored_state:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+    try:
+        user, _created = __import__("auth_service").authenticate_with_workos(code)
+    except Exception as exc:
+        msg = f"Authentication failed: {exc}"
+        raise HTTPException(status_code=401, detail=msg) from exc
+
+    response = RedirectResponse(url="/upload")
+    create_session(request, user.id)
+    return response
+
+
+@app.post("/auth/logout")
+def logout(request: Request) -> RedirectResponse:
+    """Clear the session and return to the login page."""
+    clear_session(request)
+    response = RedirectResponse(url="/login")
+    return response
+
+
+@app.get("/auth/me")
+def me(user: Any = Depends(require_auth)) -> dict[str, Any]:
+    """Return the currently authenticated user."""
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+        "role": user.role.value,
+    }
+
+
+@app.get("/admin/users")
+def list_users(
+    user: Any = Depends(require_role("admin")),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List provisioned platform users (admin only)."""
+    from models import User
+    from sqlmodel import select
+
+    with get_session() as session:
+        statement = select(User).order_by(User.email).limit(limit)
+        users = session.exec(statement).all()
+        return [
+            {
+                "id": str(u.id),
+                "email": u.email,
+                "name": u.name,
+                "role": u.role.value,
+                "last_login_at": (
+                    u.last_login_at.isoformat() if u.last_login_at else None
+                ),
+            }
+            for u in users
+        ]
+
+
+@app.post("/admin/users/{user_id}/role")
+def set_user_role(
+    user_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Update a user's role in WorkOS and locally (admin only)."""
+    updated = update_user_role(user_id, payload["role"])
+    return {
+        "id": str(updated.id),
+        "email": updated.email,
+        "name": updated.name,
+        "role": updated.role.value,
+    }
 
 
 @app.on_event("startup")
@@ -115,7 +280,10 @@ def startup() -> None:
 
 
 @app.post("/clients")
-def create_client_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
+def create_client_endpoint(
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("creator")),
+) -> dict[str, Any]:
     """Register a new client/tenant."""
     with get_session() as session:
         client = create_client(
@@ -125,7 +293,13 @@ def create_client_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
             metadata=payload.get("metadata", {}),
         )
         write_audit_log(
-            session, "client_created", "Client", client.id, None, payload
+            session,
+            "client_created",
+            "Client",
+            client.id,
+            user.id,
+            user.email,
+            payload,
         )
         return {
             "id": str(client.id),
@@ -135,8 +309,34 @@ def create_client_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+@app.get("/clients")
+def list_clients_endpoint(
+    user: Any = Depends(require_auth),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List all clients."""
+    from models import Client
+    from sqlmodel import select
+
+    with get_session() as session:
+        statement = select(Client).order_by(Client.created_at.desc()).limit(limit)
+        clients = session.exec(statement).all()
+        return [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "code": c.code,
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in clients
+        ]
+
+
 @app.get("/clients/{client_code}")
-def get_client(client_code: str) -> dict[str, Any]:
+def get_client(
+    client_code: str,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Fetch a client by its short code."""
     with get_session() as session:
         client = get_client_by_code(session, client_code)
@@ -153,7 +353,9 @@ def get_client(client_code: str) -> dict[str, Any]:
 
 @app.post("/clients/{client_code}/batches")
 def create_ingestion_batch_endpoint(
-    client_code: str, payload: dict[str, Any]
+    client_code: str,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Create a new ingestion batch for a client."""
     with get_session() as session:
@@ -174,9 +376,42 @@ def create_ingestion_batch_endpoint(
         }
 
 
+@app.get("/clients/{client_code}/batches")
+def list_ingestion_batches_endpoint(
+    client_code: str,
+    user: Any = Depends(require_auth),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List ingestion batches for a client."""
+    from models import IngestionBatch
+    from sqlmodel import select
+
+    with get_session() as session:
+        client = get_client_by_code(session, client_code)
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        statement = (
+            select(IngestionBatch)
+            .where(IngestionBatch.client_id == client.id)
+            .order_by(IngestionBatch.created_at.desc())
+            .limit(limit)
+        )
+        batches = session.exec(statement).all()
+        return [
+            {
+                "id": str(b.id),
+                "label": b.label,
+                "created_at": b.created_at.isoformat(),
+            }
+            for b in batches
+        ]
+
+
 @app.get("/clients/{client_code}/batches/{batch_id}")
 def get_ingestion_batch_endpoint(
-    client_code: str, batch_id: uuid.UUID
+    client_code: str,
+    batch_id: uuid.UUID,
+    user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
     """Fetch an ingestion batch and its files."""
     with get_session() as session:
@@ -215,6 +450,7 @@ def upload_raw_file(
     batch_id: uuid.UUID,
     file: UploadFile = File(...),
     metadata: str = Form("{}"),
+    user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Upload a raw file into immutable object storage and register metadata."""
     with get_session() as session:
@@ -263,7 +499,10 @@ def upload_raw_file(
 
 
 @app.get("/raw-files/{raw_file_id}")
-def get_raw_file(raw_file_id: uuid.UUID) -> dict[str, Any]:
+def get_raw_file(
+    raw_file_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Fetch a raw file registration record."""
     with get_session() as session:
         raw_file = get_raw_file_by_id(session, raw_file_id)
@@ -281,7 +520,10 @@ def get_raw_file(raw_file_id: uuid.UUID) -> dict[str, Any]:
 
 
 @app.post("/raw-files/{raw_file_id}/parse")
-def parse_raw_file(raw_file_id: uuid.UUID) -> dict[str, Any]:
+def parse_raw_file(
+    raw_file_id: uuid.UUID,
+    user: Any = Depends(require_role("creator")),
+) -> dict[str, Any]:
     """Parse a raw file into structured facts, profiles, and evidence."""
     from db_ops import _parse_raw_file, update_raw_file_status
     from models import FileStatus
@@ -320,6 +562,7 @@ def ingest_client_folder_endpoint(
         ..., description="Absolute or relative path to the client folder."
     ),
     label: str | None = Form(None, description="Optional batch label."),
+    user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Ingest an entire client folder of heterogeneous files as one batch."""
     with get_session() as session:
@@ -350,6 +593,7 @@ def upload_target_schema(
     schema_file: UploadFile = File(
         ..., description="JSON file describing the target schema."
     ),
+    user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Upload and persist a target-schema JSON file for a client."""
     with get_session() as session:
@@ -361,7 +605,7 @@ def upload_target_schema(
         schema = TargetSchema.model_validate_json(content.decode("utf-8"))
         schema.client_code = client_code
 
-        schema_dir = Path("data/target-schemas") / client_code
+        schema_dir = PROJECT_ROOT / "data" / "target-schemas" / client_code
         schema_dir.mkdir(parents=True, exist_ok=True)
         schema_path = schema_dir / "target_schema.json"
         save_target_schema(schema, schema_path)
@@ -374,14 +618,19 @@ def upload_target_schema(
 
 
 @app.get("/clients/{client_code}/target-schema")
-def get_target_schema(client_code: str) -> TargetSchema:
+def get_target_schema(
+    client_code: str,
+    user: Any = Depends(require_auth),
+) -> TargetSchema:
     """Return the latest target schema for a client."""
     with get_session() as session:
         client = get_client_by_code(session, client_code)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
-    schema_path = Path("data/target-schemas") / client_code / "target_schema.json"
+    schema_path = (
+        PROJECT_ROOT / "data" / "target-schemas" / client_code / "target_schema.json"
+    )
     if not schema_path.exists():
         raise HTTPException(status_code=404, detail="Target schema not found")
     return load_target_schema(schema_path)
@@ -393,7 +642,10 @@ def get_target_schema(client_code: str) -> TargetSchema:
 
 
 @app.get("/raw-files/{raw_file_id}/profile")
-def get_spreadsheet_profile_endpoint(raw_file_id: uuid.UUID) -> dict[str, Any]:
+def get_spreadsheet_profile_endpoint(
+    raw_file_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Return the stored spreadsheet profile for a raw file."""
     with get_session() as session:
         raw_file = get_raw_file_by_id(session, raw_file_id)
@@ -413,6 +665,7 @@ def search_evidence_endpoint(
     query: str = Query(..., description="Plain-text query string."),
     client_code: str | None = Query(None, description="Optional client filter."),
     top_k: int = Query(5, ge=1, le=100),
+    user: Any = Depends(require_auth),
 ) -> list[dict[str, Any]]:
     """Search extracted evidence by full text."""
     with get_session() as session:
@@ -443,7 +696,9 @@ def search_evidence_endpoint(
 
 @app.post("/clients/{client_code}/rules")
 def create_business_rule_endpoint(
-    client_code: str, payload: dict[str, Any]
+    client_code: str,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Create a new business rule draft."""
     with get_session() as session:
@@ -467,7 +722,9 @@ def create_business_rule_endpoint(
 
 @app.post("/rules/{rule_id}/approve")
 def approve_business_rule_endpoint(
-    rule_id: uuid.UUID, payload: dict[str, Any]
+    rule_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
     """Approve a business rule."""
     with get_session() as session:
@@ -482,6 +739,32 @@ def approve_business_rule_endpoint(
         }
 
 
+@app.get("/clients/{client_code}/rules")
+def list_business_rules_endpoint(
+    client_code: str,
+    user: Any = Depends(require_auth),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List business rules for a client."""
+    from db_ops import list_business_rules
+
+    with get_session() as session:
+        client = get_client_by_code(session, client_code)
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        rules = list_business_rules(session, client.id)
+        return [
+            {
+                "id": str(r.id),
+                "rule_text": r.rule_text,
+                "status": r.status.value,
+                "approved_by": r.approved_by,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rules[:limit]
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Mapping specification endpoints
 # ---------------------------------------------------------------------------
@@ -489,7 +772,9 @@ def approve_business_rule_endpoint(
 
 @app.post("/clients/{client_code}/mapping-specs")
 def create_mapping_spec_endpoint(
-    client_code: str, payload: dict[str, Any]
+    client_code: str,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Create a new mapping specification draft against a supplied target schema."""
     with get_session() as session:
@@ -518,8 +803,44 @@ def create_mapping_spec_endpoint(
         }
 
 
+@app.get("/mapping-specs")
+def list_mapping_specs_endpoint(
+    user: Any = Depends(require_auth),
+    client_code: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List mapping specs, optionally filtered by client or status."""
+    from models import MappingSpec
+    from sqlmodel import select
+
+    with get_session() as session:
+        statement = select(MappingSpec).order_by(MappingSpec.created_at.desc())
+        if client_code:
+            client = get_client_by_code(session, client_code)
+            if client is None:
+                raise HTTPException(status_code=404, detail="Client not found")
+            statement = statement.where(MappingSpec.client_id == client.id)
+        if status:
+            statement = statement.where(MappingSpec.status == status)
+        specs = session.exec(statement.limit(limit)).all()
+        return [
+            {
+                "id": str(s.id),
+                "client_id": str(s.client_id),
+                "status": s.status.value,
+                "description": s.description,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in specs
+        ]
+
+
 @app.get("/mapping-specs/{spec_id}")
-def get_mapping_spec_endpoint(spec_id: uuid.UUID) -> dict[str, Any]:
+def get_mapping_spec_endpoint(
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Fetch a mapping specification and its columns."""
     with get_session() as session:
         spec = get_mapping_spec(session, spec_id)
@@ -553,6 +874,7 @@ def get_mapping_spec_endpoint(spec_id: uuid.UUID) -> dict[str, Any]:
 def propose_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
+    user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
     """Ask the LLM to propose mappings for a draft specification."""
     payload = payload or {}
@@ -598,6 +920,7 @@ def propose_mapping_spec_endpoint(
 def approve_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any],
+    user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Approve a proposed mapping specification."""
     with get_session() as session:
@@ -617,15 +940,84 @@ def approve_mapping_spec_endpoint(
         }
 
 
+@app.post("/mapping-specs/{spec_id}/reject")
+def reject_mapping_spec_endpoint(
+    spec_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("reviewer")),
+) -> dict[str, Any]:
+    """Reject a mapping specification and return it to draft."""
+    from models import MappingSpecStatus
+
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise HTTPException(status_code=404, detail="Mapping spec not found")
+        spec.status = MappingSpecStatus.DRAFT
+        spec.description = (
+            (spec.description or "")
+            + f"\nRejected by {user.email}: {payload.get('reason', '')}"
+        )
+        session.add(spec)
+        session.commit()
+        session.refresh(spec)
+        return {
+            "id": str(spec.id),
+            "status": spec.status.value,
+        }
+
+
+@app.patch("/mapping-specs/{spec_id}/columns/{column_id}")
+def update_mapping_column_endpoint(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("reviewer")),
+) -> dict[str, Any]:
+    """Update a single mapping column (reviewer+)."""
+    from models import MappingColumn
+
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise HTTPException(status_code=404, detail="Mapping spec not found")
+        column = session.get(MappingColumn, column_id)
+        if column is None or column.mapping_spec_id != spec_id:
+            raise HTTPException(status_code=404, detail="Mapping column not found")
+
+        if "transformation_logic" in payload:
+            column.transformation_logic = payload["transformation_logic"]
+        if "polars_expression" in payload:
+            column.polars_expression = payload["polars_expression"]
+        if "source_columns" in payload:
+            column.source_columns_json = payload["source_columns"]
+        if "tests" in payload:
+            column.tests = payload["tests"]
+        session.add(column)
+        session.commit()
+        session.refresh(column)
+        return {
+            "id": str(column.id),
+            "target_table": column.target_table,
+            "target_column": column.target_column,
+            "transformation_logic": column.transformation_logic,
+            "polars_expression": column.polars_expression,
+            "tests": column.tests,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Code generation and execution endpoints
 # ---------------------------------------------------------------------------
 
 
 @app.post("/mapping-specs/{spec_id}/generate")
-def generate_artifacts_endpoint(spec_id: uuid.UUID) -> dict[str, Any]:
+def generate_artifacts_endpoint(
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_role("approver")),
+) -> dict[str, Any]:
     """Generate Polars artifacts from an approved mapping spec."""
-    output_folder = Path("data/output-folders") / str(spec_id)
+    output_folder = PROJECT_ROOT / "data" / "output-folders" / str(spec_id)
     artifacts = generate_artifact_set(spec_id, output_folder)
     _output_folders[spec_id] = output_folder
     return {
@@ -646,34 +1038,75 @@ def generate_artifacts_endpoint(spec_id: uuid.UUID) -> dict[str, Any]:
 def generate_output_folder_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
+    user: Any = Depends(require_role("approver")),
 ) -> PipelineOutputFolder:
     """Generate the complete client deliverable folder."""
     payload = payload or {}
-    output_folder = Path(payload.get("output_folder", f"data/output-folders/{spec_id}"))
+    default_folder = PROJECT_ROOT / "data" / "output-folders" / str(spec_id)
+    output_folder = Path(payload.get("output_folder", default_folder))
     folder = generate_output_folder(spec_id, output_folder, get_object_store())
     _output_folders[spec_id] = folder.folder_path
     return folder
 
 
 @app.get("/output-folders/{folder_id}/pipeline.py")
-def get_generated_pipeline_py(folder_id: uuid.UUID) -> PlainTextResponse:
+def get_generated_pipeline_py(
+    folder_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> PlainTextResponse:
     """Return the generated single-file Polars pipeline for human review."""
     folder = _output_folders.get(folder_id)
     if folder is None:
         # Try deterministic path
-        folder = Path("data/output-folders") / str(folder_id)
+        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
     path = folder / "pipeline.py"
     if not path.exists():
         raise HTTPException(status_code=404, detail="pipeline.py not found")
     return PlainTextResponse(path.read_text(), media_type="text/x-python")
 
 
+@app.put("/output-folders/{folder_id}/pipeline.py")
+def update_generated_pipeline_py(
+    folder_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("reviewer")),
+) -> dict[str, Any]:
+    """Overwrite the generated pipeline.py for advanced code review.
+
+    Warning: editing the generated pipeline directly bypasses the mapping
+    contract for the edited file. The mapping.json and audit log remain
+    unchanged; the edited script is used on the next execution.
+    """
+    folder = _output_folders.get(folder_id)
+    if folder is None:
+        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
+    path = folder / "pipeline.py"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="pipeline.py not found")
+    content = payload.get("content", "")
+    path.write_text(content, encoding="utf-8")
+    with get_session() as session:
+        write_audit_log(
+            session,
+            "pipeline_py_edited",
+            "GeneratedPipeline",
+            folder_id,
+            user.id,
+            user.email,
+            {"folder_id": str(folder_id)},
+        )
+    return {"folder_id": str(folder_id), "bytes": len(content)}
+
+
 @app.get("/output-folders/{folder_id}/mapping.json")
-def get_generated_mapping_json(folder_id: uuid.UUID) -> dict[str, Any]:
+def get_generated_mapping_json(
+    folder_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Return the generated mapping.json for human review."""
     folder = _output_folders.get(folder_id)
     if folder is None:
-        folder = Path("data/output-folders") / str(folder_id)
+        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
     path = folder / "mapping.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail="mapping.json not found")
@@ -681,11 +1114,14 @@ def get_generated_mapping_json(folder_id: uuid.UUID) -> dict[str, Any]:
 
 
 @app.get("/output-folders/{folder_id}/results.csv")
-def get_generated_results_csv(folder_id: uuid.UUID) -> FileResponse:
+def get_generated_results_csv(
+    folder_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> FileResponse:
     """Return the generated results.csv for human review."""
     folder = _output_folders.get(folder_id)
     if folder is None:
-        folder = Path("data/output-folders") / str(folder_id)
+        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
     path = folder / "results.csv"
     if not path.exists():
         raise HTTPException(status_code=404, detail="results.csv not found")
@@ -696,11 +1132,13 @@ def get_generated_results_csv(folder_id: uuid.UUID) -> FileResponse:
 def execute_pipeline(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
+    user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Execute the Polars transformation pipeline for an approved spec."""
     payload = payload or {}
     target_environment = payload.get("target_environment", "local")
-    output_folder = Path(payload.get("output_folder", f"data/output-folders/{spec_id}"))
+    default_folder = PROJECT_ROOT / "data" / "output-folders" / str(spec_id)
+    output_folder = Path(payload.get("output_folder", default_folder))
     output_folder.mkdir(parents=True, exist_ok=True)
 
     object_store = get_object_store()
@@ -717,7 +1155,12 @@ def execute_pipeline(
 
     mapping_spec = load_mapping_spec(spec_id)
     target_schema = load_target_schema_from_spec(mapping_spec)
-    run_id = record_execution_run(spec_id, None, target_environment)
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise HTTPException(status_code=404, detail="Mapping spec not found")
+        client_id = spec.client_id
+    run_id = record_execution_run(client_id, spec_id, None, target_environment)
     test_results = run_validation_tests(
         target_dfs, mapping_spec["columns"], target_schema
     )
@@ -740,7 +1183,10 @@ def execute_pipeline(
 
 
 @app.get("/execution-runs/{run_id}")
-def get_execution_run(run_id: uuid.UUID) -> dict[str, Any]:
+def get_execution_run(
+    run_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Fetch an execution run with validation results."""
     from models import ExecutionRun
     from models import ValidationResult as VRModel
@@ -773,6 +1219,99 @@ def get_execution_run(run_id: uuid.UUID) -> dict[str, Any]:
         }
 
 
+@app.get("/execution-runs")
+def list_execution_runs_endpoint(
+    user: Any = Depends(require_auth),
+    spec_id: uuid.UUID | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """List execution runs, optionally filtered by spec or status."""
+    from models import ExecutionRun
+    from sqlmodel import select
+
+    with get_session() as session:
+        statement = select(ExecutionRun).order_by(ExecutionRun.started_at.desc())
+        if spec_id:
+            statement = statement.where(ExecutionRun.mapping_spec_id == spec_id)
+        if status:
+            statement = statement.where(ExecutionRun.status == status)
+        runs = session.exec(statement.limit(limit)).all()
+        return [
+            {
+                "id": str(r.id),
+                "mapping_spec_id": str(r.mapping_spec_id),
+                "status": r.status.value,
+                "target_environment": r.target_environment,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            }
+            for r in runs
+        ]
+
+
+@app.post("/execution-runs/{run_id}/approve")
+def approve_execution_run_endpoint(
+    run_id: uuid.UUID,
+    user: Any = Depends(require_role("approver")),
+) -> dict[str, Any]:
+    """Publish an execution run (approver only)."""
+    from datetime import datetime
+
+    from models import ExecutionRun, ExecutionStatus
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Execution run not found")
+        run.status = ExecutionStatus.SUCCESS
+        run.finished_at = datetime.utcnow()
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        write_audit_log(
+            session,
+            "execution_run_approved",
+            "ExecutionRun",
+            run.id,
+            user.id,
+            user.email,
+            {"status": run.status.value},
+        )
+        return {
+            "id": str(run.id),
+            "status": run.status.value,
+            "approved_by": user.email,
+        }
+
+
+@app.post("/execution-runs/{run_id}/reject")
+def reject_execution_run_endpoint(
+    run_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("reviewer")),
+) -> dict[str, Any]:
+    """Reject an execution run and return it for correction."""
+    from datetime import datetime
+
+    from models import ExecutionRun, ExecutionStatus
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Execution run not found")
+        run.status = ExecutionStatus.FAILED
+        run.finished_at = datetime.utcnow()
+        run.logs = {**(run.logs or {}), "rejection_reason": payload.get("reason", "")}
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return {
+            "id": str(run.id),
+            "status": run.status.value,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Audit and lineage endpoints
 # ---------------------------------------------------------------------------
@@ -784,6 +1323,7 @@ def query_audit_log(
     entity_id: uuid.UUID | None = Query(None),
     event_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
+    user: Any = Depends(require_auth),
 ) -> list[dict[str, Any]]:
     """Query the append-only audit log."""
     from models import AuditLog as ALModel
@@ -813,7 +1353,10 @@ def query_audit_log(
 
 
 @app.get("/lineage/staging-columns/{staging_column_id}")
-def get_staging_column_lineage(staging_column_id: uuid.UUID) -> dict[str, Any]:
+def get_staging_column_lineage(
+    staging_column_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> dict[str, Any]:
     """Return full provenance for a published staging column."""
     from db_ops import get_lineage_for_staging_column
 

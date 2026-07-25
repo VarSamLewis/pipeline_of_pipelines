@@ -159,6 +159,7 @@ def test_build_mapping_prompt_includes_evidence_ids() -> None:
     evidence = [
         ExtractedEvidence(
             id=evidence_id,
+            client_id=uuid.uuid4(),
             raw_file_id=uuid.uuid4(),
             evidence_type="text_chunk",
             content="Map cust_id to customer_id.",

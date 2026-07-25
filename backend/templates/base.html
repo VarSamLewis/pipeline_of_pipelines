@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Pipeline of Pipelines{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+  <nav>
+    <a class="brand" href="/">Pipeline of Pipelines</a>
+    <div class="user">
+      {% if user %}
+        <span>{{ user.email }} ({{ user.role.value }})</span>
+        <form action="/auth/logout" method="post" style="display:inline;">
+          <button class="btn btn-sm" type="submit">Logout</button>
+        </form>
+      {% endif %}
+    </div>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

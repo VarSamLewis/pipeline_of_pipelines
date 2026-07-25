@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Review mapping - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<h1>Review mapping</h1>
+
+<div class="card">
+  <h2>Proposed mapping</h2>
+  <p class="muted">This is the raw mapping JSON produced by the LLM. Review it before generating code and running the pipeline.</p>
+  <pre class="code-editor">{{ mapping_json }}</pre>
+</div>
+
+<div class="card">
+  <form
+    hx-post="/mapping/{{ spec_id }}/confirm"
+    hx-target="#mapping-result"
+    hx-swap="innerHTML"
+    hx-indicator="#mapping-spinner"
+    style="display:inline;"
+  >
+    <button class="btn btn-success" type="submit">
+      <span id="mapping-spinner" class="spinner" style="display:none;"></span>
+      Confirm & run pipeline
+    </button>
+  </form>
+
+  <form
+    hx-post="/mapping/{{ spec_id }}/reject"
+    hx-target="#mapping-result"
+    hx-swap="innerHTML"
+    style="display:inline; margin-left: 0.5rem;"
+  >
+    <button class="btn btn-danger" type="submit">Reject & re-upload</button>
+  </form>
+
+  <div id="mapping-result" style="margin-top: 1rem;"></div>
+</div>
+{% endblock %}

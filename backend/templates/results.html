@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Review results - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<h1>Review results</h1>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Output</h2>
+    <div>
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1" hx-target="#results-view" hx-indicator="#results-spinner">View CSV</button>
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-spinner">View code</button>
+    </div>
+  </div>
+
+  <div id="results-view" style="margin-top: 1rem;">
+    <p class="muted">Select a view above to see the generated CSV or pipeline code.</p>
+  </div>
+  <span id="results-spinner" class="spinner" style="display:none;"></span>
+</div>
+
+<div class="card">
+  <form
+    hx-post="/results/{{ run_id }}/confirm"
+    hx-target="#results-action-result"
+    hx-swap="innerHTML"
+    style="display:inline;"
+  >
+    <button class="btn btn-success" type="submit">Confirm</button>
+  </form>
+
+  <form
+    hx-post="/results/{{ run_id }}/reject"
+    hx-target="#results-action-result"
+    hx-swap="innerHTML"
+    style="display:inline; margin-left: 0.5rem;"
+  >
+    <button class="btn btn-danger" type="submit">Reject & review mapping</button>
+  </form>
+
+  <div id="results-action-result" style="margin-top: 1rem;"></div>
+</div>
+{% endblock %}

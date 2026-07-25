@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Upload - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<h1>Upload data</h1>
+
+<div class="card" style="max-width: 700px;">
+  <form
+    hx-post="/upload"
+    hx-encoding="multipart/form-data"
+    hx-target="#upload-result"
+    hx-swap="innerHTML"
+    hx-indicator="#upload-spinner"
+  >
+    <div class="form-group">
+      <label for="client_select">Client</label>
+      <select id="client_select" name="client_select" onchange="toggleNewClient(this)">
+        <option value="">-- Create new client --</option>
+        {% for client in clients %}
+          <option value="{{ client.id }}">{{ client.name }} ({{ client.code }})</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div id="new-client-fields">
+      <div class="form-group">
+        <label for="new_client_name">New client name</label>
+        <input type="text" id="new_client_name" name="new_client_name" placeholder="e.g. Acme Ltd">
+      </div>
+      <div class="form-group">
+        <label for="new_client_code">New client code</label>
+        <input type="text" id="new_client_code" name="new_client_code" placeholder="e.g. acme">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="source_files">Source files</label>
+      <input type="file" id="source_files" name="source_files" multiple required
+             accept=".csv,.xlsx,.xls,.pdf,.txt,.eml,.msg,.docx">
+      <p class="muted">Upload one or more raw source files.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="target_schema">Target schema JSON</label>
+      <input type="file" id="target_schema" name="target_schema" required accept=".json">
+      <p class="muted">Upload the target schema that describes the desired output shape.</p>
+    </div>
+
+    <button class="btn btn-primary" type="submit">
+      <span id="upload-spinner" class="spinner" style="display:none;"></span>
+      Run mapping
+    </button>
+  </form>
+  <div id="upload-result" style="margin-top: 1rem;"></div>
+</div>
+
+<script>
+function toggleNewClient(select) {
+  const fields = document.getElementById('new-client-fields');
+  if (select.value === '') {
+    fields.style.display = 'block';
+    fields.querySelectorAll('input').forEach(i => i.required = true);
+  } else {
+    fields.style.display = 'none';
+    fields.querySelectorAll('input').forEach(i => i.required = false);
+  }
+}
+</script>
+{% endblock %}
