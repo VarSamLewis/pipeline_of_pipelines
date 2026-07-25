@@ -71,11 +71,7 @@ def save_target_schema(schema: TargetSchema, path: str | Path) -> Path:
 def discover_client_files(folder_path: str | Path) -> list[Path]:
     """Discover all ingestible files in a folder, excluding target schema JSON."""
     folder = Path(folder_path)
-    files = [
-        p
-        for p in folder.iterdir()
-        if p.is_file() and p.suffix.lower() != ".json"
-    ]
+    files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() != ".json"]
     return sorted(files)
 
 

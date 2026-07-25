@@ -1,0 +1,58 @@
+# terraform.tfvars.example
+# Copy to terraform.tfvars and fill in your values
+
+environment          = "dev"
+location             = "eastus"
+project_name         = "pop"
+owner                = "your-team"
+
+# Unique suffix for globally unique names (storage, ACR)
+unique_suffix        = "abc123"
+
+# PostgreSQL
+postgres_admin_username = "pgadmin"
+postgres_admin_password = "CHANGE_ME_StrongPassword123!"
+
+# Entra ID
+entra_id_tenant_id    = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+entra_id_client_id    = ""  # Leave empty to create new app registration
+entra_id_client_secret = "" # Leave empty to generate new secret
+
+# Session secret (generate with: python -c "import secrets; print(secrets.token_urlsafe(32))")
+session_secret_key   = "CHANGE_ME_GenerateWithPython"
+
+# Azure OpenAI
+openai_deployment_name     = "gpt-4o-mini"
+embedding_deployment_name  = "text-embedding-3-small"
+
+# Container Apps scaling
+container_app_cpu          = 0.25
+container_app_memory       = 0.5
+pipeline_job_cpu           = 0.5
+pipeline_job_memory        = 1.0
+
+# SKUs
+acr_sku                    = "Basic"
+postgres_sku               = "Standard_B1ms"
+postgres_storage_gb        = 32
+ai_services_sku            = "S0"
+
+# VNet
+vnet_address_space         = "10.0.0.0/16"
+container_apps_subnet_cidr = "10.0.1.0/23"
+data_subnet_cidr           = "10.0.2.0/24"
+
+# Monitoring
+log_analytics_retention    = 30
+
+# CI/CD webhook (optional)
+ci_webhook_url             = ""
+
+# Entra ID redirect URIs (will be updated after first deploy)
+entra_redirect_uris        = []
+
+tags = {
+  project     = "pipeline-of-pipelines"
+  managed_by  = "terraform"
+  environment = "dev"
+}

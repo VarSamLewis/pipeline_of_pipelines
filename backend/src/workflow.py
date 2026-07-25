@@ -115,9 +115,7 @@ def _store_raw_file(
     if file_type == "csv":
         mime_type = "text/csv"
     elif file_type == "xlsx":
-        mime_type = (
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     storage_key = build_storage_key(client.code, str(batch_id), filename, sha256)
     object_store.put(storage_key, contents)
@@ -257,9 +255,7 @@ def approve_and_execute(spec_id: uuid.UUID) -> uuid.UUID:
         target_dfs, mapping_spec["columns"], target_schema
     )
     record_validation_results(run_id, test_results)
-    record_staging_metadata(
-        run_id, target_dfs, mapping_spec["columns"], target_schema
-    )
+    record_staging_metadata(run_id, target_dfs, mapping_spec["columns"], target_schema)
 
     return run_id
 

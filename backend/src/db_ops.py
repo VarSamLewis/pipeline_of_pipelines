@@ -78,6 +78,7 @@ def get_embedding(
     response = client.embeddings.create(model=model, input=content)
     return response.data[0].embedding
 
+
 _engine: Engine | None = None
 
 
@@ -286,9 +287,7 @@ def ingest_client_folder(
         elif file_type == "md":
             mime_type = "text/markdown"
         elif file_type == "docx":
-            mime_type = (
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
         storage_key = build_storage_key(
             client.code, str(batch.id), file_path.name, sha256
@@ -344,9 +343,7 @@ def _parse_raw_file(
             # Profile the first sheet as a DataFrame for completeness
             if sheet_name == sheet_names[0]:
                 df = build_polars_from_mapping_source(file_bytes, "xlsx", sheet_name)
-                profile_polars = profile_polars_dataframe(
-                    df, sheet_name
-                )
+                profile_polars = profile_polars_dataframe(df, sheet_name)
                 profiles.append(profile_polars)
         create_spreadsheet_profile(session, raw_file.id, {"sheets": profiles})
     elif file_type == "csv":
@@ -412,9 +409,7 @@ def get_spreadsheet_profile(
 ) -> SpreadsheetProfile | None:
     """Fetch the spreadsheet profile for a raw file."""
     return session.exec(
-        select(SpreadsheetProfile).where(
-            SpreadsheetProfile.raw_file_id == raw_file_id
-        )
+        select(SpreadsheetProfile).where(SpreadsheetProfile.raw_file_id == raw_file_id)
     ).first()
 
 
@@ -454,9 +449,7 @@ def search_evidence(
 ) -> Sequence[ExtractedEvidence]:
     """Perform vector similarity search over extracted evidence using pgvector."""
     distance = ExtractedEvidence.embedding.cosine_distance(query_embedding)
-    statement = select(ExtractedEvidence, distance.label("distance")).order_by(
-        distance
-    )
+    statement = select(ExtractedEvidence, distance.label("distance")).order_by(distance)
     if client_id:
         statement = statement.where(ExtractedEvidence.client_id == client_id)
     statement = statement.limit(top_k)
@@ -563,18 +556,6 @@ def get_mapping_spec(
 ) -> MappingSpec | None:
     """Fetch a mapping specification by UUID."""
     return session.get(MappingSpec, mapping_spec_id)
-
-
-def list_mapping_spec_versions(
-    session: Session,
-    client_id: uuid.UUID,
-) -> Sequence[MappingSpec]:
-    """List all versions of mapping specs for a client."""
-    return session.exec(
-        select(MappingSpec)
-        .where(MappingSpec.client_id == client_id)
-        .order_by(MappingSpec.version)
-    ).all()
 
 
 def approve_mapping_spec(
@@ -695,18 +676,6 @@ def create_generated_artifact(
     session.commit()
     session.refresh(artifact)
     return artifact
-
-
-def list_generated_artifacts(
-    session: Session,
-    mapping_spec_id: uuid.UUID,
-) -> Sequence[GeneratedArtifact]:
-    """List all artifacts generated from a mapping specification."""
-    return session.exec(
-        select(GeneratedArtifact).where(
-            GeneratedArtifact.mapping_spec_id == mapping_spec_id
-        )
-    ).all()
 
 
 # ---------------------------------------------------------------------------

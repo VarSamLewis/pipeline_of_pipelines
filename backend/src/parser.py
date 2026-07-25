@@ -9,7 +9,6 @@ and return structured data without side effects.
 from __future__ import annotations
 
 import email
-import hashlib
 import io
 from collections import Counter
 from typing import Any
@@ -19,11 +18,6 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
-
-
-def compute_file_hash(file_bytes: bytes) -> str:
-    """Return the first 16 hex characters of the SHA-256 hash."""
-    return hashlib.sha256(file_bytes).hexdigest()[:16]
 
 
 def load_workbook_from_bytes(file_bytes: bytes) -> Workbook:
@@ -172,34 +166,6 @@ def summarise_sheet(
         "data_start_row": header_row_idx + 2,
         "columns": column_summaries,
     }
-
-
-def read_data_rows(
-    file_bytes: bytes,
-    sheet_name: str,
-    data_start_row: int,
-    columns: list[str],
-) -> list[dict[str, Any]]:
-    """Read all data rows from an Excel sheet starting at a given row."""
-    wb = load_workbook_from_bytes(file_bytes)
-    ws: Worksheet = wb[sheet_name]
-
-    rows: list[dict[str, Any]] = []
-    row_num = data_start_row
-
-    for row in ws.iter_rows(min_row=data_start_row, values_only=False):
-        row_data: dict[str, Any] = {}
-        for cell in row:
-            col_letter = get_column_letter(cell.column)
-            if col_letter in columns:
-                row_data[col_letter] = cell.value
-        if any(v is not None for v in row_data.values()):
-            row_data["__row_num__"] = row_num
-            rows.append(row_data)
-        row_num += 1
-
-    wb.close()
-    return rows
 
 
 def read_csv_to_polars(file_bytes: bytes, **options: Any) -> pl.DataFrame:
@@ -367,18 +333,3 @@ def profile_polars_dataframe(
         "row_count": len(df),
         "columns": columns,
     }
-
-
-def build_folder_file_summary(
-    raw_files: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Build a concise summary of all files in an ingested folder."""
-    return [
-        {
-            "filename": f.get("original_filename"),
-            "mime_type": f.get("mime_type"),
-            "status": f.get("status"),
-            "raw_file_id": str(f.get("id")),
-        }
-        for f in raw_files
-    ]

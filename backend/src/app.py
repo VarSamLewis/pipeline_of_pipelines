@@ -149,9 +149,7 @@ def get_object_store() -> LocalObjectStore:
     global _object_store
     if _object_store is None:
         project_root = Path(__file__).parent.parent.parent
-        _object_store = LocalObjectStore(
-            str(project_root / "data" / "object-store")
-        )
+        _object_store = LocalObjectStore(str(project_root / "data" / "object-store"))
     return _object_store
 
 
@@ -955,9 +953,8 @@ def reject_mapping_spec_endpoint(
             raise HTTPException(status_code=404, detail="Mapping spec not found")
         spec.status = MappingSpecStatus.DRAFT
         spec.description = (
-            (spec.description or "")
-            + f"\nRejected by {user.email}: {payload.get('reason', '')}"
-        )
+            spec.description or ""
+        ) + f"\nRejected by {user.email}: {payload.get('reason', '')}"
         session.add(spec)
         session.commit()
         session.refresh(spec)
@@ -1172,9 +1169,11 @@ def execute_pipeline(
         "spec_id": str(spec_id),
         "target_environment": target_environment,
         "csv_paths": {name: str(path) for name, path in csv_paths.items()},
-        "results_csv": str(output_folder / "results.csv")
-        if (output_folder / "results.csv").exists()
-        else None,
+        "results_csv": (
+            str(output_folder / "results.csv")
+            if (output_folder / "results.csv").exists()
+            else None
+        ),
         "validation_results": test_results,
         "quality_profiles": {
             name: compute_quality_profile(df) for name, df in target_dfs.items()
@@ -1196,9 +1195,9 @@ def get_execution_run(
         if run is None:
             raise HTTPException(status_code=404, detail="Execution run not found")
         results = session.exec(
-            __import__("sqlmodel").select(VRModel).where(
-                VRModel.execution_run_id == run_id
-            )
+            __import__("sqlmodel")
+            .select(VRModel)
+            .where(VRModel.execution_run_id == run_id)
         ).all()
         return {
             "id": str(run.id),

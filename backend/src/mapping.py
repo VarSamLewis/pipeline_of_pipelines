@@ -118,14 +118,14 @@ def build_mapping_prompt(
         f"Evidence retrieved from the vector database for this mapping:\n"
         f"{evidence_text}\n\n"
         f"Business rules:\n{rules_text}\n\n"
-        "Return JSON with this shape: {\"mappings\": [{\"target_table\": \"...\", "
-        "\"target_column\": \"...\", \"source_columns\": [{\"source_table\": "
-        "\"...\", \"source_column\": \"...\"}], \"transformation_logic\": "
-        "\"...\", \"transformation_type\": \"expression\", "
-        "\"polars_expression\": \"col('source_col').cast(pl.Int64)\", "
-        "\"tests\": [\"not_null\", \"unique\"], "
-        "\"evidence_ids\": [\"...\"], \"business_rule_ids\": [\"...\"], "
-        "\"confidence\": 0.95}]}. "
+        'Return JSON with this shape: {"mappings": [{"target_table": "...", '
+        '"target_column": "...", "source_columns": [{"source_table": '
+        '"...", "source_column": "..."}], "transformation_logic": '
+        '"...", "transformation_type": "expression", '
+        '"polars_expression": "col(\'source_col\').cast(pl.Int64)", '
+        '"tests": ["not_null", "unique"], '
+        '"evidence_ids": ["..."], "business_rule_ids": ["..."], '
+        '"confidence": 0.95}]}. '
         "tests must be an array of plain strings, not objects. "
         "For per-row expressions use transformation_type=expression with valid "
         "Polars syntax. Available globals: pl, col, when, concat, coalesce, null, "
@@ -146,17 +146,17 @@ def build_mapping_prompt(
         "str.contains is case sensitive; use inline regex flag (?i) for "
         "case-insensitive matching, e.g. col('unit').str.contains(r'(?i)kg'). "
         "For filters use transformation_type=filter and provide filter_expression, "
-        "e.g. \"filter_expression\": "
+        'e.g. "filter_expression": '
         "\"~col('order_id').cast(str).str.starts_with('9999')\". "
         "For aggregations use transformation_type=aggregation with "
         "aggregation_source_table, aggregation_group_key, and "
-        "aggregation_expression, e.g. \"aggregation_source_table\": \"orders\", "
-        "\"aggregation_group_key\": \"cust_id\", "
+        'aggregation_expression, e.g. "aggregation_source_table": "orders", '
+        '"aggregation_group_key": "cust_id", '
         "\"aggregation_expression\": \"(col('qty') * col('unit_price')).sum()\". "
         "For cross-table lookups use transformation_type=lookup with "
         "lookup_source_table, lookup_key, and lookup_value, e.g. "
-        "\"lookup_source_table\": \"products\", \"lookup_key\": \"prod_sku\", "
-        "\"lookup_value\": \"prod_name\". "
+        '"lookup_source_table": "products", "lookup_key": "prod_sku", '
+        '"lookup_value": "prod_name". '
         "For lookups the source_columns should reference the column in the "
         "base/source table that contains the join key, not the lookup table column. "
         "Normalise categorical values to the exact allowed_values in the target "
@@ -176,9 +176,7 @@ def call_mapping_llm(
     """Call an OpenAI-compatible chat completion endpoint to propose mappings."""
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set and no api_key was provided"
-        )
+        raise RuntimeError("OPENAI_API_KEY is not set and no api_key was provided")
 
     from openai import OpenAI
 
@@ -245,8 +243,7 @@ def parse_llm_mapping_response(
     mappings: list[ProposedMapping] = []
     for raw in response.get("mappings", []):
         source_columns = [
-            SourceColumnRef.model_validate(ref)
-            for ref in raw.get("source_columns", [])
+            SourceColumnRef.model_validate(ref) for ref in raw.get("source_columns", [])
         ]
         tests: list[str] = []
         for t in raw.get("tests", []):
@@ -335,7 +332,9 @@ def propose_mapping_spec(
         max_total=top_k_evidence * 4,
     )
     business_rules = session.exec(
-        __import__("sqlmodel").select(BusinessRule).where(
+        __import__("sqlmodel")
+        .select(BusinessRule)
+        .where(
             BusinessRule.client_id == spec.client_id,
             BusinessRule.status == "approved",
         )
@@ -362,9 +361,7 @@ def propose_mapping_spec(
         {
             "target_table": m.target_table,
             "target_column": m.target_column,
-            "source_columns": [
-                ref.model_dump(mode="json") for ref in m.source_columns
-            ],
+            "source_columns": [ref.model_dump(mode="json") for ref in m.source_columns],
             "transformation_logic": m.transformation_logic,
             "polars_expression": m.polars_expression,
             "transformation_type": m.transformation_type,
@@ -407,9 +404,7 @@ def validate_mapping_columns(
         for p in spreadsheet_profiles
         for col in p.get("columns", [])
     }
-    target_columns = {
-        (t.name, c.name) for t in target_schema.tables for c in t.columns
-    }
+    target_columns = {(t.name, c.name) for t in target_schema.tables for c in t.columns}
 
     results = []
     for mapping in mappings:
@@ -457,10 +452,3 @@ def check_target_schema_coverage(
         "missing_required": missing_required,
         "missing_optional": missing_optional,
     }
-
-
-def format_mapping_spec_as_yaml(mapping_spec: dict[str, Any]) -> str:
-    """Render a mapping specification as human-readable YAML."""
-    import yaml
-
-    return yaml.safe_dump(mapping_spec, sort_keys=False)

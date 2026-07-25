@@ -142,6 +142,7 @@ def apply_lookup(
         return df.with_columns(pl.lit(None).alias(target_column))
 
     left_key = source_columns[0]["source_column"] if source_columns else lookup_key
+
     # LLMs sometimes confuse the lookup-table column name with the source column;
     # fall back to case- and punctuation-insensitive matches on the current DataFrame.
     def _normalise(name: str) -> str:

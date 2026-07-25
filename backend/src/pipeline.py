@@ -98,9 +98,7 @@ def load_source_dataframes(
             if file_type == "csv":
                 df = pl.read_csv(io.BytesIO(data))
             else:
-                df = pl.read_excel(
-                    io.BytesIO(data), sheet_id=0, engine="openpyxl"
-                )
+                df = pl.read_excel(io.BytesIO(data), sheet_id=0, engine="openpyxl")
             source_tables[key] = df
 
     return source_tables
@@ -270,17 +268,6 @@ def persist_staging_tables(
     return paths
 
 
-def write_results_csv(
-    df: pl.DataFrame,
-    output_path: str | Path,
-) -> Path:
-    """Write a single Polars DataFrame to a CSV file."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.write_csv(output_path)
-    return output_path
-
-
 # ---------------------------------------------------------------------------
 # Validation and quality
 # ---------------------------------------------------------------------------
@@ -291,9 +278,7 @@ def build_validation_tests(
     target_schema: TargetSchema,
 ) -> list[dict[str, Any]]:
     """Translate mapping-column tests and target schema into Polars checks."""
-    target_col_map = {
-        c.name: c for t in target_schema.tables for c in t.columns
-    }
+    target_col_map = {c.name: c for t in target_schema.tables for c in t.columns}
     tests = []
     for col in mapping_columns:
         tc = target_col_map.get(col["target_column"])
@@ -483,35 +468,3 @@ def record_staging_metadata(
                 session.add(sc)
             session.commit()
     return ids
-
-
-def build_lineage_for_run(
-    execution_run_id: uuid.UUID,
-    mapping_spec: dict[str, Any],
-    target_dfs: dict[str, pl.DataFrame],
-    target_schema: TargetSchema,
-) -> None:
-    """Record all lineage edges produced by an execution run."""
-    from db_ops import record_lineage_edge
-
-    with get_session() as session:
-        for col in mapping_spec["columns"]:
-            for ref in col["source_columns"]:
-                raw_file_id = ref.get("raw_file_id")
-                if raw_file_id:
-                    record_lineage_edge(
-                        session,
-                        "RawFile",
-                        uuid.UUID(raw_file_id),
-                        "MappingColumn",
-                        uuid.UUID(col["id"]),
-                        "derived_from",
-                    )
-            record_lineage_edge(
-                session,
-                "MappingColumn",
-                uuid.UUID(col["id"]),
-                "ExecutionRun",
-                execution_run_id,
-                "produced_by",
-            )

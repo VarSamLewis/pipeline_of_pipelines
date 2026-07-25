@@ -34,9 +34,7 @@ WORKOS_API_KEY = os.getenv("WORKOS_API_KEY", "")
 WORKOS_REDIRECT_URI = os.getenv(
     "WORKOS_REDIRECT_URI", "http://localhost:8000/auth/callback"
 )
-WORKOS_AUTHKIT_DOMAIN = os.getenv(
-    "WORKOS_AUTHKIT_DOMAIN", "https://auth.workos.com"
-)
+WORKOS_AUTHKIT_DOMAIN = os.getenv("WORKOS_AUTHKIT_DOMAIN", "https://auth.workos.com")
 SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY", secrets.token_urlsafe(32))
 SESSION_MAX_AGE_SECONDS = int(os.getenv("SESSION_MAX_AGE", "86400"))
 AUTH_BYPASS_LOCAL = os.getenv("AUTH_BYPASS_LOCAL", "false").lower() in {

@@ -807,9 +807,7 @@ def show_lineage(spec_id: uuid.UUID, folder_path: Path) -> None:
     with get_session() as session:
         columns = get_mapping_columns(session, spec_id)
 
-        evidence_ids = {
-            eid for col in columns for eid in (col.evidence_ids or [])
-        }
+        evidence_ids = {eid for col in columns for eid in (col.evidence_ids or [])}
         rule_ids = {rid for col in columns for rid in (col.business_rule_ids or [])}
         raw_file_ids = {
             ref.get("raw_file_id")
@@ -900,9 +898,7 @@ def show_lineage(spec_id: uuid.UUID, folder_path: Path) -> None:
         lines.append("=" * 70)
         lines.append("")
         mapping_json = json.loads((folder_path / "mapping.json").read_text())
-        lines.append(
-            json.dumps(mapping_json.get("columns", []), indent=2, default=str)
-        )
+        lines.append(json.dumps(mapping_json.get("columns", []), indent=2, default=str))
 
         report_text = "\n".join(lines)
         report_path.write_text(report_text, encoding="utf-8")

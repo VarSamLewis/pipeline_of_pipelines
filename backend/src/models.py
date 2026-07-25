@@ -15,13 +15,14 @@ from pathlib import Path
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from sqlmodel import JSON, Column, SQLModel, Text
 from sqlmodel import Field as SQLField
 
 # ---------------------------------------------------------------------------
 # Enumerations
 # ---------------------------------------------------------------------------
+
 
 class FileStatus(str, enum.Enum):
     """Lifecycle states for a raw file."""
@@ -61,14 +62,6 @@ class ExecutionStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class ValidationSeverity(str, enum.Enum):
-    """Severity of a validation result."""
-
-    INFO = "info"
-    WARNING = "warning"
-    ERROR = "error"
-
-
 class UserRole(str, enum.Enum):
     """Authorization roles enforced by the WorkOS-backed auth layer."""
 
@@ -79,54 +72,8 @@ class UserRole(str, enum.Enum):
 
 
 # ---------------------------------------------------------------------------
-# Pydantic request/response models
+# Pydantic schema models
 # ---------------------------------------------------------------------------
-
-class ClientCreate(BaseModel):
-    """Payload for registering a new client/tenant."""
-
-    name: str = Field(..., description="Human-readable client name.")
-    code: str = Field(
-        ...,
-        description="Unique short code used in generated artifact names.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary client-level metadata.",
-    )
-
-
-class IngestionBatchCreate(BaseModel):
-    """Payload for starting a new ingestion batch."""
-
-    client_id: uuid.UUID = Field(..., description="Owning client.")
-    label: str | None = Field(
-        default=None,
-        description="Optional human label for the batch.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary batch-level metadata.",
-    )
-
-
-class RawFileRegister(BaseModel):
-    """Payload for registering an already-uploaded raw file."""
-
-    client_id: uuid.UUID = Field(..., description="Owning client.")
-    ingestion_batch_id: uuid.UUID = Field(
-        ...,
-        description="Batch this file belongs to.",
-    )
-    original_filename: str = Field(..., description="Name provided by the client.")
-    storage_key: str = Field(..., description="Key/path in the object store.")
-    sha256: str = Field(..., description="SHA-256 hex digest of the file bytes.")
-    size_bytes: int = Field(..., ge=0, description="File size in bytes.")
-    mime_type: str = Field(..., description="Detected MIME type.")
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary file-level metadata.",
-    )
 
 
 class TargetSchemaColumn(BaseModel):
@@ -180,92 +127,6 @@ class TargetSchema(BaseModel):
         default_factory=list,
         description="Target tables to map source data into.",
     )
-
-
-class MappingSpecCreate(BaseModel):
-    """Payload for creating a new mapping specification draft."""
-
-    client_id: uuid.UUID = Field(..., description="Owning client.")
-    source_raw_file_ids: list[uuid.UUID] = Field(
-        default_factory=list,
-        description="Raw files used as source evidence for this spec.",
-    )
-    target_schema: TargetSchema = Field(
-        ...,
-        description="Supplied target schema the mapping should shape data into.",
-    )
-    description: str | None = Field(
-        default=None,
-        description="Human-readable summary of the spec.",
-    )
-
-
-class MappingSpecApprove(BaseModel):
-    """Payload for approving a proposed mapping specification."""
-
-    reviewer: str = Field(..., description="Identity of the human reviewer.")
-    notes: str | None = Field(
-        default=None,
-        description="Optional review notes.",
-    )
-
-
-class BusinessRuleCreate(BaseModel):
-    """Payload for creating a business rule."""
-
-    client_id: uuid.UUID = Field(..., description="Owning client.")
-    rule_text: str = Field(..., description="Natural-language rule statement.")
-    evidence_ids: list[uuid.UUID] = Field(
-        default_factory=list,
-        description="Evidence items supporting this rule.",
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Arbitrary rule-level metadata.",
-    )
-
-
-class ExecutionRunCreate(BaseModel):
-    """Payload for triggering an execution run."""
-
-    artifact_set_id: uuid.UUID = Field(
-        ...,
-        description="Generated artifact set to execute.",
-    )
-    target_environment: str = Field(
-        default="local",
-        description="Environment label (e.g. local, staging).",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Pydantic domain models (returned by services)
-# ---------------------------------------------------------------------------
-
-class ColumnProfile(BaseModel):
-    """Profile for a single spreadsheet column."""
-
-    column_letter: str
-    header: str | None
-    non_empty_count: int
-    first_values: list[str]
-    last_values: list[str]
-    dominant_type: str | None
-    type_inconsistencies: str | None
-    distinct_values: list[str] | None
-
-    model_config = ConfigDict(extra="allow")
-
-
-class SheetProfile(BaseModel):
-    """Profile for a single spreadsheet sheet."""
-
-    sheet_name: str
-    total_rows: int
-    total_cols: int
-    header_row: int
-    data_start_row: int
-    columns: list[ColumnProfile]
 
 
 class SourceColumnRef(BaseModel):
@@ -383,7 +244,6 @@ class MappingFile(BaseModel):
     content: dict[str, Any]
 
 
-
 class FolderIngestionResult(BaseModel):
     """Summary returned after ingesting a client folder of heterogeneous files."""
 
@@ -395,25 +255,10 @@ class FolderIngestionResult(BaseModel):
     evidence_ids: list[uuid.UUID]
 
 
-class LineagePath(BaseModel):
-    """A single provenance path from an output column back to source."""
-
-    staging_column_id: uuid.UUID
-    staging_column_name: str
-    mapping_column_id: uuid.UUID
-    source_columns: list[SourceColumnRef]
-    raw_file_ids: list[uuid.UUID]
-    original_filenames: list[str]
-    evidence_ids: list[uuid.UUID]
-    business_rule_ids: list[uuid.UUID]
-    generated_artifact_ids: list[uuid.UUID]
-    execution_run_ids: list[uuid.UUID]
-    validation_result_ids: list[uuid.UUID]
-
-
 # ---------------------------------------------------------------------------
 # SQLModel table definitions (Postgres + pgvector)
 # ---------------------------------------------------------------------------
+
 
 class Client(SQLModel, table=True):
     """A tenant/client onboarded into the platform."""

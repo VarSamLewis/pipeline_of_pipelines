@@ -66,9 +66,11 @@ def test_parse_llm_mapping_response_requires_target_fields() -> None:
     """LLM responses missing required fields should raise validation errors."""
     response = {"mappings": [{"target_table": "records"}]}
     with pytest.raises((KeyError, ValueError)):
-        parse_llm_mapping_response(response, uuid.uuid4(), TargetSchema(
-            client_code="test", name="default", tables=[]
-        ))
+        parse_llm_mapping_response(
+            response,
+            uuid.uuid4(),
+            TargetSchema(client_code="test", name="default", tables=[]),
+        )
 
 
 def test_validate_mapping_columns_reports_missing_sources() -> None:
