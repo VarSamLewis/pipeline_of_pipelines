@@ -53,7 +53,7 @@ def load_source_dataframes(
             if file_type == "csv":
                 df = pl.read_csv(io.BytesIO(data))
             else:
-                df = pl.read_excel(io.BytesIO(data), sheet_id=0, engine="openpyxl")
+                df = pl.read_excel(io.BytesIO(data), sheet_id=1, engine="openpyxl")
             source_tables[key] = df
 
     return source_tables

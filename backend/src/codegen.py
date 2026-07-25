@@ -518,7 +518,7 @@ def execute_generated_pipeline(
             if spec is None:
                 raise ValueError(f"Mapping spec not found: {spec_id}")
             for raw_file_id in spec.source_raw_file_ids:
-                raw_file = get_raw_file_by_id(session, uuid.UUID(raw_file_id))
+                raw_file = get_raw_file_by_id(session, raw_file_id)
                 if raw_file is None:
                     continue
                 data = object_store.get(raw_file.storage_key)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC
-from typing import Any
+from typing import Any, cast
 
 from config import get_settings
 from file_ops import (
@@ -24,12 +24,10 @@ from models import (
     AuditLog,
     BusinessRule,
     BusinessRuleStatus,
-    Client,
     ExtractedEvidence,
     FileStatus,
     FolderIngestionResult,
     GeneratedArtifact,
-    IngestionBatch,
     MappingColumn,
     MappingSpec,
     MappingSpecStatus,
@@ -46,6 +44,10 @@ from parser import (
     parse_text_document,
     profile_polars_dataframe,
     summarise_sheet,
+)
+from repositories.clients import (
+    create_ingestion_batch,
+    get_client_by_id,
 )
 from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -118,56 +120,6 @@ def get_session(engine: Engine | None = None) -> Session:
 # ---------------------------------------------------------------------------
 # Client and ingestion batch operations
 # ---------------------------------------------------------------------------
-
-
-def create_client(
-    session: Session,
-    name: str,
-    code: str,
-    metadata: dict[str, Any] | None = None,
-) -> Client:
-    """Register a new client/tenant."""
-    client = Client(name=name, code=code, meta=metadata or {})
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-    return client
-
-
-def get_client_by_code(session: Session, code: str) -> Client | None:
-    """Fetch a client by its short code."""
-    return session.exec(select(Client).where(Client.code == code)).first()
-
-
-def get_client_by_id(session: Session, client_id: uuid.UUID) -> Client | None:
-    """Fetch a client by UUID."""
-    return session.get(Client, client_id)
-
-
-def create_ingestion_batch(
-    session: Session,
-    client_id: uuid.UUID,
-    label: str | None,
-    metadata: dict[str, Any] | None = None,
-) -> IngestionBatch:
-    """Create a new ingestion batch for a client."""
-    batch = IngestionBatch(
-        client_id=client_id,
-        label=label,
-        meta=metadata or {},
-    )
-    session.add(batch)
-    session.commit()
-    session.refresh(batch)
-    return batch
-
-
-def get_ingestion_batch(
-    session: Session,
-    batch_id: uuid.UUID,
-) -> IngestionBatch | None:
-    """Fetch an ingestion batch by UUID."""
-    return session.get(IngestionBatch, batch_id)
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +403,8 @@ def search_evidence(
     top_k: int = 5,
 ) -> Sequence[ExtractedEvidence]:
     """Perform vector similarity search over extracted evidence using pgvector."""
-    distance = ExtractedEvidence.embedding.cosine_distance(query_embedding)
+    embedding_column = cast(Any, ExtractedEvidence.embedding)
+    distance = embedding_column.cosine_distance(query_embedding)
     statement = select(ExtractedEvidence, distance.label("distance")).order_by(distance)
     if client_id:
         statement = statement.where(ExtractedEvidence.client_id == client_id)

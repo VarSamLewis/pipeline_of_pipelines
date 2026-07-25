@@ -12,7 +12,6 @@ This module hides the multi-table pipeline behind three coarse operations:
 from __future__ import annotations
 
 import contextlib
-import datetime
 import json
 import uuid
 from pathlib import Path
@@ -24,12 +23,8 @@ from config import get_settings
 from db_ops import (
     _parse_raw_file,
     approve_mapping_spec,
-    create_client,
-    create_ingestion_batch,
     create_mapping_spec,
     create_raw_file,
-    get_client_by_code,
-    get_client_by_id,
     get_mapping_spec,
     get_raw_file_by_id,
     get_session,
@@ -44,18 +39,24 @@ from file_ops import (
 )
 from mapping import propose_mapping_spec
 from mapping_specs import load_mapping_spec, load_target_schema_from_spec
-from models import (
-    Client,
-    ExecutionRun,
-    ExecutionStatus,
-    MappingSpecStatus,
-    TargetSchema,
-)
+from models import Client, ExecutionRun, MappingSpecStatus, TargetSchema
 from pipeline import (
     record_execution_run,
     record_staging_metadata,
     record_validation_results,
     run_validation_tests,
+)
+from repositories.clients import (
+    create_client,
+    create_ingestion_batch,
+    get_client_by_code,
+    get_client_by_id,
+)
+from repositories.executions import (
+    approve_result as approve_result_record,
+)
+from repositories.executions import (
+    reject_result as reject_result_record,
 )
 from sqlmodel import select
 
@@ -175,6 +176,7 @@ def process_upload(
             label="Wizard upload",
             metadata={},
         )
+        session.commit()
 
         raw_file_ids: list[uuid.UUID] = []
         for upload in source_uploads:
@@ -274,27 +276,15 @@ def reject_mapping(spec_id: uuid.UUID) -> None:
 def approve_result(run_id: uuid.UUID) -> ExecutionRun:
     """Record the explicit human approval gate for generated results."""
     with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise ValueError("Execution run not found")
-        run.status = ExecutionStatus.SUCCESS
-        run.finished_at = datetime.datetime.now(datetime.UTC)
-        session.add(run)
+        run = approve_result_record(session, run_id)
         session.commit()
-        session.refresh(run)
         return run
 
 
 def reject_result(run_id: uuid.UUID, reason: str = "") -> uuid.UUID:
     """Reject generated results and return their mapping spec for review."""
     with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise ValueError("Execution run not found")
-        run.status = ExecutionStatus.FAILED
-        run.finished_at = datetime.datetime.now(datetime.UTC)
-        run.logs = {**(run.logs or {}), "rejection_reason": reason}
-        session.add(run)
+        run = reject_result_record(session, run_id, reason)
         session.commit()
         return run.mapping_spec_id
 

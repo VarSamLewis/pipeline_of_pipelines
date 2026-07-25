@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from config import get_settings
 from models import (
     BusinessRule,
     ExtractedEvidence,
     MappingSpec,
+    MappingSpecStatus,
     ProposedMapping,
     SourceColumnRef,
     TargetSchema,
@@ -185,14 +186,14 @@ def call_mapping_llm(
     client = OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model,
-        messages=messages,
+        messages=cast(Any, messages),
         temperature=temperature,
         response_format={"type": "json_object"},
     )
     content = response.choices[0].message.content
     if content is None:
         raise RuntimeError("LLM returned empty content")
-    return json.loads(content)
+    return cast(dict[str, Any], json.loads(content))
 
 
 def _normalize_polars_expression(expression: str | None) -> str | None:
@@ -304,7 +305,7 @@ def propose_mapping_spec(
         raise ValueError(f"Mapping spec not found: {mapping_spec_id}")
 
     raw_files = [
-        session.get(__import__("models").RawFile, uuid.UUID(rid))
+        session.get(__import__("models").RawFile, rid)
         for rid in spec.source_raw_file_ids
     ]
     raw_files = [rf for rf in raw_files if rf is not None]
@@ -386,7 +387,11 @@ def propose_mapping_spec(
     from db_ops import create_mapping_columns
 
     create_mapping_columns(session, mapping_spec_id, columns)
-    update_mapping_spec_status(session, mapping_spec_id, "proposed")
+    update_mapping_spec_status(
+        session,
+        mapping_spec_id,
+        MappingSpecStatus.PROPOSED,
+    )
 
     refreshed = get_mapping_spec(session, mapping_spec_id)
     if refreshed is None:
@@ -437,10 +442,10 @@ def check_target_schema_coverage(
 ) -> dict[str, Any]:
     """Report which target schema columns are covered or missing."""
     covered = {(m.target_table, m.target_column) for m in mappings}
-    missing_required = []
-    missing_optional = []
-    covered_required = []
-    covered_optional = []
+    missing_required: list[tuple[str, str]] = []
+    missing_optional: list[tuple[str, str]] = []
+    covered_required: list[tuple[str, str]] = []
+    covered_optional: list[tuple[str, str]] = []
 
     for table in target_schema.tables:
         for col in table.columns:

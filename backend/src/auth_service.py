@@ -18,12 +18,12 @@ Role storage:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from config import get_settings
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request
-from starlette.middleware.sessions import SessionMiddleware
 from workos import WorkOSClient
 
 load_dotenv()
@@ -58,18 +58,6 @@ def get_workos_client() -> WorkOSClient:
     if not WORKOS_API_KEY:
         raise RuntimeError("WORKOS_API_KEY is not configured")
     return WorkOSClient(api_key=WORKOS_API_KEY, client_id=WORKOS_CLIENT_ID)
-
-
-def get_session_middleware() -> SessionMiddleware:
-    """Return Starlette session middleware for encrypted cookie sessions."""
-    return SessionMiddleware(
-        SESSION_SECRET_KEY,
-        session_cookie="session",
-        max_age=SESSION_MAX_AGE_SECONDS,
-        same_site="lax",
-        https_only=False,  # Set True in production/Azure behind HTTPS.
-        path="/",
-    )
 
 
 def get_authkit_url(state: str) -> str:
@@ -232,7 +220,7 @@ def require_auth(request: Request) -> Any:
     return user
 
 
-def require_role(*allowed_roles: str):
+def require_role(*allowed_roles: str) -> Callable[[Any], Any]:
     """Dependency factory that restricts access to the given roles."""
 
     def checker(user: Any = Depends(require_auth)) -> Any:
