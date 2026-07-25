@@ -13,10 +13,10 @@ when proposing how to shape the data into the supplied target schema.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from typing import Any
 
+from config import get_settings
 from models import (
     BusinessRule,
     ExtractedEvidence,
@@ -174,7 +174,9 @@ def call_mapping_llm(
     temperature: float = 0.2,
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible chat completion endpoint to propose mappings."""
-    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    settings = get_settings()
+    api_key = api_key or settings.openai_api_key
+    base_url = base_url or settings.openai_base_url
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set and no api_key was provided")
 
@@ -340,7 +342,9 @@ def propose_mapping_spec(
         )
     ).all()
 
-    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    settings = get_settings()
+    api_key = api_key or settings.openai_api_key
+    base_url = base_url or settings.openai_base_url
     if not api_key:
         raise RuntimeError(
             "OPENAI_API_KEY is not set. Mapping proposals require an LLM."

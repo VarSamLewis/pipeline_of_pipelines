@@ -19,12 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from db_ops import (
-    get_mapping_spec,
-    get_raw_file_by_id,
-    get_session,
-)
-from file_ops import LocalObjectStore, detect_file_type
+from db_ops import get_raw_file_by_id, get_session
+from file_ops import ObjectStore, detect_file_type
+from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import TargetSchema
 
 # ---------------------------------------------------------------------------
@@ -32,51 +29,9 @@ from models import TargetSchema
 # ---------------------------------------------------------------------------
 
 
-def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
-    """Load an approved mapping specification, its columns, and target schema."""
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise ValueError(f"Mapping spec not found: {spec_id}")
-        from db_ops import get_mapping_columns
-
-        columns = get_mapping_columns(session, spec_id)
-        return {
-            "id": str(spec.id),
-            "client_id": str(spec.client_id),
-            "version": spec.version,
-            "status": spec.status.value,
-            "source_raw_file_ids": [str(x) for x in spec.source_raw_file_ids],
-            "target_schema_json": spec.target_schema_json,
-            "description": spec.description,
-            "approved_by": spec.approved_by,
-            "columns": [
-                {
-                    "id": str(c.id),
-                    "target_table": c.target_table,
-                    "target_column": c.target_column,
-                    "source_columns": c.source_columns_json,
-                    "transformation_logic": c.transformation_logic,
-                    "polars_expression": c.polars_expression,
-                    "tests": c.tests,
-                    "evidence_ids": [str(x) for x in c.evidence_ids],
-                    "business_rule_ids": [str(x) for x in c.business_rule_ids],
-                    "confidence": c.confidence,
-                    "sort_order": c.sort_order,
-                }
-                for c in columns
-            ],
-        }
-
-
-def load_target_schema_from_spec(mapping_spec: dict[str, Any]) -> TargetSchema:
-    """Deserialize the target schema stored inside a mapping spec."""
-    return TargetSchema.model_validate(mapping_spec["target_schema_json"])
-
-
 def load_source_dataframes(
     mapping_spec: dict[str, Any],
-    object_store: LocalObjectStore,
+    object_store: ObjectStore,
 ) -> dict[str, pl.DataFrame]:
     """Load each source table referenced by the spec into a Polars DataFrame."""
     source_tables: dict[str, pl.DataFrame] = {}
@@ -227,7 +182,7 @@ def build_target_dataframe(
 
 def run_pipeline(
     spec_id: uuid.UUID,
-    object_store: LocalObjectStore,
+    object_store: ObjectStore,
     target_environment: str = "local",
 ) -> dict[str, pl.DataFrame]:
     """Execute the full Polars transformation pipeline."""

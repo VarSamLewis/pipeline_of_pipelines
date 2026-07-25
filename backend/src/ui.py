@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from pathlib import Path
 from typing import Any
 
 import polars as pl
 from auth_service import require_auth
-from db_ops import get_session
+from config import get_settings
 from fastapi import (
     APIRouter,
     Depends,
@@ -30,21 +29,20 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from models import Client, ExecutionRun
-from sqlmodel import select
 from workflow import (
     approve_and_execute,
+    approve_result,
     get_run_output_paths,
+    list_clients,
     load_mapping_json,
     process_upload,
     reject_mapping,
+    reject_result,
 )
 
 router = APIRouter()
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-TEMPLATES_DIR = PROJECT_ROOT / "backend" / "templates"
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates = Jinja2Templates(directory=str(get_settings().templates_dir))
 
 CSV_DISP_COUNT = 10
 
@@ -61,12 +59,6 @@ def _user_context(request: Request, user: Any) -> dict[str, Any]:
     return {"request": request, "user": user}
 
 
-def _list_clients() -> list[Client]:
-    """Return all clients for the upload dropdown."""
-    with get_session() as session:
-        return list(session.exec(select(Client).order_by(Client.name)).all())
-
-
 # ---------------------------------------------------------------------------
 # Page 1: Upload
 # ---------------------------------------------------------------------------
@@ -78,7 +70,7 @@ def upload_page(request: Request, user: Any = Depends(require_auth)) -> Any:
     return templates.TemplateResponse(
         request,
         "upload.html",
-        {**_user_context(request, user), "clients": _list_clients()},
+        {**_user_context(request, user), "clients": list_clients()},
     )
 
 
@@ -261,6 +253,10 @@ def results_confirm(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Confirm the results and finish the workflow."""
+    try:
+        approve_result(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return templates.TemplateResponse(
         request,
         "partials/success.html",
@@ -279,9 +275,8 @@ def results_reject(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Reject the results and return to the mapping review page."""
-    with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Run not found")
-        spec_id = run.mapping_spec_id
+    try:
+        spec_id = reject_result(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _htmx_redirect(request, f"/mapping/{spec_id}")

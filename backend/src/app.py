@@ -47,8 +47,8 @@ from auth_service import (
 from codegen import (
     generate_artifact_set,
     generate_output_folder,
-    load_mapping_spec,
 )
+from config import get_settings
 from db_ops import (
     approve_business_rule,
     approve_mapping_spec,
@@ -71,6 +71,7 @@ from db_ops import (
     search_evidence_by_text,
     write_audit_log,
 )
+from dependencies import get_artifact_store, get_object_store
 from fastapi import (
     Depends,
     FastAPI,
@@ -84,7 +85,6 @@ from fastapi import (
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from file_ops import (
-    LocalObjectStore,
     build_storage_key,
     compute_sha256,
     detect_file_type,
@@ -92,10 +92,10 @@ from file_ops import (
     save_target_schema,
 )
 from mapping import propose_mapping_spec as propose_mapping_spec_service
+from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import PipelineOutputFolder, TargetSchema
 from pipeline import (
     compute_quality_profile,
-    load_target_schema_from_spec,
     persist_staging_tables,
     record_execution_run,
     record_staging_metadata,
@@ -105,6 +105,7 @@ from pipeline import (
 )
 from starlette.middleware.sessions import SessionMiddleware
 from ui import router as ui_router
+from workflow import approve_result, reject_result
 
 app = FastAPI(
     title="Pipeline of Pipelines",
@@ -125,14 +126,10 @@ app.add_middleware(
     path="/",
 )
 
-# Global state (replaced by proper dependency injection in production)
-_object_store: LocalObjectStore | None = None
-_output_folders: dict[uuid.UUID, Path] = {}
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+settings = get_settings()
 
 # Static assets and HTMX UI routes.
-STATIC_DIR = Path(__file__).parent.parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 app.include_router(ui_router)
 
 
@@ -142,15 +139,6 @@ def login_page(request: Request) -> RedirectResponse:
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
     return RedirectResponse(url="/auth/login")
-
-
-def get_object_store() -> LocalObjectStore:
-    """Return the singleton local object store."""
-    global _object_store
-    if _object_store is None:
-        project_root = Path(__file__).parent.parent.parent
-        _object_store = LocalObjectStore(str(project_root / "data" / "object-store"))
-    return _object_store
 
 
 # ---------------------------------------------------------------------------
@@ -603,9 +591,8 @@ def upload_target_schema(
         schema = TargetSchema.model_validate_json(content.decode("utf-8"))
         schema.client_code = client_code
 
-        schema_dir = PROJECT_ROOT / "data" / "target-schemas" / client_code
-        schema_dir.mkdir(parents=True, exist_ok=True)
-        schema_path = schema_dir / "target_schema.json"
+        schema_path = settings.target_schema_path(client_code)
+        schema_path.parent.mkdir(parents=True, exist_ok=True)
         save_target_schema(schema, schema_path)
 
         return {
@@ -626,9 +613,7 @@ def get_target_schema(
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
-    schema_path = (
-        PROJECT_ROOT / "data" / "target-schemas" / client_code / "target_schema.json"
-    )
+    schema_path = settings.target_schema_path(client_code)
     if not schema_path.exists():
         raise HTTPException(status_code=404, detail="Target schema not found")
     return load_target_schema(schema_path)
@@ -1014,9 +999,8 @@ def generate_artifacts_endpoint(
     user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Generate Polars artifacts from an approved mapping spec."""
-    output_folder = PROJECT_ROOT / "data" / "output-folders" / str(spec_id)
+    output_folder = get_artifact_store().folder(spec_id)
     artifacts = generate_artifact_set(spec_id, output_folder)
-    _output_folders[spec_id] = output_folder
     return {
         "spec_id": str(spec_id),
         "output_folder": str(output_folder),
@@ -1039,10 +1023,9 @@ def generate_output_folder_endpoint(
 ) -> PipelineOutputFolder:
     """Generate the complete client deliverable folder."""
     payload = payload or {}
-    default_folder = PROJECT_ROOT / "data" / "output-folders" / str(spec_id)
+    default_folder = get_artifact_store().folder(spec_id)
     output_folder = Path(payload.get("output_folder", default_folder))
     folder = generate_output_folder(spec_id, output_folder, get_object_store())
-    _output_folders[spec_id] = folder.folder_path
     return folder
 
 
@@ -1052,11 +1035,7 @@ def get_generated_pipeline_py(
     user: Any = Depends(require_auth),
 ) -> PlainTextResponse:
     """Return the generated single-file Polars pipeline for human review."""
-    folder = _output_folders.get(folder_id)
-    if folder is None:
-        # Try deterministic path
-        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
-    path = folder / "pipeline.py"
+    path = get_artifact_store().path(folder_id, "pipeline.py")
     if not path.exists():
         raise HTTPException(status_code=404, detail="pipeline.py not found")
     return PlainTextResponse(path.read_text(), media_type="text/x-python")
@@ -1074,10 +1053,7 @@ def update_generated_pipeline_py(
     contract for the edited file. The mapping.json and audit log remain
     unchanged; the edited script is used on the next execution.
     """
-    folder = _output_folders.get(folder_id)
-    if folder is None:
-        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
-    path = folder / "pipeline.py"
+    path = get_artifact_store().path(folder_id, "pipeline.py")
     if not path.exists():
         raise HTTPException(status_code=404, detail="pipeline.py not found")
     content = payload.get("content", "")
@@ -1101,10 +1077,7 @@ def get_generated_mapping_json(
     user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
     """Return the generated mapping.json for human review."""
-    folder = _output_folders.get(folder_id)
-    if folder is None:
-        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
-    path = folder / "mapping.json"
+    path = get_artifact_store().path(folder_id, "mapping.json")
     if not path.exists():
         raise HTTPException(status_code=404, detail="mapping.json not found")
     return json.loads(path.read_text())
@@ -1116,10 +1089,7 @@ def get_generated_results_csv(
     user: Any = Depends(require_auth),
 ) -> FileResponse:
     """Return the generated results.csv for human review."""
-    folder = _output_folders.get(folder_id)
-    if folder is None:
-        folder = PROJECT_ROOT / "data" / "output-folders" / str(folder_id)
-    path = folder / "results.csv"
+    path = get_artifact_store().path(folder_id, "results.csv")
     if not path.exists():
         raise HTTPException(status_code=404, detail="results.csv not found")
     return FileResponse(path, media_type="text/csv", filename="results.csv")
@@ -1134,7 +1104,7 @@ def execute_pipeline(
     """Execute the Polars transformation pipeline for an approved spec."""
     payload = payload or {}
     target_environment = payload.get("target_environment", "local")
-    default_folder = PROJECT_ROOT / "data" / "output-folders" / str(spec_id)
+    default_folder = get_artifact_store().folder(spec_id)
     output_folder = Path(payload.get("output_folder", default_folder))
     output_folder.mkdir(parents=True, exist_ok=True)
 
@@ -1255,33 +1225,15 @@ def approve_execution_run_endpoint(
     user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Publish an execution run (approver only)."""
-    from datetime import datetime
-
-    from models import ExecutionRun, ExecutionStatus
-
-    with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Execution run not found")
-        run.status = ExecutionStatus.SUCCESS
-        run.finished_at = datetime.utcnow()
-        session.add(run)
-        session.commit()
-        session.refresh(run)
-        write_audit_log(
-            session,
-            "execution_run_approved",
-            "ExecutionRun",
-            run.id,
-            user.id,
-            user.email,
-            {"status": run.status.value},
-        )
-        return {
-            "id": str(run.id),
-            "status": run.status.value,
-            "approved_by": user.email,
-        }
+    try:
+        run = approve_result(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "id": str(run.id),
+        "status": run.status.value,
+        "approved_by": user.email,
+    }
 
 
 @app.post("/execution-runs/{run_id}/reject")
@@ -1291,24 +1243,11 @@ def reject_execution_run_endpoint(
     user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
     """Reject an execution run and return it for correction."""
-    from datetime import datetime
-
-    from models import ExecutionRun, ExecutionStatus
-
-    with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Execution run not found")
-        run.status = ExecutionStatus.FAILED
-        run.finished_at = datetime.utcnow()
-        run.logs = {**(run.logs or {}), "rejection_reason": payload.get("reason", "")}
-        session.add(run)
-        session.commit()
-        session.refresh(run)
-        return {
-            "id": str(run.id),
-            "status": run.status.value,
-        }
+    try:
+        reject_result(run_id, payload.get("reason", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"id": str(run_id), "status": "failed"}
 
 
 # ---------------------------------------------------------------------------

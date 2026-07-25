@@ -12,14 +12,15 @@ This module hides the multi-table pipeline behind three coarse operations:
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
-import os
 import uuid
 from pathlib import Path
 from typing import Any
 
 import polars as pl
-from codegen import generate_output_folder, load_mapping_spec
+from codegen import generate_output_folder
+from config import get_settings
 from db_ops import (
     _parse_raw_file,
     approve_mapping_spec,
@@ -34,31 +35,29 @@ from db_ops import (
     get_session,
     update_mapping_spec_status,
 )
+from dependencies import get_artifact_store, get_object_store
 from file_ops import (
-    LocalObjectStore,
+    ObjectStore,
     build_storage_key,
     compute_sha256,
     detect_file_type,
 )
 from mapping import propose_mapping_spec
-from models import Client, MappingSpecStatus, TargetSchema
+from mapping_specs import load_mapping_spec, load_target_schema_from_spec
+from models import (
+    Client,
+    ExecutionRun,
+    ExecutionStatus,
+    MappingSpecStatus,
+    TargetSchema,
+)
 from pipeline import (
-    load_target_schema_from_spec,
     record_execution_run,
     record_staging_metadata,
     record_validation_results,
     run_validation_tests,
 )
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-OBJECT_STORE_DIR = PROJECT_ROOT / "data" / "object-store"
-TARGET_SCHEMAS_DIR = PROJECT_ROOT / "data" / "target-schemas"
-OUTPUT_FOLDERS_DIR = PROJECT_ROOT / "data" / "output-folders"
-
-
-def _get_object_store() -> LocalObjectStore:
-    """Return the singleton local object store."""
-    return LocalObjectStore(str(OBJECT_STORE_DIR))
+from sqlmodel import select
 
 
 def get_or_create_client(
@@ -90,11 +89,16 @@ def get_or_create_client(
     )
 
 
+def list_clients() -> list[Client]:
+    """Return clients for workflow entry-point selection."""
+    with get_session() as session:
+        return list(session.exec(select(Client).order_by(Client.name)).all())
+
+
 def _save_target_schema(client_code: str, content: bytes) -> TargetSchema:
     """Persist the uploaded target schema JSON and parse it into a model."""
-    schema_dir = TARGET_SCHEMAS_DIR / client_code
-    schema_dir.mkdir(parents=True, exist_ok=True)
-    schema_path = schema_dir / "target_schema.json"
+    schema_path = get_settings().target_schema_path(client_code)
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
     schema_path.write_bytes(content)
     return TargetSchema.model_validate(json.loads(content))
 
@@ -104,7 +108,7 @@ def _store_raw_file(
     client: Client,
     batch_id: uuid.UUID,
     upload: Any,
-    object_store: LocalObjectStore,
+    object_store: ObjectStore,
 ) -> uuid.UUID:
     """Store one uploaded file in object storage and register a RawFile record."""
     filename = upload.filename or "unknown"
@@ -140,7 +144,7 @@ def process_upload(
     new_client_code: str | None,
     source_uploads: list[Any],
     target_schema_bytes: bytes,
-    model: str = "gpt-4o-mini",
+    model: str | None = None,
 ) -> uuid.UUID:
     """Run the upload step and return the created mapping spec id.
 
@@ -158,7 +162,8 @@ def process_upload(
     if not source_uploads:
         raise ValueError("At least one source file is required")
 
-    object_store = _get_object_store()
+    settings = get_settings()
+    object_store = get_object_store()
 
     with get_session() as session:
         client = get_or_create_client(
@@ -204,9 +209,9 @@ def process_upload(
             session,
             spec.id,
             target_schema=target_schema,
-            model=model,
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_BASE_URL"),
+            model=model or settings.mapping_model,
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
             top_k_evidence=10,
         )
         update_mapping_spec_status(session, spec.id, MappingSpecStatus.PROPOSED)
@@ -219,8 +224,8 @@ def approve_and_execute(spec_id: uuid.UUID) -> uuid.UUID:
     Returns:
         The UUID of the recorded ExecutionRun.
     """
-    object_store = _get_object_store()
-    output_folder = OUTPUT_FOLDERS_DIR / str(spec_id)
+    object_store = get_object_store()
+    output_folder = get_artifact_store().folder(spec_id)
     output_folder.mkdir(parents=True, exist_ok=True)
 
     with get_session() as session:
@@ -266,10 +271,36 @@ def reject_mapping(spec_id: uuid.UUID) -> None:
         update_mapping_spec_status(session, spec_id, MappingSpecStatus.REJECTED)
 
 
+def approve_result(run_id: uuid.UUID) -> ExecutionRun:
+    """Record the explicit human approval gate for generated results."""
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise ValueError("Execution run not found")
+        run.status = ExecutionStatus.SUCCESS
+        run.finished_at = datetime.datetime.now(datetime.UTC)
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run
+
+
+def reject_result(run_id: uuid.UUID, reason: str = "") -> uuid.UUID:
+    """Reject generated results and return their mapping spec for review."""
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise ValueError("Execution run not found")
+        run.status = ExecutionStatus.FAILED
+        run.finished_at = datetime.datetime.now(datetime.UTC)
+        run.logs = {**(run.logs or {}), "rejection_reason": reason}
+        session.add(run)
+        session.commit()
+        return run.mapping_spec_id
+
+
 def load_mapping_json(spec_id: uuid.UUID) -> dict[str, Any]:
     """Load a mapping spec and its columns as a plain dict."""
-    from codegen import load_mapping_spec
-
     return load_mapping_spec(spec_id)
 
 
@@ -283,7 +314,7 @@ def get_run_output_paths(run_id: uuid.UUID) -> dict[str, Path]:
             raise ValueError("Execution run not found")
         spec_id = run.mapping_spec_id
 
-    folder = OUTPUT_FOLDERS_DIR / str(spec_id)
+    folder = get_artifact_store().folder(spec_id)
     return {
         "folder": folder,
         "results_csv": folder / "results.csv",
