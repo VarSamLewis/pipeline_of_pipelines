@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from artifact_store import LocalArtifactStore
+from models import TargetSchema
 
 
 def test_local_artifact_store_is_deterministic_across_instances(
@@ -17,13 +18,68 @@ def test_local_artifact_store_is_deterministic_across_instances(
     first = LocalArtifactStore(tmp_path)
     second = LocalArtifactStore(tmp_path)
 
-    artifact = first.path(spec_id, "results.csv")
-    artifact.parent.mkdir(parents=True)
-    artifact.write_text("id\n1\n", encoding="utf-8")
+    first.write_artifact(spec_id, "results.csv", b"id\n1\n")
 
-    assert second.path(spec_id, "results.csv").read_text(encoding="utf-8") == (
-        "id\n1\n"
+    assert second.read_artifact(spec_id, "results.csv") == b"id\n1\n"
+
+
+def test_artifact_store_recovers_all_keys_after_process_restart(
+    tmp_path: Path,
+) -> None:
+    """A fresh adapter instance can retrieve every durable artifact class."""
+    spec_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    schema = TargetSchema(
+        client_code="acme",
+        name="default",
+        tables=[],
     )
+    before_restart = LocalArtifactStore(tmp_path)
+    before_restart.put("acme/batch/raw.csv", b"source")
+    before_restart.write_target_schema("acme", schema)
+    before_restart.write_artifact(spec_id, "mapping.json", b"{}")
+    before_restart.write_artifact(spec_id, "pipeline.py", b"print('ok')")
+    before_restart.write_artifact(spec_id, "results.csv", b"id\n1\n")
+    before_restart.write_log(run_id, b'{"status":"success"}')
+
+    after_restart = LocalArtifactStore(tmp_path)
+
+    assert after_restart.get("acme/batch/raw.csv") == b"source"
+    assert after_restart.read_target_schema("acme") == schema
+    assert after_restart.read_artifact(spec_id, "mapping.json") == b"{}"
+    assert after_restart.read_artifact(spec_id, "pipeline.py") == b"print('ok')"
+    assert after_restart.read_artifact(spec_id, "results.csv") == b"id\n1\n"
+    assert after_restart.read_log(run_id) == b'{"status":"success"}'
+
+
+def test_new_application_instance_retrieves_existing_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Artifact HTTP retrieval survives application reconstruction."""
+    from app import create_app
+    from fastapi.testclient import TestClient
+    from routers import api
+
+    spec_id = uuid.uuid4()
+    before_restart = LocalArtifactStore(tmp_path)
+    before_restart.write_artifact(spec_id, "pipeline.py", b"print('durable')")
+    monkeypatch.setattr(api, "get_artifact_store", lambda: before_restart)
+    assert (
+        TestClient(create_app())
+        .get(f"/output-folders/{spec_id}/pipeline.py")
+        .text
+        == "print('durable')"
+    )
+
+    after_restart = LocalArtifactStore(tmp_path)
+    monkeypatch.setattr(api, "get_artifact_store", lambda: after_restart)
+    response = TestClient(create_app()).get(
+        f"/output-folders/{spec_id}/pipeline.py"
+    )
+
+    assert response.status_code == 200
+    assert response.text == "print('durable')"
 
 
 def test_artifact_store_rejects_path_traversal(tmp_path: Path) -> None:
@@ -80,8 +136,8 @@ def test_app_module_is_composition_only() -> None:
         for decorator in node.decorator_list
     ]
 
-    assert functions == {"create_app"}
-    assert decorators == []
+    assert functions == {"create_app", "lifespan"}
+    assert len(decorators) == 1
 
 
 def test_api_router_does_not_construct_fastapi_application() -> None:
@@ -159,5 +215,16 @@ def test_http_routes_do_not_import_stage_orchestration_internals() -> None:
             if isinstance(node, ast.ImportFrom)
         }
         assert imported_modules.isdisjoint(
-            {"codegen", "mapping", "mapping_specs", "pipeline"}
+            {"codegen", "mapping", "mapping_specs", "parser", "pipeline"}
         )
+
+
+def test_no_process_global_artifact_lookup_remains() -> None:
+    """Artifact retrieval must use durable keys, never process memory."""
+    source_root = Path(__file__).parents[1] / "backend" / "src"
+    production_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in source_root.rglob("*.py")
+    )
+
+    assert "_output_folders" not in production_source

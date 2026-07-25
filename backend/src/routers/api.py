@@ -42,14 +42,11 @@ from auth_service import (
     require_role,
     update_user_role,
 )
-from config import get_settings
 from db_ops import (
     approve_business_rule,
     create_business_rule,
     create_mapping_spec,
     create_raw_file,
-    create_tables,
-    get_engine,
     get_mapping_spec,
     get_raw_file_by_id,
     get_session,
@@ -70,13 +67,11 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from file_ops import (
     build_storage_key,
     compute_sha256,
     detect_file_type,
-    load_target_schema,
-    save_target_schema,
 )
 from models import PipelineOutputFolder, TargetSchema
 from repositories.clients import (
@@ -99,9 +94,6 @@ from workflow import (
 )
 
 app = APIRouter()
-
-settings = get_settings()
-
 
 @app.get("/login")
 def login_page(request: Request) -> RedirectResponse:
@@ -222,12 +214,6 @@ def set_user_role(
         "name": updated.name,
         "role": updated.role.value,
     }
-
-
-@app.on_event("startup")
-def startup() -> None:
-    """Create database tables on startup."""
-    create_tables(get_engine())
 
 
 # ---------------------------------------------------------------------------
@@ -564,13 +550,13 @@ def upload_target_schema(
         schema = TargetSchema.model_validate_json(content.decode("utf-8"))
         schema.client_code = client_code
 
-        schema_path = settings.target_schema_path(client_code)
-        schema_path.parent.mkdir(parents=True, exist_ok=True)
-        save_target_schema(schema, schema_path)
+        get_artifact_store().write_target_schema(client_code, schema)
 
         return {
             "client_code": client_code,
-            "schema_path": str(schema_path),
+            "schema_path": (
+                f"target-schemas/{client_code}/target_schema.json"
+            ),
             "schema": schema.model_dump(mode="json"),
         }
 
@@ -586,10 +572,13 @@ def get_target_schema(
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
-    schema_path = settings.target_schema_path(client_code)
-    if not schema_path.exists():
-        raise HTTPException(status_code=404, detail="Target schema not found")
-    return load_target_schema(schema_path)
+    try:
+        return get_artifact_store().read_target_schema(client_code)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Target schema not found",
+        ) from None
 
 
 # ---------------------------------------------------------------------------
@@ -958,10 +947,14 @@ def get_generated_pipeline_py(
     user: Any = Depends(require_auth),
 ) -> PlainTextResponse:
     """Return the generated single-file Polars pipeline for human review."""
-    path = get_artifact_store().path(folder_id, "pipeline.py")
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="pipeline.py not found")
-    return PlainTextResponse(path.read_text(), media_type="text/x-python")
+    try:
+        content = get_artifact_store().read_artifact(folder_id, "pipeline.py")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="pipeline.py not found",
+        ) from None
+    return PlainTextResponse(content.decode("utf-8"), media_type="text/x-python")
 
 
 @app.put("/output-folders/{folder_id}/pipeline.py")
@@ -976,11 +969,16 @@ def update_generated_pipeline_py(
     contract for the edited file. The mapping.json and audit log remain
     unchanged; the edited script is used on the next execution.
     """
-    path = get_artifact_store().path(folder_id, "pipeline.py")
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="pipeline.py not found")
+    store = get_artifact_store()
+    try:
+        store.read_artifact(folder_id, "pipeline.py")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="pipeline.py not found",
+        ) from None
     content = payload.get("content", "")
-    path.write_text(content, encoding="utf-8")
+    store.write_artifact(folder_id, "pipeline.py", content.encode("utf-8"))
     with get_session() as session:
         write_audit_log(
             session,
@@ -1000,22 +998,34 @@ def get_generated_mapping_json(
     user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
     """Return the generated mapping.json for human review."""
-    path = get_artifact_store().path(folder_id, "mapping.json")
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="mapping.json not found")
-    return cast(dict[str, Any], json.loads(path.read_text()))
+    try:
+        content = get_artifact_store().read_artifact(folder_id, "mapping.json")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="mapping.json not found",
+        ) from None
+    return cast(dict[str, Any], json.loads(content))
 
 
 @app.get("/output-folders/{folder_id}/results.csv")
 def get_generated_results_csv(
     folder_id: uuid.UUID,
     user: Any = Depends(require_auth),
-) -> FileResponse:
+) -> Response:
     """Return the generated results.csv for human review."""
-    path = get_artifact_store().path(folder_id, "results.csv")
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="results.csv not found")
-    return FileResponse(path, media_type="text/csv", filename="results.csv")
+    try:
+        content = get_artifact_store().read_artifact(folder_id, "results.csv")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="results.csv not found",
+        ) from None
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="results.csv"'},
+    )
 
 
 @app.post("/mapping-specs/{spec_id}/execute")

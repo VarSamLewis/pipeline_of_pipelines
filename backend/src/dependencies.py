@@ -11,17 +11,16 @@ from functools import lru_cache
 
 from artifact_store import ArtifactStore, LocalArtifactStore
 from config import get_settings
-from file_ops import LocalObjectStore, ObjectStore
+from file_ops import ObjectStore
 
 
 @lru_cache(maxsize=1)
 def get_object_store() -> ObjectStore:
-    """Return the configured process-wide object store."""
-    settings = get_settings()
-    return LocalObjectStore(str(settings.object_store_dir))
+    """Return the raw-object view of the configured artifact store."""
+    return get_artifact_store()
 
 
 @lru_cache(maxsize=1)
 def get_artifact_store() -> ArtifactStore:
     """Return the configured generated-artifact store."""
-    return LocalArtifactStore(get_settings().output_folders_dir)
+    return LocalArtifactStore(get_settings().data_dir)

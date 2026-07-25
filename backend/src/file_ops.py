@@ -16,7 +16,7 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import BinaryIO
 
 from models import TargetSchema
 
@@ -59,15 +59,6 @@ def load_target_schema(path: str | Path) -> TargetSchema:
     return TargetSchema.model_validate(data)
 
 
-def save_target_schema(schema: TargetSchema, path: str | Path) -> Path:
-    """Persist a target schema to a JSON file."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(schema.model_dump(mode="json"), f, indent=2)
-    return path
-
-
 def discover_client_files(folder_path: str | Path) -> list[Path]:
     """Discover all ingestible files in a folder, excluding target schema JSON."""
     folder = Path(folder_path)
@@ -84,39 +75,6 @@ def find_target_schema_file(folder_path: str | Path) -> Path | None:
             return candidate
     json_files = sorted(folder.glob("*.json"))
     return json_files[0] if json_files else None
-
-
-def list_files(folder_path: str | Path) -> list[str]:
-    """Return a list of file paths under the given folder."""
-    return sorted(str(p) for p in Path(folder_path).rglob("*") if p.is_file())
-
-
-def read_file_bytes(file_path: str | Path) -> bytes:
-    """Read an entire file into memory as bytes."""
-    return Path(file_path).read_bytes()
-
-
-def read_files(folder_path: str | Path) -> list[tuple[str, bytes]]:
-    """Read every file in a folder and return filename/byte pairs."""
-    result: list[tuple[str, bytes]] = []
-    for path in sorted(Path(folder_path).iterdir()):
-        if path.is_file():
-            result.append((path.name, path.read_bytes()))
-    return result
-
-
-def write_parsed_dict(
-    parsed_content: dict[str, Any],
-    folder_path: str | Path,
-    filename: str,
-) -> Path:
-    """Write a parsed dictionary to the object store as JSON."""
-    folder = Path(folder_path)
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / filename
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(parsed_content, f, indent=2)
-    return path
 
 
 class ObjectStore(ABC):
@@ -183,25 +141,3 @@ def build_storage_key(
     """Build a deterministic storage key for a raw file."""
     safe_name = original_filename.replace("/", "_")
     return f"{client_code}/{ingestion_batch_id}/{sha256[:16]}_{safe_name}"
-
-
-def write_audit_log(
-    event_type: str,
-    entity_type: str,
-    entity_id: str,
-    actor: str | None,
-    payload: dict[str, Any],
-) -> None:
-    """Write a structured audit event to durable storage.
-
-    Currently logs to stdout; production should persist to the audit log table.
-    """
-    print(
-        {
-            "event_type": event_type,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "actor": actor,
-            "payload": payload,
-        }
-    )

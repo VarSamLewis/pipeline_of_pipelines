@@ -7,13 +7,24 @@ translation belongs to router modules.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from auth_service import SESSION_MAX_AGE_SECONDS, SESSION_SECRET_KEY
 from config import get_settings
+from db_ops import create_tables, get_engine
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from routers.api import app as api_router
 from starlette.middleware.sessions import SessionMiddleware
 from ui import router as ui_router
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Initialize durable infrastructure for the application lifetime."""
+    create_tables(get_engine())
+    yield
 
 
 def create_app() -> FastAPI:
@@ -26,6 +37,7 @@ def create_app() -> FastAPI:
             "files."
         ),
         version="0.1.0",
+        lifespan=lifespan,
     )
     application.add_middleware(
         SessionMiddleware,

@@ -256,12 +256,3 @@ def create_session(request: Request, user_id: uuid.UUID) -> None:
 def clear_session(request: Request) -> None:
     """Clear the encrypted session cookie on logout."""
     request.session.clear()
-
-
-def require_auth_dependency() -> Any:
-    """Convenience alias for FastAPI ``Depends(require_auth)``.
-
-    Returns:
-        FastAPI Depends instance wrapping ``require_auth``.
-    """
-    return Depends(require_auth)

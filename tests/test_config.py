@@ -13,12 +13,8 @@ def test_settings_derive_canonical_local_paths(tmp_path: Path) -> None:
 
     assert settings.project_root == tmp_path.resolve()
     assert settings.object_store_dir == tmp_path / "data" / "object-store"
-    assert settings.target_schema_path("acme") == (
-        tmp_path / "data" / "target-schemas" / "acme" / "target_schema.json"
-    )
-    assert settings.output_folder("spec-1") == (
-        tmp_path / "data" / "output-folders" / "spec-1"
-    )
+    assert settings.target_schemas_dir == tmp_path / "data" / "target-schemas"
+    assert settings.output_folders_dir == tmp_path / "data" / "output-folders"
     assert settings.static_dir == tmp_path / "backend" / "static"
     assert settings.templates_dir == tmp_path / "backend" / "templates"
     assert settings.database_url == DEFAULT_DATABASE_URL

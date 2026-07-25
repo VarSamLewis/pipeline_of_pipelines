@@ -105,10 +105,9 @@ def list_clients() -> list[Client]:
 
 def _save_target_schema(client_code: str, content: bytes) -> TargetSchema:
     """Persist the uploaded target schema JSON and parse it into a model."""
-    schema_path = get_settings().target_schema_path(client_code)
-    schema_path.parent.mkdir(parents=True, exist_ok=True)
-    schema_path.write_bytes(content)
-    return TargetSchema.model_validate(json.loads(content))
+    schema = TargetSchema.model_validate(json.loads(content))
+    get_artifact_store().write_target_schema(client_code, schema)
+    return schema
 
 
 def _store_raw_file(
@@ -332,7 +331,7 @@ def execute_approved_mapping(
         mapping_spec["columns"],
         target_schema,
     )
-    return {
+    result = {
         "execution_run_id": str(run_id),
         "spec_id": str(spec_id),
         "target_environment": target_environment,
@@ -347,6 +346,11 @@ def execute_approved_mapping(
             name: compute_quality_profile(df) for name, df in target_dfs.items()
         },
     }
+    get_artifact_store().write_log(
+        run_id,
+        json.dumps(result, indent=2, default=str).encode("utf-8"),
+    )
+    return result
 
 
 def approve_mapping_and_execute(
@@ -389,6 +393,7 @@ def approve_result(run_id: uuid.UUID) -> ExecutionRun:
     with get_session() as session:
         run = approve_result_record(session, run_id)
         session.commit()
+        _update_execution_log(run_id, status=run.status.value)
         return run
 
 
@@ -397,7 +402,26 @@ def reject_result(run_id: uuid.UUID, reason: str = "") -> uuid.UUID:
     with get_session() as session:
         run = reject_result_record(session, run_id, reason)
         session.commit()
+        _update_execution_log(
+            run_id,
+            status=run.status.value,
+            rejection_reason=reason,
+        )
         return run.mapping_spec_id
+
+
+def _update_execution_log(run_id: uuid.UUID, **updates: Any) -> None:
+    """Merge a state transition into the durable execution log."""
+    store = get_artifact_store()
+    try:
+        current = json.loads(store.read_log(run_id))
+    except FileNotFoundError:
+        current = {"execution_run_id": str(run_id)}
+    current.update(updates)
+    store.write_log(
+        run_id,
+        json.dumps(current, indent=2, default=str).encode("utf-8"),
+    )
 
 
 def get_mapping_review(spec_id: uuid.UUID) -> dict[str, Any]:
@@ -420,12 +444,24 @@ def get_result_review(run_id: uuid.UUID) -> dict[str, Any]:
             ).all()
         )
 
-    folder = get_artifact_store().folder(spec_id)
+    store = get_artifact_store()
+    csv_names = store.list_artifacts(spec_id, suffix=".csv")
+    results_name = "results.csv" if "results.csv" in csv_names else None
+    if results_name is None and csv_names:
+        results_name = csv_names[0]
+
+    def read_optional(filename: str | None) -> bytes | None:
+        if filename is None:
+            return None
+        try:
+            return store.read_artifact(spec_id, filename)
+        except FileNotFoundError:
+            return None
+
     return {
         "run": run,
         "validation_results": validation_results,
-        "folder": folder,
-        "results_csv": folder / "results.csv",
-        "pipeline_py": folder / "pipeline.py",
-        "mapping_json": folder / "mapping.json",
+        "results_csv": read_optional(results_name),
+        "pipeline_py": read_optional("pipeline.py"),
+        "mapping_json": read_optional("mapping.json"),
     }

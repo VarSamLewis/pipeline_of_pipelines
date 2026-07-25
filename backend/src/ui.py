@@ -10,6 +10,7 @@ flow:
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
 from typing import Any
@@ -189,18 +190,11 @@ def results_csv_page(
 ) -> Any:
     """Return a paginated fragment of the results CSV."""
     paths = get_result_review(run_id)
-    csv_path = paths["results_csv"]
-    if not csv_path.exists():
-        # Fall back to the first generated table CSV.
-        folder = paths["folder"]
-        csv_files = sorted(folder.glob("*.csv"))
-        if csv_files:
-            csv_path = csv_files[0]
-
-    if not csv_path.exists():
+    csv_content = paths["results_csv"]
+    if csv_content is None:
         return HTMLResponse("<p class='muted'>No results CSV found.</p>")
 
-    df = pl.read_csv(csv_path)
+    df = pl.read_csv(io.BytesIO(csv_content))
     total_rows = len(df)
     total_pages = max(1, (total_rows + CSV_DISP_COUNT - 1) // CSV_DISP_COUNT)
     page = min(page, total_pages)
@@ -234,11 +228,11 @@ def results_code_page(
 ) -> Any:
     """Return the generated pipeline.py code fragment."""
     paths = get_result_review(run_id)
-    pipeline_path = paths["pipeline_py"]
-    if not pipeline_path.exists():
+    pipeline_content = paths["pipeline_py"]
+    if pipeline_content is None:
         return HTMLResponse("<p class='muted'>No generated code found.</p>")
 
-    code = pipeline_path.read_text(encoding="utf-8")
+    code = pipeline_content.decode("utf-8")
     return templates.TemplateResponse(
         request,
         "partials/code.html",

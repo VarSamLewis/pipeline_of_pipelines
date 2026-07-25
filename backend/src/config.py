@@ -111,15 +111,6 @@ class Settings:
             auth_bypass_local=_as_bool(values.get("AUTH_BYPASS_LOCAL")),
         )
 
-    def target_schema_path(self, client_code: str) -> Path:
-        """Return the canonical local target-schema path for a client."""
-        return self.target_schemas_dir / client_code / "target_schema.json"
-
-    def output_folder(self, identifier: object) -> Path:
-        """Return the canonical local artifact folder for a spec or run."""
-        return self.output_folders_dir / str(identifier)
-
-
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return the process-wide settings instance."""
