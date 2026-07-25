@@ -42,20 +42,14 @@ from auth_service import (
     require_role,
     update_user_role,
 )
-from codegen import (
-    generate_artifact_set,
-    generate_output_folder,
-)
 from config import get_settings
 from db_ops import (
     approve_business_rule,
-    approve_mapping_spec,
     create_business_rule,
     create_mapping_spec,
     create_raw_file,
     create_tables,
     get_engine,
-    get_mapping_columns,
     get_mapping_spec,
     get_raw_file_by_id,
     get_session,
@@ -84,25 +78,25 @@ from file_ops import (
     load_target_schema,
     save_target_schema,
 )
-from mapping import propose_mapping_spec as propose_mapping_spec_service
-from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import PipelineOutputFolder, TargetSchema
-from pipeline import (
-    compute_quality_profile,
-    persist_staging_tables,
-    record_execution_run,
-    record_staging_metadata,
-    record_validation_results,
-    run_pipeline,
-    run_validation_tests,
-)
 from repositories.clients import (
     create_client,
     create_ingestion_batch,
     get_client_by_code,
     get_ingestion_batch,
 )
-from workflow import approve_result, reject_result
+from workflow import (
+    approve_mapping,
+    approve_result,
+    create_output_folder,
+    execute_approved_mapping,
+    generate_artifacts,
+    get_mapping_review,
+    get_result_review,
+    propose_mapping,
+    reject_mapping,
+    reject_result,
+)
 
 app = APIRouter()
 
@@ -806,32 +800,14 @@ def get_mapping_spec_endpoint(
     user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
     """Fetch a mapping specification and its columns."""
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise HTTPException(status_code=404, detail="Mapping spec not found")
-        columns = get_mapping_columns(session, spec_id)
-        return {
-            "id": str(spec.id),
-            "client_id": str(spec.client_id),
-            "status": spec.status.value,
-            "target_schema": spec.target_schema_json,
-            "description": spec.description,
-            "approved_by": spec.approved_by,
-            "columns": [
-                {
-                    "id": str(c.id),
-                    "target_table": c.target_table,
-                    "target_column": c.target_column,
-                    "source_columns": c.source_columns_json,
-                    "transformation_logic": c.transformation_logic,
-                    "polars_expression": c.polars_expression,
-                    "tests": c.tests,
-                    "confidence": c.confidence,
-                }
-                for c in columns
-            ],
-        }
+    try:
+        review = get_mapping_review(spec_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        **review,
+        "target_schema": review["target_schema_json"],
+    }
 
 
 @app.post("/mapping-specs/{spec_id}/propose")
@@ -842,42 +818,17 @@ def propose_mapping_spec_endpoint(
 ) -> dict[str, Any]:
     """Ask the LLM to propose mappings for a draft specification."""
     payload = payload or {}
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise HTTPException(status_code=404, detail="Mapping spec not found")
-
-        target_schema = load_target_schema_from_spec(
-            {"target_schema_json": spec.target_schema_json}
-        )
-        propose_mapping_spec_service(
-            session,
+    try:
+        mapping = propose_mapping(
             spec_id,
-            target_schema=target_schema,
-            model=payload.get("model", "gpt-4o-mini"),
+            model=payload.get("model"),
             api_key=payload.get("api_key"),
             base_url=payload.get("base_url"),
             top_k_evidence=payload.get("top_k_evidence", 10),
         )
-
-        columns = get_mapping_columns(session, spec_id)
-        return {
-            "id": str(spec_id),
-            "status": "proposed",
-            "columns": [
-                {
-                    "id": str(c.id),
-                    "target_table": c.target_table,
-                    "target_column": c.target_column,
-                    "source_columns": c.source_columns_json,
-                    "transformation_logic": c.transformation_logic,
-                    "polars_expression": c.polars_expression,
-                    "tests": c.tests,
-                    "confidence": c.confidence,
-                }
-                for c in columns
-            ],
-        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return mapping
 
 
 @app.post("/mapping-specs/{spec_id}/approve")
@@ -887,21 +838,20 @@ def approve_mapping_spec_endpoint(
     user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Approve a proposed mapping specification."""
-    with get_session() as session:
-        spec = approve_mapping_spec(
-            session,
+    try:
+        spec = approve_mapping(
             spec_id,
             reviewer=payload["reviewer"],
             notes=payload.get("notes"),
         )
-        if spec is None:
-            raise HTTPException(status_code=404, detail="Mapping spec not found")
-        return {
-            "id": str(spec.id),
-            "status": spec.status.value,
-            "approved_by": spec.approved_by,
-            "approved_at": spec.approved_at.isoformat() if spec.approved_at else None,
-        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "id": str(spec.id),
+        "status": spec.status.value,
+        "approved_by": spec.approved_by,
+        "approved_at": spec.approved_at.isoformat() if spec.approved_at else None,
+    }
 
 
 @app.post("/mapping-specs/{spec_id}/reject")
@@ -910,24 +860,16 @@ def reject_mapping_spec_endpoint(
     payload: dict[str, Any],
     user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
-    """Reject a mapping specification and return it to draft."""
-    from models import MappingSpecStatus
-
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise HTTPException(status_code=404, detail="Mapping spec not found")
-        spec.status = MappingSpecStatus.DRAFT
-        spec.description = (
-            spec.description or ""
-        ) + f"\nRejected by {user.email}: {payload.get('reason', '')}"
-        session.add(spec)
-        session.commit()
-        session.refresh(spec)
-        return {
-            "id": str(spec.id),
-            "status": spec.status.value,
-        }
+    """Reject a mapping specification."""
+    try:
+        spec = reject_mapping(
+            spec_id,
+            reason=payload.get("reason", ""),
+            reviewer=user.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"id": str(spec.id), "status": spec.status.value}
 
 
 @app.patch("/mapping-specs/{spec_id}/columns/{column_id}")
@@ -980,8 +922,7 @@ def generate_artifacts_endpoint(
     user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Generate Polars artifacts from an approved mapping spec."""
-    output_folder = get_artifact_store().folder(spec_id)
-    artifacts = generate_artifact_set(spec_id, output_folder)
+    output_folder, artifacts = generate_artifacts(spec_id)
     return {
         "spec_id": str(spec_id),
         "output_folder": str(output_folder),
@@ -1004,10 +945,11 @@ def generate_output_folder_endpoint(
 ) -> PipelineOutputFolder:
     """Generate the complete client deliverable folder."""
     payload = payload or {}
-    default_folder = get_artifact_store().folder(spec_id)
-    output_folder = Path(payload.get("output_folder", default_folder))
-    folder = generate_output_folder(spec_id, output_folder, get_object_store())
-    return folder
+    output_folder_value = payload.get("output_folder")
+    output_folder = (
+        Path(output_folder_value) if output_folder_value is not None else None
+    )
+    return create_output_folder(spec_id, output_folder)
 
 
 @app.get("/output-folders/{folder_id}/pipeline.py")
@@ -1084,52 +1026,18 @@ def execute_pipeline(
 ) -> dict[str, Any]:
     """Execute the Polars transformation pipeline for an approved spec."""
     payload = payload or {}
-    target_environment = payload.get("target_environment", "local")
-    default_folder = get_artifact_store().folder(spec_id)
-    output_folder = Path(payload.get("output_folder", default_folder))
-    output_folder.mkdir(parents=True, exist_ok=True)
-
-    object_store = get_object_store()
-    target_dfs = run_pipeline(spec_id, object_store, target_environment)
-    csv_paths = persist_staging_tables(target_dfs, output_folder, format="csv")
-
-    # Rename single-table output to results.csv
-    if len(csv_paths) == 1:
-        src = next(iter(csv_paths.values()))
-        results_path = output_folder / "results.csv"
-        import shutil
-
-        shutil.copy2(src, results_path)
-
-    mapping_spec = load_mapping_spec(spec_id)
-    target_schema = load_target_schema_from_spec(mapping_spec)
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise HTTPException(status_code=404, detail="Mapping spec not found")
-        client_id = spec.client_id
-    run_id = record_execution_run(client_id, spec_id, target_environment)
-    test_results = run_validation_tests(
-        target_dfs, mapping_spec["columns"], target_schema
+    output_folder_value = payload.get("output_folder")
+    output_folder = (
+        Path(output_folder_value) if output_folder_value is not None else None
     )
-    record_validation_results(run_id, test_results)
-    record_staging_metadata(run_id, target_dfs, mapping_spec["columns"], target_schema)
-
-    return {
-        "execution_run_id": str(run_id),
-        "spec_id": str(spec_id),
-        "target_environment": target_environment,
-        "csv_paths": {name: str(path) for name, path in csv_paths.items()},
-        "results_csv": (
-            str(output_folder / "results.csv")
-            if (output_folder / "results.csv").exists()
-            else None
-        ),
-        "validation_results": test_results,
-        "quality_profiles": {
-            name: compute_quality_profile(df) for name, df in target_dfs.items()
-        },
-    }
+    try:
+        return execute_approved_mapping(
+            spec_id,
+            target_environment=payload.get("target_environment", "local"),
+            output_folder=output_folder,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/execution-runs/{run_id}")
@@ -1138,35 +1046,28 @@ def get_execution_run(
     user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
     """Fetch an execution run with validation results."""
-    from models import ExecutionRun
-    from models import ValidationResult as VRModel
-
-    with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Execution run not found")
-        results = session.exec(
-            __import__("sqlmodel")
-            .select(VRModel)
-            .where(VRModel.execution_run_id == run_id)
-        ).all()
-        return {
-            "id": str(run.id),
-            "mapping_spec_id": str(run.mapping_spec_id),
-            "status": run.status.value,
-            "started_at": run.started_at.isoformat() if run.started_at else None,
-            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-            "validation_results": [
-                {
-                    "id": str(r.id),
-                    "test_name": r.test_name,
-                    "severity": r.severity,
-                    "passed": r.passed,
-                    "details": r.details,
-                }
-                for r in results
-            ],
-        }
+    try:
+        review = get_result_review(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    run = review["run"]
+    return {
+        "id": str(run.id),
+        "mapping_spec_id": str(run.mapping_spec_id),
+        "status": run.status.value,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "validation_results": [
+            {
+                "id": str(result.id),
+                "test_name": result.test_name,
+                "severity": result.severity,
+                "passed": result.passed,
+                "details": result.details,
+            }
+            for result in review["validation_results"]
+        ],
+    }
 
 
 @app.get("/execution-runs")

@@ -121,3 +121,43 @@ def test_client_persistence_has_one_implementation_owner() -> None:
     assert all(
         paths == ["repositories/clients.py"] for paths in owners.values()
     )
+
+
+def test_workflow_owns_all_human_gated_operations() -> None:
+    """The canonical journey must remain explicit and discoverable."""
+    workflow_path = (
+        Path(__file__).parents[1] / "backend" / "src" / "workflow.py"
+    )
+    tree = ast.parse(workflow_path.read_text(encoding="utf-8"))
+    functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert {
+        "ingest_and_propose",
+        "approve_mapping_and_execute",
+        "reject_mapping",
+        "approve_result",
+        "reject_result",
+        "get_mapping_review",
+        "get_result_review",
+    } <= functions
+
+
+def test_http_routes_do_not_import_stage_orchestration_internals() -> None:
+    """API and HTMX routes must both delegate stage ownership to workflow."""
+    source_root = Path(__file__).parents[1] / "backend" / "src"
+    for relative_path in ("routers/api.py", "ui.py"):
+        tree = ast.parse(
+            (source_root / relative_path).read_text(encoding="utf-8")
+        )
+        imported_modules = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+        assert imported_modules.isdisjoint(
+            {"codegen", "mapping", "mapping_specs", "pipeline"}
+        )

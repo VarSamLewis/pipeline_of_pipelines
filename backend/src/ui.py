@@ -30,12 +30,12 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from workflow import (
-    approve_and_execute,
+    approve_mapping_and_execute,
     approve_result,
-    get_run_output_paths,
+    get_mapping_review,
+    get_result_review,
+    ingest_and_propose,
     list_clients,
-    load_mapping_json,
-    process_upload,
     reject_mapping,
     reject_result,
 )
@@ -90,7 +90,7 @@ def upload_submit(
 
     try:
         target_schema_bytes = target_schema.file.read()
-        spec_id = process_upload(
+        spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
             new_client_code=new_client_code or None,
@@ -119,7 +119,7 @@ def mapping_review_page(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Render the proposed mapping JSON for human review."""
-    mapping = load_mapping_json(spec_id)
+    mapping = get_mapping_review(spec_id)
     mapping_json = json.dumps(mapping, indent=2, default=str)
     return templates.TemplateResponse(
         request,
@@ -140,7 +140,7 @@ def mapping_confirm(
 ) -> Any:
     """Approve the mapping and run codegen + execution."""
     try:
-        run_id = approve_and_execute(spec_id)
+        run_id = approve_mapping_and_execute(spec_id)
     except ValueError as exc:
         return templates.TemplateResponse(
             request,
@@ -188,7 +188,7 @@ def results_csv_page(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Return a paginated fragment of the results CSV."""
-    paths = get_run_output_paths(run_id)
+    paths = get_result_review(run_id)
     csv_path = paths["results_csv"]
     if not csv_path.exists():
         # Fall back to the first generated table CSV.
@@ -233,7 +233,7 @@ def results_code_page(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Return the generated pipeline.py code fragment."""
-    paths = get_run_output_paths(run_id)
+    paths = get_result_review(run_id)
     pipeline_path = paths["pipeline_py"]
     if not pipeline_path.exists():
         return HTMLResponse("<p class='muted'>No generated code found.</p>")
