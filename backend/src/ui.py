@@ -10,14 +10,14 @@ flow:
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
-from pathlib import Path
 from typing import Any
 
 import polars as pl
 from auth_service import require_auth
-from db_ops import get_session
+from config import get_settings
 from fastapi import (
     APIRouter,
     Depends,
@@ -30,21 +30,20 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from models import Client, ExecutionRun
-from sqlmodel import select
 from workflow import (
-    approve_and_execute,
-    get_run_output_paths,
-    load_mapping_json,
-    process_upload,
+    approve_mapping_and_execute,
+    approve_result,
+    get_mapping_review,
+    get_result_review,
+    ingest_and_propose,
+    list_clients,
     reject_mapping,
+    reject_result,
 )
 
 router = APIRouter()
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-TEMPLATES_DIR = PROJECT_ROOT / "backend" / "templates"
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates = Jinja2Templates(directory=str(get_settings().templates_dir))
 
 CSV_DISP_COUNT = 10
 
@@ -61,12 +60,6 @@ def _user_context(request: Request, user: Any) -> dict[str, Any]:
     return {"request": request, "user": user}
 
 
-def _list_clients() -> list[Client]:
-    """Return all clients for the upload dropdown."""
-    with get_session() as session:
-        return list(session.exec(select(Client).order_by(Client.name)).all())
-
-
 # ---------------------------------------------------------------------------
 # Page 1: Upload
 # ---------------------------------------------------------------------------
@@ -78,7 +71,7 @@ def upload_page(request: Request, user: Any = Depends(require_auth)) -> Any:
     return templates.TemplateResponse(
         request,
         "upload.html",
-        {**_user_context(request, user), "clients": _list_clients()},
+        {**_user_context(request, user), "clients": list_clients()},
     )
 
 
@@ -98,7 +91,7 @@ def upload_submit(
 
     try:
         target_schema_bytes = target_schema.file.read()
-        spec_id = process_upload(
+        spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
             new_client_code=new_client_code or None,
@@ -127,7 +120,7 @@ def mapping_review_page(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Render the proposed mapping JSON for human review."""
-    mapping = load_mapping_json(spec_id)
+    mapping = get_mapping_review(spec_id)
     mapping_json = json.dumps(mapping, indent=2, default=str)
     return templates.TemplateResponse(
         request,
@@ -148,7 +141,7 @@ def mapping_confirm(
 ) -> Any:
     """Approve the mapping and run codegen + execution."""
     try:
-        run_id = approve_and_execute(spec_id)
+        run_id = approve_mapping_and_execute(spec_id)
     except ValueError as exc:
         return templates.TemplateResponse(
             request,
@@ -196,19 +189,12 @@ def results_csv_page(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Return a paginated fragment of the results CSV."""
-    paths = get_run_output_paths(run_id)
-    csv_path = paths["results_csv"]
-    if not csv_path.exists():
-        # Fall back to the first generated table CSV.
-        folder = paths["folder"]
-        csv_files = sorted(folder.glob("*.csv"))
-        if csv_files:
-            csv_path = csv_files[0]
-
-    if not csv_path.exists():
+    paths = get_result_review(run_id)
+    csv_content = paths["results_csv"]
+    if csv_content is None:
         return HTMLResponse("<p class='muted'>No results CSV found.</p>")
 
-    df = pl.read_csv(csv_path)
+    df = pl.read_csv(io.BytesIO(csv_content))
     total_rows = len(df)
     total_pages = max(1, (total_rows + CSV_DISP_COUNT - 1) // CSV_DISP_COUNT)
     page = min(page, total_pages)
@@ -241,12 +227,12 @@ def results_code_page(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Return the generated pipeline.py code fragment."""
-    paths = get_run_output_paths(run_id)
-    pipeline_path = paths["pipeline_py"]
-    if not pipeline_path.exists():
+    paths = get_result_review(run_id)
+    pipeline_content = paths["pipeline_py"]
+    if pipeline_content is None:
         return HTMLResponse("<p class='muted'>No generated code found.</p>")
 
-    code = pipeline_path.read_text(encoding="utf-8")
+    code = pipeline_content.decode("utf-8")
     return templates.TemplateResponse(
         request,
         "partials/code.html",
@@ -261,6 +247,10 @@ def results_confirm(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Confirm the results and finish the workflow."""
+    try:
+        approve_result(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return templates.TemplateResponse(
         request,
         "partials/success.html",
@@ -279,9 +269,8 @@ def results_reject(
     user: Any = Depends(require_auth),
 ) -> Any:
     """Reject the results and return to the mapping review page."""
-    with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Run not found")
-        spec_id = run.mapping_spec_id
+    try:
+        spec_id = reject_result(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _htmx_redirect(request, f"/mapping/{spec_id}")

@@ -1004,6 +1004,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "types-openpyxl" },
 ]
 
 [package.metadata]
@@ -1032,6 +1033,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7.0" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
+    { name = "types-openpyxl", marker = "extra == 'dev'", specifier = ">=3.1.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
     { name = "workos", specifier = ">=5.0.0" },
 ]
@@ -1476,6 +1478,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ae/5f/57ff8b434839e70dab45601284ea413e947a63799891b7553e5960a793a8/tqdm-4.68.4.tar.gz", hash = "sha256:19829c9673638f2a0b8617da4cdcb927e831cd88bcfcb6e78d42a4d1af131520", size = 792418, upload-time = "2026-07-07T09:58:18.369Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/22/2a/5e5e750890ada51017d18d0d4c30da696e5b5bd3180947729927628fc3cb/tqdm-4.68.4-py3-none-any.whl", hash = "sha256:5168118b2368f48c561afda8020fd79195b1bdb0bdf8086b88442c267a315dc2", size = 676612, upload-time = "2026-07-07T09:58:16.256Z" },
+]
+
+[[package]]
+name = "types-openpyxl"
+version = "3.1.5.20260724"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/60/30711b24beaba011e84f3836bfd8a43e2245fb27058fff7a0c1e8891c48c/types_openpyxl-3.1.5.20260724.tar.gz", hash = "sha256:dbb200f8a615be820522314a7da70f1b0e5f470229e0a9a72550cdcbdc6247b1", size = 101611, upload-time = "2026-07-24T04:58:32.384Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/87/0c2f7ac7ebe48873e6d7e9cf17fdad61467cab644ede16d4f47df89831da/types_openpyxl-3.1.5.20260724-py3-none-any.whl", hash = "sha256:f5979f292d2542724a90db5ef4123a72f163e48827c6a3a89fa380fc0b136b60", size = 165748, upload-time = "2026-07-24T04:58:31.244Z" },
 ]
 
 [[package]]

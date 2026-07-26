@@ -126,6 +126,19 @@ def test_full_propose_approve_execute_flow(
         Path(folder["results_csv_path"]),
     }
 
+    mapping_response = client.get(f"/output-folders/{spec_id}/mapping.json")
+    assert mapping_response.status_code == 200
+    mapping_artifact = mapping_response.json()
+    assert mapping_artifact["id"] == spec_id
+    assert {
+        column["target_column"] for column in mapping_artifact["columns"]
+    } == {"record_id", "full_name", "score"}
+
+    pipeline_response = client.get(f"/output-folders/{spec_id}/pipeline.py")
+    assert pipeline_response.status_code == 200
+    assert "def main()" in pipeline_response.text
+    assert "mapping.json" in pipeline_response.text
+
     csv_response = client.get(f"/output-folders/{spec_id}/results.csv")
     assert csv_response.status_code == 200
     csv_text = csv_response.text

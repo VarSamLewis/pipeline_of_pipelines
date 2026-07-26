@@ -17,31 +17,25 @@ Role storage:
 
 from __future__ import annotations
 
-import os
-import secrets
 import uuid
+from collections.abc import Callable
 from typing import Any
 
+from config import get_settings
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request
-from starlette.middleware.sessions import SessionMiddleware
 from workos import WorkOSClient
 
 load_dotenv()
 
-WORKOS_CLIENT_ID = os.getenv("WORKOS_CLIENT_ID", "")
-WORKOS_API_KEY = os.getenv("WORKOS_API_KEY", "")
-WORKOS_REDIRECT_URI = os.getenv(
-    "WORKOS_REDIRECT_URI", "http://localhost:8000/auth/callback"
-)
-WORKOS_AUTHKIT_DOMAIN = os.getenv("WORKOS_AUTHKIT_DOMAIN", "https://auth.workos.com")
-SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY", secrets.token_urlsafe(32))
-SESSION_MAX_AGE_SECONDS = int(os.getenv("SESSION_MAX_AGE", "86400"))
-AUTH_BYPASS_LOCAL = os.getenv("AUTH_BYPASS_LOCAL", "false").lower() in {
-    "1",
-    "true",
-    "yes",
-}
+_settings = get_settings()
+WORKOS_CLIENT_ID = _settings.workos_client_id
+WORKOS_API_KEY = _settings.workos_api_key
+WORKOS_REDIRECT_URI = _settings.workos_redirect_uri
+WORKOS_AUTHKIT_DOMAIN = _settings.workos_authkit_domain
+SESSION_SECRET_KEY = _settings.session_secret_key
+SESSION_MAX_AGE_SECONDS = _settings.session_max_age_seconds
+AUTH_BYPASS_LOCAL = _settings.auth_bypass_local
 
 # Delay model import until runtime to avoid import cycles with models.py.
 _User: Any | None = None
@@ -64,18 +58,6 @@ def get_workos_client() -> WorkOSClient:
     if not WORKOS_API_KEY:
         raise RuntimeError("WORKOS_API_KEY is not configured")
     return WorkOSClient(api_key=WORKOS_API_KEY, client_id=WORKOS_CLIENT_ID)
-
-
-def get_session_middleware() -> SessionMiddleware:
-    """Return Starlette session middleware for encrypted cookie sessions."""
-    return SessionMiddleware(
-        SESSION_SECRET_KEY,
-        session_cookie="session",
-        max_age=SESSION_MAX_AGE_SECONDS,
-        same_site="lax",
-        https_only=False,  # Set True in production/Azure behind HTTPS.
-        path="/",
-    )
 
 
 def get_authkit_url(state: str) -> str:
@@ -238,7 +220,7 @@ def require_auth(request: Request) -> Any:
     return user
 
 
-def require_role(*allowed_roles: str):
+def require_role(*allowed_roles: str) -> Callable[[Any], Any]:
     """Dependency factory that restricts access to the given roles."""
 
     def checker(user: Any = Depends(require_auth)) -> Any:
@@ -274,12 +256,3 @@ def create_session(request: Request, user_id: uuid.UUID) -> None:
 def clear_session(request: Request) -> None:
     """Clear the encrypted session cookie on logout."""
     request.session.clear()
-
-
-def require_auth_dependency() -> Any:
-    """Convenience alias for FastAPI ``Depends(require_auth)``.
-
-    Returns:
-        FastAPI Depends instance wrapping ``require_auth``.
-    """
-    return Depends(require_auth)

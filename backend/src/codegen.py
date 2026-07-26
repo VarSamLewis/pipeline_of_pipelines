@@ -19,17 +19,12 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from db_ops import (
-    create_generated_artifact,
-    get_mapping_columns,
-    get_mapping_spec,
-    get_raw_file_by_id,
-)
-from file_ops import LocalObjectStore
+from db_ops import create_generated_artifact, get_raw_file_by_id
+from file_ops import ObjectStore
+from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import (
     GeneratedArtifact,
     GeneratedPipelineScript,
-    MappingColumn,
     MappingFile,
     PipelineOutputFolder,
     TargetSchema,
@@ -38,57 +33,6 @@ from models import (
 # ---------------------------------------------------------------------------
 # Artifact generation
 # ---------------------------------------------------------------------------
-
-
-def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
-    """Load an approved mapping specification, its columns, and target schema."""
-    from db_ops import get_session
-
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise ValueError(f"Mapping spec not found: {spec_id}")
-        columns = get_mapping_columns(session, spec_id)
-        return {
-            "id": str(spec.id),
-            "client_id": str(spec.client_id),
-            "version": spec.version,
-            "status": spec.status.value,
-            "source_raw_file_ids": [str(x) for x in spec.source_raw_file_ids],
-            "target_schema_json": spec.target_schema_json,
-            "description": spec.description,
-            "approved_by": spec.approved_by,
-            "columns": [_column_to_dict(c) for c in columns],
-        }
-
-
-def _column_to_dict(column: MappingColumn) -> dict[str, Any]:
-    return {
-        "id": str(column.id),
-        "target_table": column.target_table,
-        "target_column": column.target_column,
-        "source_columns": column.source_columns_json,
-        "transformation_logic": column.transformation_logic,
-        "polars_expression": column.polars_expression,
-        "transformation_type": column.transformation_type,
-        "aggregation_source_table": column.aggregation_source_table,
-        "aggregation_expression": column.aggregation_expression,
-        "aggregation_group_key": column.aggregation_group_key,
-        "lookup_source_table": column.lookup_source_table,
-        "lookup_key": column.lookup_key,
-        "lookup_value": column.lookup_value,
-        "filter_expression": column.filter_expression,
-        "tests": column.tests,
-        "evidence_ids": [str(x) for x in column.evidence_ids],
-        "business_rule_ids": [str(x) for x in column.business_rule_ids],
-        "confidence": column.confidence,
-        "sort_order": column.sort_order,
-    }
-
-
-def load_target_schema_from_spec(mapping_spec: dict[str, Any]) -> TargetSchema:
-    """Deserialize the target schema stored inside a mapping spec."""
-    return TargetSchema.model_validate(mapping_spec["target_schema_json"])
 
 
 _PIPELINE_TEMPLATE = '''\
@@ -494,7 +438,7 @@ def generate_artifact_set(
 def generate_output_folder(
     spec_id: uuid.UUID,
     output_folder: str | Path,
-    object_store: LocalObjectStore,
+    object_store: ObjectStore,
 ) -> PipelineOutputFolder:
     """Generate the complete client deliverable folder.
 
@@ -555,7 +499,7 @@ def generate_output_folder(
 def execute_generated_pipeline(
     pipeline_py_path: str | Path,
     output_folder: str | Path,
-    object_store: LocalObjectStore,
+    object_store: ObjectStore,
     spec_id: uuid.UUID,
 ) -> dict[str, Path]:
     """Run a generated pipeline.py script and capture its CSV outputs."""
@@ -574,7 +518,7 @@ def execute_generated_pipeline(
             if spec is None:
                 raise ValueError(f"Mapping spec not found: {spec_id}")
             for raw_file_id in spec.source_raw_file_ids:
-                raw_file = get_raw_file_by_id(session, uuid.UUID(raw_file_id))
+                raw_file = get_raw_file_by_id(session, raw_file_id)
                 if raw_file is None:
                     continue
                 data = object_store.get(raw_file.storage_key)

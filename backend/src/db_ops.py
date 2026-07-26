@@ -8,14 +8,14 @@ later.
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC
-from typing import Any
+from typing import Any, cast
 
+from config import get_settings
 from file_ops import (
-    LocalObjectStore,
+    ObjectStore,
     build_storage_key,
     compute_sha256,
     detect_file_type,
@@ -24,12 +24,10 @@ from models import (
     AuditLog,
     BusinessRule,
     BusinessRuleStatus,
-    Client,
     ExtractedEvidence,
     FileStatus,
     FolderIngestionResult,
     GeneratedArtifact,
-    IngestionBatch,
     MappingColumn,
     MappingSpec,
     MappingSpecStatus,
@@ -47,23 +45,24 @@ from parser import (
     profile_polars_dataframe,
     summarise_sheet,
 )
+from repositories.clients import (
+    create_ingestion_batch,
+    get_client_by_id,
+)
 from sqlalchemy import Engine, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
-DEFAULT_DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/pipeline",
-)
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+_settings = get_settings()
+DEFAULT_DATABASE_URL = _settings.database_url
+OPENAI_API_KEY = _settings.openai_api_key
+OPENAI_BASE_URL = _settings.openai_base_url
 
 
 def get_embedding(
     content: str,
     api_key: str | None = None,
     base_url: str | None = None,
-    model: str = "text-embedding-3-small",
+    model: str | None = None,
 ) -> list[float]:
     """Generate an embedding vector for a text chunk using OpenAI."""
     api_key = api_key or OPENAI_API_KEY
@@ -75,7 +74,10 @@ def get_embedding(
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=base_url or OPENAI_BASE_URL)
-    response = client.embeddings.create(model=model, input=content)
+    response = client.embeddings.create(
+        model=model or _settings.embedding_model,
+        input=content,
+    )
     return response.data[0].embedding
 
 
@@ -118,56 +120,6 @@ def get_session(engine: Engine | None = None) -> Session:
 # ---------------------------------------------------------------------------
 # Client and ingestion batch operations
 # ---------------------------------------------------------------------------
-
-
-def create_client(
-    session: Session,
-    name: str,
-    code: str,
-    metadata: dict[str, Any] | None = None,
-) -> Client:
-    """Register a new client/tenant."""
-    client = Client(name=name, code=code, meta=metadata or {})
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-    return client
-
-
-def get_client_by_code(session: Session, code: str) -> Client | None:
-    """Fetch a client by its short code."""
-    return session.exec(select(Client).where(Client.code == code)).first()
-
-
-def get_client_by_id(session: Session, client_id: uuid.UUID) -> Client | None:
-    """Fetch a client by UUID."""
-    return session.get(Client, client_id)
-
-
-def create_ingestion_batch(
-    session: Session,
-    client_id: uuid.UUID,
-    label: str | None,
-    metadata: dict[str, Any] | None = None,
-) -> IngestionBatch:
-    """Create a new ingestion batch for a client."""
-    batch = IngestionBatch(
-        client_id=client_id,
-        label=label,
-        meta=metadata or {},
-    )
-    session.add(batch)
-    session.commit()
-    session.refresh(batch)
-    return batch
-
-
-def get_ingestion_batch(
-    session: Session,
-    batch_id: uuid.UUID,
-) -> IngestionBatch | None:
-    """Fetch an ingestion batch by UUID."""
-    return session.get(IngestionBatch, batch_id)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +196,7 @@ def ingest_client_folder(
     session: Session,
     client_id: uuid.UUID,
     folder_path: str,
-    object_store: LocalObjectStore,
+    object_store: ObjectStore,
     label: str | None = None,
 ) -> FolderIngestionResult:
     """Ingest an entire client folder of heterogeneous files as one batch."""
@@ -287,7 +239,10 @@ def ingest_client_folder(
         elif file_type == "md":
             mime_type = "text/markdown"
         elif file_type == "docx":
-            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            mime_type = (
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            )
 
         storage_key = build_storage_key(
             client.code, str(batch.id), file_path.name, sha256
@@ -448,7 +403,8 @@ def search_evidence(
     top_k: int = 5,
 ) -> Sequence[ExtractedEvidence]:
     """Perform vector similarity search over extracted evidence using pgvector."""
-    distance = ExtractedEvidence.embedding.cosine_distance(query_embedding)
+    embedding_column = cast(Any, ExtractedEvidence.embedding)
+    distance = embedding_column.cosine_distance(query_embedding)
     statement = select(ExtractedEvidence, distance.label("distance")).order_by(distance)
     if client_id:
         statement = statement.where(ExtractedEvidence.client_id == client_id)

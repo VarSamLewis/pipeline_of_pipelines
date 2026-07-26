@@ -11,7 +11,7 @@ from __future__ import annotations
 import email
 import io
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 from openpyxl import load_workbook
@@ -32,7 +32,7 @@ def load_workbook_from_bytes(file_bytes: bytes) -> Workbook:
 def get_sheet_names(file_bytes: bytes) -> list[str]:
     """Return the list of sheet names in an Excel workbook."""
     wb = load_workbook_from_bytes(file_bytes)
-    names = wb.sheetnames
+    names = list(wb.sheetnames)
     wb.close()
     return names
 
@@ -54,9 +54,9 @@ def summarise_sheet(
             raise ValueError(
                 f"Sheet '{sheet_name}' not found. Available: {wb.sheetnames}"
             )
-        ws: Worksheet = wb[sheet_name]
+        ws = cast(Worksheet, wb[sheet_name])
     else:
-        ws = wb.active
+        ws = cast(Worksheet, wb.active)
         sheet_name = ws.title
 
     total_rows = ws.max_row or 0
@@ -64,8 +64,8 @@ def summarise_sheet(
     col_count = min(max_cols, total_cols) if total_cols else max_cols
 
     all_rows: list[list[Any]] = []
-    for row in ws.iter_rows(max_col=col_count, values_only=True):
-        all_rows.append(list(row))
+    for worksheet_row in ws.iter_rows(max_col=col_count, values_only=True):
+        all_rows.append(list(worksheet_row))
 
     wb.close()
 
@@ -79,8 +79,8 @@ def summarise_sheet(
         }
 
     header_row_idx = 0
-    for idx, row in enumerate(all_rows):
-        non_empty = [c for c in row if c is not None]
+    for idx, candidate_row in enumerate(all_rows):
+        non_empty = [c for c in candidate_row if c is not None]
         if non_empty and all(isinstance(c, str) for c in non_empty):
             header_row_idx = idx
             break
@@ -95,15 +95,15 @@ def summarise_sheet(
     )
     data_rows = all_rows[header_row_idx + 1 :]
 
-    column_summaries = []
+    column_summaries: list[dict[str, Any]] = []
     for col_idx in range(col_count):
         col_letter = get_column_letter(col_idx + 1)
         header_val = headers[col_idx] if col_idx < len(headers) else None
 
         values = []
-        for row in data_rows:
-            if col_idx < len(row) and row[col_idx] is not None:
-                values.append(row[col_idx])
+        for data_row in data_rows:
+            if col_idx < len(data_row) and data_row[col_idx] is not None:
+                values.append(data_row[col_idx])
 
         if not values:
             column_summaries.append(
@@ -179,11 +179,14 @@ def read_excel_to_polars(
     **options: Any,
 ) -> pl.DataFrame:
     """Parse Excel bytes into a Polars DataFrame."""
-    return pl.read_excel(
-        io.BytesIO(file_bytes),
-        sheet_name=sheet_name,
-        engine="openpyxl",
-        **options,
+    return cast(
+        pl.DataFrame,
+        pl.read_excel(
+            io.BytesIO(file_bytes),
+            sheet_name=sheet_name,
+            engine="openpyxl",
+            **options,
+        ),
     )
 
 
@@ -225,6 +228,8 @@ def parse_email_to_dict(file_bytes: bytes) -> dict[str, Any]:
             payload = part.get_payload(decode=True)
             if payload is None:
                 continue
+            if not isinstance(payload, bytes):
+                continue
             text = payload.decode("utf-8", errors="ignore")
             if content_type == "text/plain":
                 body_text_parts.append(text)
@@ -232,7 +237,7 @@ def parse_email_to_dict(file_bytes: bytes) -> dict[str, Any]:
                 body_html_parts.append(text)
     else:
         payload = msg.get_payload(decode=True)
-        if payload:
+        if isinstance(payload, bytes):
             body_text_parts.append(payload.decode("utf-8", errors="ignore"))
 
     return {
@@ -271,7 +276,7 @@ def extract_evidence_chunks(
     elif "body_text" in parsed_document:
         text = parsed_document["body_text"]
 
-    chunks = []
+    chunks: list[dict[str, Any]] = []
     start = 0
     idx = 0
     while start < len(text):
@@ -303,7 +308,7 @@ def build_polars_from_mapping_source(
     if file_type == "csv":
         return read_csv_to_polars(file_bytes)
     if file_type == "xlsx":
-        return read_excel_to_polars(file_bytes, sheet_name=source_table or 0)
+        return read_excel_to_polars(file_bytes, sheet_name=source_table or None)
     raise ValueError(f"Cannot build Polars DataFrame from file type '{file_type}'")
 
 

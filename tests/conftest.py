@@ -12,8 +12,12 @@ import pytest
 # skipped automatically when Postgres is not reachable.
 os.environ.setdefault(
     "DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/pipeline_test",
+    (
+        "postgresql+psycopg://postgres:postgres@localhost:5432/"
+        "pipeline_test?connect_timeout=2"
+    ),
 )
+os.environ.setdefault("AUTH_BYPASS_LOCAL", "true")
 
 from db_ops import create_tables, get_engine  # noqa: E402
 
