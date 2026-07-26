@@ -1,0 +1,51 @@
+Environment Agency Packaging Data Submission Requirements
+
+Target schema: packaging_submission
+
+submission_id (String, required, unique):
+    A unique identifier for each record. Combine Record ID, reporting period,
+    site_id and packaging material code, separated by hyphens.
+
+reporting_period (String, required):
+    Normalise all period values to the format YYYY-QN, e.g. 2024-Q1.
+    Acceptable source formats include '2024-Q1', 'Q2 2024', '2024Q2'.
+    Use case-insensitive regex matching and always output 'YYYY-QN'.
+
+organisation_id (String, required):
+    Map directly from 'Org Code'.
+
+site_id (String, required):
+    Map directly from 'Site Ref'.
+
+nation (String, required):
+    Lookup 'Site Ref' in site_locations.csv and return the nation column.
+    Allowed values: England, Scotland, Wales, Northern Ireland.
+    If a site is not found, default to 'England'.
+
+packaging_material (String, required):
+    Lookup 'Packaging Material Code' in material_reference.csv and return
+    ea_material_name. Allowed values: Plastic, Glass, Aluminium, Steel,
+    Paper/card, Fibre-based composite, Wood, Other.
+
+packaging_class (String, required):
+    Normalise 'Packaging Type' to one of: Primary, Secondary, Shipment,
+    Tertiary. Case-insensitive match on the first word. 'tertiary crate'
+    maps to 'Tertiary'.
+
+activity (String, required):
+    Normalise 'Activity Type' case-insensitively:
+    'supplied' -> 'Supplied as goods', 'import'/'imported' -> 'Imported',
+    'export'/'exported' -> 'Exported'.
+
+weight_tonnes (Float64, required):
+    Convert Weight to tonnes. If Unit is 'kg' or 'KG', divide by 1000.
+    If Unit is 'tonnes', keep the value as-is. Missing weights should
+    result in null and fail validation.
+
+submission_date (Date):
+    Normalise 'Record Date' to a date. Try formats d/m/Y, Y-m-d, d-M-Y
+    using coalesce.
+
+Data quality rules:
+- Exclude rows where Data Quality Flag is 'TEST' or 'DUPLICATE'.
+- Exclude rows with unknown sites or materials if they cannot be defaulted.

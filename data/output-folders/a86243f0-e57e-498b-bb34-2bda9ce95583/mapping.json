@@ -1,0 +1,873 @@
+{
+  "id": "a86243f0-e57e-498b-bb34-2bda9ce95583",
+  "client_id": "bb5c86e2-cc4c-44ca-808a-170818486b9f",
+  "version": 1,
+  "status": "approved",
+  "source_raw_file_ids": [
+    "e7157a93-997f-4f26-8531-a69dcf43a883",
+    "8c202475-d344-4b9f-8afc-05151cda8eee",
+    "4b8c3f87-a85c-4369-8092-8fb5285ec577",
+    "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+    "789029fc-74da-4a20-8f70-71fe8242dd00"
+  ],
+  "target_schema_json": {
+    "client_code": "packaging_client",
+    "name": "ea_packaging_submission",
+    "description": "UK Environment Agency EPR packaging data submission",
+    "tables": [
+      {
+        "name": "packaging_submission",
+        "description": "Curated packaging records ready for EA submission",
+        "columns": [
+          {
+            "name": "submission_id",
+            "dtype": "String",
+            "description": "Unique record identifier. Build with concat of Record ID, Period, Site Ref and Packaging Material Code.",
+            "required": true,
+            "unique": true,
+            "allowed_values": null
+          },
+          {
+            "name": "reporting_period",
+            "dtype": "String",
+            "description": "Normalised reporting period YYYY-QN. Source formats: '2024-Q1', 'Q2 2024', '2024Q3'. Use case-insensitive regex matching and always output 'YYYY-QN'.",
+            "required": true,
+            "unique": false,
+            "allowed_values": null
+          },
+          {
+            "name": "organisation_id",
+            "dtype": "String",
+            "description": "Organisation identifier. Direct map from Org Code.",
+            "required": true,
+            "unique": false,
+            "allowed_values": null
+          },
+          {
+            "name": "site_id",
+            "dtype": "String",
+            "description": "Site reference. Direct map from Site Ref.",
+            "required": true,
+            "unique": false,
+            "allowed_values": null
+          },
+          {
+            "name": "nation",
+            "dtype": "String",
+            "description": "Nation where packaging was handled. Use a lookup transformation with site_locations.csv keyed on site_ref returning nation. Source column is Site Ref.",
+            "required": true,
+            "unique": false,
+            "allowed_values": [
+              "England",
+              "Scotland",
+              "Wales",
+              "Northern Ireland"
+            ]
+          },
+          {
+            "name": "packaging_material",
+            "dtype": "String",
+            "description": "EA packaging material category. Use a lookup transformation with material_reference.csv keyed on internal_code returning ea_material_name. Source column is Packaging Material Code.",
+            "required": true,
+            "unique": false,
+            "allowed_values": [
+              "Plastic",
+              "Glass",
+              "Aluminium",
+              "Steel",
+              "Paper/card",
+              "Fibre-based composite",
+              "Wood",
+              "Other"
+            ]
+          },
+          {
+            "name": "packaging_class",
+            "dtype": "String",
+            "description": "Packaging class. Map case-insensitively from the first word of Packaging Type: Primary, Secondary, Shipment, Tertiary.",
+            "required": true,
+            "unique": false,
+            "allowed_values": [
+              "Primary",
+              "Secondary",
+              "Shipment",
+              "Tertiary"
+            ]
+          },
+          {
+            "name": "activity",
+            "dtype": "String",
+            "description": "Packaging activity. Normalise case-insensitively: supplied -> 'Supplied as goods', import/imported -> 'Imported', export/exported -> 'Exported'.",
+            "required": true,
+            "unique": false,
+            "allowed_values": null
+          },
+          {
+            "name": "weight_tonnes",
+            "dtype": "Float64",
+            "description": "Weight in tonnes. If Unit is 'kg' or 'KG' divide Weight by 1000, otherwise keep Weight as tonnes. Cast to Float64.",
+            "required": true,
+            "unique": false,
+            "allowed_values": null
+          },
+          {
+            "name": "submission_date",
+            "dtype": "Date",
+            "description": "Date of record. Try formats '%d/%m/%Y', '%Y-%m-%d', '%d-%b-%Y' using coalesce.",
+            "required": false,
+            "unique": false,
+            "allowed_values": null
+          }
+        ]
+      }
+    ]
+  },
+  "source_catalogs": [
+    {
+      "schema_version": 1,
+      "raw_file_id": "4b8c3f87-a85c-4369-8092-8fb5285ec577",
+      "file_sha256": "98ba6e5573a6bef6d7ebeb19becd021ff99d2f7b275b90c6c07faca6ec5eb81b",
+      "original_filename": "material_reference.csv",
+      "file_type": "csv",
+      "tables": [
+        {
+          "source_table_id": "14469db7-ab0c-54c5-ba9e-1b5fe6e19bc3",
+          "raw_file_id": "4b8c3f87-a85c-4369-8092-8fb5285ec577",
+          "file_sha256": "98ba6e5573a6bef6d7ebeb19becd021ff99d2f7b275b90c6c07faca6ec5eb81b",
+          "original_filename": "material_reference.csv",
+          "display_name": "material_reference.csv",
+          "location": {
+            "sheet_name": null,
+            "cell_range": null,
+            "header_row": 1,
+            "data_start_row": 2,
+            "encoding": "utf-8",
+            "delimiter": ",",
+            "quote_char": "\"",
+            "newline": "CRLF"
+          },
+          "row_count": 9,
+          "columns": [
+            {
+              "source_column_id": "fa15410b-16be-53e0-b9e0-d804f309fe4f",
+              "ordinal": 1,
+              "original_name": "internal_code",
+              "normalized_name": "internal_code",
+              "inferred_type": "string",
+              "examples": [
+                "PL01",
+                "PL02",
+                "GL01",
+                "AL01",
+                "ST01"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 9,
+              "candidate_key_score": 1.0
+            },
+            {
+              "source_column_id": "b41a3e5c-90e4-5325-b13b-b8b468381e3a",
+              "ordinal": 2,
+              "original_name": "ea_material_name",
+              "normalized_name": "ea_material_name",
+              "inferred_type": "string",
+              "examples": [
+                "Plastic",
+                "Plastic",
+                "Glass",
+                "Aluminium",
+                "Steel"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 8,
+              "candidate_key_score": 0.8889
+            }
+          ],
+          "confidence": 0.95,
+          "warnings": []
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "schema_version": 1,
+      "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+      "file_sha256": "4a2e5a444bdd9959717591df56d3f89d761ff8b8366c2c8c20c3ff59e81c01b2",
+      "original_filename": "packaging_data.csv",
+      "file_type": "csv",
+      "tables": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "file_sha256": "4a2e5a444bdd9959717591df56d3f89d761ff8b8366c2c8c20c3ff59e81c01b2",
+          "original_filename": "packaging_data.csv",
+          "display_name": "packaging_data.csv",
+          "location": {
+            "sheet_name": null,
+            "cell_range": null,
+            "header_row": 1,
+            "data_start_row": 2,
+            "encoding": "utf-8",
+            "delimiter": ",",
+            "quote_char": "\"",
+            "newline": "CRLF"
+          },
+          "row_count": 3000,
+          "columns": [
+            {
+              "source_column_id": "c98cf971-4b8f-53ed-9ccd-44ca96d6af17",
+              "ordinal": 1,
+              "original_name": "Record ID",
+              "normalized_name": "record_id",
+              "inferred_type": "string",
+              "examples": [
+                "REC-0001",
+                "REC-0002",
+                "REC-0003",
+                "REC-0004",
+                "REC-0005"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 3000,
+              "candidate_key_score": 1.0
+            },
+            {
+              "source_column_id": "d02514cd-4b2d-5f6a-adea-0c406e57dab2",
+              "ordinal": 2,
+              "original_name": "Period",
+              "normalized_name": "period",
+              "inferred_type": "string",
+              "examples": [
+                "2024Q2",
+                "Q2 2024",
+                "Q4 2024",
+                "Q2 2024",
+                "2024-Q3"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 5,
+              "candidate_key_score": 0.0017
+            },
+            {
+              "source_column_id": "61d03053-2c51-5930-bc28-47507ec14cee",
+              "ordinal": 3,
+              "original_name": "Org Code",
+              "normalized_name": "org_code",
+              "inferred_type": "string",
+              "examples": [
+                "ORG-12345",
+                "ORG-12345",
+                "ORG-12345",
+                "ORG-12345",
+                "ORG-12345"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 1,
+              "candidate_key_score": 0.0003
+            },
+            {
+              "source_column_id": "4b3e4e57-8b7b-5867-9381-857352fc9065",
+              "ordinal": 4,
+              "original_name": "Site Ref",
+              "normalized_name": "site_ref",
+              "inferred_type": "string",
+              "examples": [
+                "SITE-B",
+                "SITE-B",
+                "SITE-B",
+                "SITE-C",
+                "SITE-E"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 6,
+              "candidate_key_score": 0.002
+            },
+            {
+              "source_column_id": "dbcc013b-dee9-59d0-97c4-96d827560c4d",
+              "ordinal": 5,
+              "original_name": "Packaging Material Code",
+              "normalized_name": "packaging_material_code",
+              "inferred_type": "string",
+              "examples": [
+                "PL02",
+                "PL02",
+                "PL01",
+                "PL01",
+                "PL02"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 10,
+              "candidate_key_score": 0.0033
+            },
+            {
+              "source_column_id": "bafe7f90-2d42-5076-b7fd-e0efa1353f25",
+              "ordinal": 6,
+              "original_name": "Packaging Type",
+              "normalized_name": "packaging_type",
+              "inferred_type": "string",
+              "examples": [
+                "Primary Bottle",
+                "Shipment Pallet",
+                "PRIMARY bottle",
+                "Tertiary Wrap",
+                "Primary Bottle"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 8,
+              "candidate_key_score": 0.0027
+            },
+            {
+              "source_column_id": "b5a50a14-7435-5fae-a429-af3d9967194a",
+              "ordinal": 7,
+              "original_name": "Activity Type",
+              "normalized_name": "activity_type",
+              "inferred_type": "string",
+              "examples": [
+                "Exported",
+                "Imported",
+                "supplied",
+                "supplied",
+                "Imported"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 6,
+              "candidate_key_score": 0.002
+            },
+            {
+              "source_column_id": "b1adddc8-9166-5979-ad34-43009e4e86da",
+              "ordinal": 8,
+              "original_name": "Weight",
+              "normalized_name": "weight",
+              "inferred_type": "string",
+              "examples": [
+                "1411.4",
+                "207.32",
+                "3594.3",
+                "3505.79",
+                "528.75"
+              ],
+              "null_count": 30,
+              "null_rate": 0.01,
+              "cardinality": 2963,
+              "candidate_key_score": 0.9877
+            },
+            {
+              "source_column_id": "9f7411f7-ed45-5017-8194-f6e16586afac",
+              "ordinal": 9,
+              "original_name": "Unit",
+              "normalized_name": "unit",
+              "inferred_type": "string",
+              "examples": [
+                "kg",
+                "kg",
+                "tonnes",
+                "tonnes",
+                "KG"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 3,
+              "candidate_key_score": 0.001
+            },
+            {
+              "source_column_id": "435cdab8-4303-5924-be67-8de187e1d5c0",
+              "ordinal": 10,
+              "original_name": "Record Date",
+              "normalized_name": "record_date",
+              "inferred_type": "string",
+              "examples": [
+                "20-Oct-2024",
+                "18-Nov-2024",
+                "05-Jun-2024",
+                "05/07/2024",
+                "06/09/2024"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 1008,
+              "candidate_key_score": 0.336
+            },
+            {
+              "source_column_id": "c8868c88-9e74-56d0-a6c0-45ccd201e11b",
+              "ordinal": 11,
+              "original_name": "Data Quality Flag",
+              "normalized_name": "data_quality_flag",
+              "inferred_type": "string",
+              "examples": [
+                "VALID",
+                "VALID",
+                "VALID",
+                "VALID",
+                "VALID"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 3,
+              "candidate_key_score": 0.001
+            },
+            {
+              "source_column_id": "d6a344e1-bf1a-541f-8f25-b0e913cb8dc0",
+              "ordinal": 12,
+              "original_name": "Comment",
+              "normalized_name": "comment",
+              "inferred_type": "string",
+              "examples": [
+                "test record - exclude",
+                "test record - exclude",
+                "test record - exclude",
+                "test record - exclude",
+                "test record - exclude"
+              ],
+              "null_count": 2970,
+              "null_rate": 0.99,
+              "cardinality": 1,
+              "candidate_key_score": 0.0003
+            }
+          ],
+          "confidence": 0.95,
+          "warnings": []
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "schema_version": 1,
+      "raw_file_id": "789029fc-74da-4a20-8f70-71fe8242dd00",
+      "file_sha256": "550d24fd07901b83e2028ae34dead1dc0ae37d4cf6726ec1f88f6219ec21b5d2",
+      "original_filename": "site_locations.csv",
+      "file_type": "csv",
+      "tables": [
+        {
+          "source_table_id": "3365057d-e8d8-5b90-8e37-ff5529316b24",
+          "raw_file_id": "789029fc-74da-4a20-8f70-71fe8242dd00",
+          "file_sha256": "550d24fd07901b83e2028ae34dead1dc0ae37d4cf6726ec1f88f6219ec21b5d2",
+          "original_filename": "site_locations.csv",
+          "display_name": "site_locations.csv",
+          "location": {
+            "sheet_name": null,
+            "cell_range": null,
+            "header_row": 1,
+            "data_start_row": 2,
+            "encoding": "utf-8",
+            "delimiter": ",",
+            "quote_char": "\"",
+            "newline": "CRLF"
+          },
+          "row_count": 5,
+          "columns": [
+            {
+              "source_column_id": "cccf61c9-4933-54da-8f61-35237412d79a",
+              "ordinal": 1,
+              "original_name": "site_ref",
+              "normalized_name": "site_ref",
+              "inferred_type": "string",
+              "examples": [
+                "SITE-A",
+                "SITE-B",
+                "SITE-C",
+                "SITE-D",
+                "SITE-E"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 5,
+              "candidate_key_score": 1.0
+            },
+            {
+              "source_column_id": "0338828a-1974-5cad-9a94-333763381acd",
+              "ordinal": 2,
+              "original_name": "nation",
+              "normalized_name": "nation",
+              "inferred_type": "string",
+              "examples": [
+                "England",
+                "Scotland",
+                "Wales",
+                "Northern Ireland",
+                "England"
+              ],
+              "null_count": 0,
+              "null_rate": 0.0,
+              "cardinality": 4,
+              "candidate_key_score": 0.8
+            }
+          ],
+          "confidence": 0.95,
+          "warnings": []
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "description": "Generated by upload wizard\nApproved notes: Approved via upload wizard",
+  "approved_by": "wizard-user",
+  "columns": [
+    {
+      "id": "644aba18-de7e-4d20-9cfa-17ecf5572651",
+      "target_table": "packaging_submission",
+      "target_column": "submission_id",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "c98cf971-4b8f-53ed-9ccd-44ca96d6af17",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "record_id"
+        },
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "d02514cd-4b2d-5f6a-adea-0c406e57dab2",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "period"
+        },
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "4b3e4e57-8b7b-5867-9381-857352fc9065",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "site_ref"
+        },
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "dbcc013b-dee9-59d0-97c4-96d827560c4d",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "packaging_material_code"
+        }
+      ],
+      "transformation_logic": "Concatenate Record ID, Period, Site Ref and Packaging Material Code, separated by hyphens.",
+      "polars_expression": "concat(col('record_id'), '-', col('period'), '-', col('site_ref'), '-', col('packaging_material_code'))",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null",
+        "unique"
+      ],
+      "evidence_ids": [
+        "d8f6dd8a-cbe7-429d-b17a-fc286d5b0e32",
+        "c970af91-d6ba-4100-afa1-abc7a0441339"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 0
+    },
+    {
+      "id": "9bedc5bd-e304-467f-bc54-ef435ab0b9bc",
+      "target_table": "packaging_submission",
+      "target_column": "reporting_period",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "d02514cd-4b2d-5f6a-adea-0c406e57dab2",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "period"
+        }
+      ],
+      "transformation_logic": "Normalise reporting period to format YYYY-QN.",
+      "polars_expression": "when(col('period').str.contains(r'(?i)Q1')).then(pl.lit('2024-Q1')).otherwise(when(col('period').str.contains(r'(?i)Q2')).then(pl.lit('2024-Q2')).otherwise(when(col('period').str.contains(r'(?i)Q3')).then(pl.lit('2024-Q3')).otherwise(null)))",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 1
+    },
+    {
+      "id": "ff147401-b266-4859-a0f3-29c8a2e805f8",
+      "target_table": "packaging_submission",
+      "target_column": "organisation_id",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "61d03053-2c51-5930-bc28-47507ec14cee",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "org_code"
+        }
+      ],
+      "transformation_logic": "Direct map from Org Code.",
+      "polars_expression": "col('org_code')",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 2
+    },
+    {
+      "id": "ccc87fff-c7f7-486b-a330-0a0b3c69853b",
+      "target_table": "packaging_submission",
+      "target_column": "site_id",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "4b3e4e57-8b7b-5867-9381-857352fc9065",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "site_ref"
+        }
+      ],
+      "transformation_logic": "Direct map from Site Ref.",
+      "polars_expression": "col('site_ref')",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 3
+    },
+    {
+      "id": "bf71d663-2a61-4a35-a0dd-80eb7f03366d",
+      "target_table": "packaging_submission",
+      "target_column": "nation",
+      "source_columns": [
+        {
+          "source_table_id": "3365057d-e8d8-5b90-8e37-ff5529316b24",
+          "source_column_id": "cccf61c9-4933-54da-8f61-35237412d79a",
+          "raw_file_id": "789029fc-74da-4a20-8f70-71fe8242dd00",
+          "source_table": "site_locations.csv",
+          "source_column": "site_ref"
+        }
+      ],
+      "transformation_logic": "Lookup transformation to determine nation from site reference.",
+      "polars_expression": null,
+      "transformation_type": "lookup",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": "3365057d-e8d8-5b90-8e37-ff5529316b24",
+      "lookup_key": "site_ref",
+      "lookup_value": "nation",
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 4
+    },
+    {
+      "id": "c4d4ffd5-b9f0-4d8f-af5d-b3df30426538",
+      "target_table": "packaging_submission",
+      "target_column": "packaging_material",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "dbcc013b-dee9-59d0-97c4-96d827560c4d",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "packaging_material_code"
+        }
+      ],
+      "transformation_logic": "Lookup transformation to get EA material name from internal code.",
+      "polars_expression": null,
+      "transformation_type": "lookup",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": "14469db7-ab0c-54c5-ba9e-1b5fe6e19bc3",
+      "lookup_key": "internal_code",
+      "lookup_value": "ea_material_name",
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 5
+    },
+    {
+      "id": "5db5387b-64f0-4b2d-a265-8be54c777cfd",
+      "target_table": "packaging_submission",
+      "target_column": "packaging_class",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "bafe7f90-2d42-5076-b7fd-e0efa1353f25",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "packaging_type"
+        }
+      ],
+      "transformation_logic": "Map case-insensitively from the first word of Packaging Type.",
+      "polars_expression": "when(col('packaging_type').str.contains(r'(?i)primary')).then(pl.lit('Primary')).otherwise(when(col('packaging_type').str.contains(r'(?i)secondary')).then(pl.lit('Secondary')).otherwise(when(col('packaging_type').str.contains(r'(?i)shipment')).then(pl.lit('Shipment')).otherwise(when(col('packaging_type').str.contains(r'(?i)tertiary')).then(pl.lit('Tertiary')).otherwise(null))))",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 6
+    },
+    {
+      "id": "e0a1bcad-86bd-4f13-8b83-0ad795fad910",
+      "target_table": "packaging_submission",
+      "target_column": "activity",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "b5a50a14-7435-5fae-a429-af3d9967194a",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "activity_type"
+        }
+      ],
+      "transformation_logic": "Normalise activity case-insensitively.",
+      "polars_expression": "when(col('activity_type').str.contains(r'(?i)supplied')).then(pl.lit('Supplied as goods')).otherwise(when(col('activity_type').str.contains(r'(?i)import')).then(pl.lit('Imported')).otherwise(when(col('activity_type').str.contains(r'(?i)export')).then(pl.lit('Exported')).otherwise(null)))",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 7
+    },
+    {
+      "id": "1633d028-56e1-459c-8662-ecaca446a3fd",
+      "target_table": "packaging_submission",
+      "target_column": "weight_tonnes",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "b1adddc8-9166-5979-ad34-43009e4e86da",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "weight"
+        },
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "9f7411f7-ed45-5017-8194-f6e16586afac",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "unit"
+        }
+      ],
+      "transformation_logic": "Convert weight to tonnes based on unit.",
+      "polars_expression": "when(col('unit').str.contains(r'(?i)kg')).then(col('weight') / 1000).otherwise(col('weight'))",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [
+        "not_null"
+      ],
+      "evidence_ids": [
+        "31e69a8b-2dcd-46f2-8893-c80a6ee01820"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 8
+    },
+    {
+      "id": "a25c952b-f3f3-4d62-a6f4-082a885299cb",
+      "target_table": "packaging_submission",
+      "target_column": "submission_date",
+      "source_columns": [
+        {
+          "source_table_id": "dabded35-62d5-5931-88cf-e4df20061c11",
+          "source_column_id": "435cdab8-4303-5924-be67-8de187e1d5c0",
+          "raw_file_id": "4acf620b-fca2-4d33-9d7a-3ce1d7a8d8a3",
+          "source_table": "packaging_data.csv",
+          "source_column": "record_date"
+        }
+      ],
+      "transformation_logic": "Normalise record date to a date format.",
+      "polars_expression": "coalesce(col('record_date').str.to_date('%d/%m/%Y', strict=False), col('record_date').str.to_date('%Y-%m-%d', strict=False), col('record_date').str.to_date('%d-%b-%Y', strict=False))",
+      "transformation_type": "expression",
+      "aggregation_source_table": null,
+      "aggregation_expression": null,
+      "aggregation_group_key": null,
+      "lookup_source_table": null,
+      "lookup_key": null,
+      "lookup_value": null,
+      "filter_expression": null,
+      "tests": [],
+      "evidence_ids": [
+        "db19a693-9d61-47fe-b45e-6a57d927d83b"
+      ],
+      "business_rule_ids": [],
+      "confidence": 0.95,
+      "sort_order": 9
+    }
+  ]
+}

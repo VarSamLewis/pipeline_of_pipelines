@@ -525,3 +525,222 @@ def test_build_table_index_builds_correct_keys() -> None:
 
     assert "data.csv::Orders" in index
     assert index["data.csv::Orders"]["source_table_id"] == "t1"
+
+
+def test_validate_lookup_key_not_in_lookup_table() -> None:
+    """Validation should reject a lookup_key that doesn't exist in the lookup table."""
+    target_schema = TargetSchema(
+        client_code="test",
+        tables=[{"name": "out", "columns": [{"name": "material"}]}],
+    )
+    mapping = ProposedMapping(
+        target_table="out",
+        target_column="material",
+        source_columns=[
+            SourceColumnRef(
+                source_table_id="base-tbl",
+                source_column_id="col-1",
+                source_table="Main",
+                source_column="material_code",
+            )
+        ],
+        transformation_type="lookup",
+        lookup_source_table="lookup-tbl",
+        lookup_key="wrong_column_name",
+        lookup_value="material_name",
+    )
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "base-tbl",
+                    "columns": [{"source_column_id": "col-1"}],
+                },
+                {
+                    "source_table_id": "lookup-tbl",
+                    "columns": [
+                        {
+                            "source_column_id": "lc1",
+                            "normalized_name": "internal_code",
+                        },
+                        {
+                            "source_column_id": "lc2",
+                            "normalized_name": "material_name",
+                        },
+                    ],
+                },
+            ]
+        }
+    ]
+
+    results = validate_mapping_columns(
+        [mapping], target_schema, catalogs
+    )
+
+    errors = results[0]["validation_errors"]
+    assert any("lookup_key" in e and "wrong_column_name" in e for e in errors)
+
+
+def test_validate_lookup_value_not_in_lookup_table() -> None:
+    """Validation should reject a lookup_value not in the lookup table."""
+    target_schema = TargetSchema(
+        client_code="test",
+        tables=[{"name": "out", "columns": [{"name": "material"}]}],
+    )
+    mapping = ProposedMapping(
+        target_table="out",
+        target_column="material",
+        source_columns=[
+            SourceColumnRef(
+                source_table_id="base-tbl",
+                source_column_id="col-1",
+                source_table="Main",
+                source_column="code",
+            )
+        ],
+        transformation_type="lookup",
+        lookup_source_table="lookup-tbl",
+        lookup_key="internal_code",
+        lookup_value="nonexistent_value",
+    )
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "base-tbl",
+                    "columns": [{"source_column_id": "col-1"}],
+                },
+                {
+                    "source_table_id": "lookup-tbl",
+                    "columns": [
+                        {
+                            "source_column_id": "lc1",
+                            "normalized_name": "internal_code",
+                        },
+                        {
+                            "source_column_id": "lc2",
+                            "normalized_name": "material_name",
+                        },
+                    ],
+                },
+            ]
+        }
+    ]
+
+    results = validate_mapping_columns(
+        [mapping], target_schema, catalogs
+    )
+
+    errors = results[0]["validation_errors"]
+    assert any(
+        "lookup_value" in e and "nonexistent_value" in e for e in errors
+    )
+
+
+def test_validate_lookup_accepts_valid_key() -> None:
+    """Valid lookup keys should produce no errors."""
+    target_schema = TargetSchema(
+        client_code="test",
+        tables=[{"name": "out", "columns": [{"name": "material"}]}],
+    )
+    mapping = ProposedMapping(
+        target_table="out",
+        target_column="material",
+        source_columns=[
+            SourceColumnRef(
+                source_table_id="base-tbl",
+                source_column_id="col-1",
+                source_table="Main",
+                source_column="code",
+            )
+        ],
+        transformation_type="lookup",
+        lookup_source_table="lookup-tbl",
+        lookup_key="internal_code",
+        lookup_value="material_name",
+    )
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "base-tbl",
+                    "columns": [{"source_column_id": "col-1"}],
+                },
+                {
+                    "source_table_id": "lookup-tbl",
+                    "columns": [
+                        {
+                            "source_column_id": "lc1",
+                            "normalized_name": "internal_code",
+                        },
+                        {
+                            "source_column_id": "lc2",
+                            "normalized_name": "material_name",
+                        },
+                    ],
+                },
+            ]
+        }
+    ]
+
+    results = validate_mapping_columns(
+        [mapping], target_schema, catalogs
+    )
+
+    assert results[0]["validation_errors"] == []
+
+
+def test_validate_aggregation_group_key_not_found() -> None:
+    """Validation should reject a group key that doesn't exist in the agg table."""
+    target_schema = TargetSchema(
+        client_code="test",
+        tables=[{"name": "out", "columns": [{"name": "total"}]}],
+    )
+    mapping = ProposedMapping(
+        target_table="out",
+        target_column="total",
+        source_columns=[
+            SourceColumnRef(
+                source_table_id="base-tbl",
+                source_column_id="col-1",
+                source_table="Main",
+                source_column="cust_id",
+            )
+        ],
+        transformation_type="aggregation",
+        aggregation_source_table="agg-tbl",
+        aggregation_group_key="wrong_key",
+        aggregation_expression="col('qty').sum()",
+    )
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "base-tbl",
+                    "columns": [{"source_column_id": "col-1"}],
+                },
+                {
+                    "source_table_id": "agg-tbl",
+                    "columns": [
+                        {
+                            "source_column_id": "ac1",
+                            "normalized_name": "cust_id",
+                        },
+                        {
+                            "source_column_id": "ac2",
+                            "normalized_name": "qty",
+                        },
+                    ],
+                },
+            ]
+        }
+    ]
+
+    results = validate_mapping_columns(
+        [mapping], target_schema, catalogs
+    )
+
+    errors = results[0]["validation_errors"]
+    assert any(
+        "aggregation_group_key" in e and "wrong_key" in e for e in errors
+    )

@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
+import textwrap
 import uuid
 from datetime import UTC
 from pathlib import Path
@@ -31,33 +33,10 @@ from models import (
 )
 
 # ---------------------------------------------------------------------------
-# Artifact generation
+# Source-loading helpers (inlined into every generated pipeline.py)
 # ---------------------------------------------------------------------------
 
-
-_PIPELINE_TEMPLATE = '''\
-"""Auto-generated single-file Polars transformation pipeline.
-
-Reads mapping.json from the same directory, loads source files from the
-provided source folder, applies the approved mappings (including filters,
-lookups, and aggregations), and writes one CSV per target table.
-"""
-
-from __future__ import annotations
-
-import argparse
-import csv
-import hashlib
-import io
-import json
-from pathlib import Path
-from typing import Any
-
-import polars as pl
-from openpyxl import load_workbook
-from openpyxl.utils import range_boundaries
-
-
+_SOURCE_LOADING_HELPERS = """\
 def load_mapping_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -72,7 +51,6 @@ def _catalog_tables(mapping_spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _resolve_source_path(source_folder: Path, table: dict[str, Any]) -> Path:
-    """Resolve one catalog table to exactly one content-verified local file."""
     original_filename = table.get("original_filename")
     raw_file_id = table.get("raw_file_id")
     candidates = []
@@ -82,9 +60,9 @@ def _resolve_source_path(source_folder: Path, table: dict[str, Any]) -> Path:
             candidates.append(exact)
     if raw_file_id:
         candidates.extend(
-            path
-            for path in source_folder.glob(f"{raw_file_id}_*")
-            if path.is_file() and path not in candidates
+            p
+            for p in source_folder.glob(f"{raw_file_id}_*")
+            if p.is_file() and p not in candidates
         )
     if len(candidates) != 1:
         raise ValueError(
@@ -130,17 +108,24 @@ def _rows_to_dataframe(
 def _load_csv_table(path: Path, table: dict[str, Any]) -> pl.DataFrame:
     location = table["location"]
     encoding = location.get("encoding") or "utf-8"
-    text = path.read_bytes().decode(encoding)
-    rows = list(
-        csv.reader(
-            io.StringIO(text),
-            delimiter=location.get("delimiter") or ",",
-            quotechar=location.get("quote_char") or '"',
-            strict=True,
-        )
-    )
-    header_index = int(location["header_row"]) - 1
-    return _rows_to_dataframe(rows[header_index:], table)
+    skip_rows = int(location["header_row"]) - 1
+    kwargs: dict[str, Any] = {
+        "skip_rows": skip_rows,
+        "encoding": encoding,
+        "truncate_ragged_lines": True,
+        "infer_schema_length": 1000,
+    }
+    delimiter = location.get("delimiter")
+    if delimiter:
+        kwargs["separator"] = delimiter
+    quote_char = location.get("quote_char")
+    if quote_char:
+        kwargs["quote_char"] = quote_char
+    df = pl.read_csv(path, **kwargs)
+    names = _catalog_column_names(table)
+    if len(df.columns) == len(names):
+        df = df.rename({old: new for old, new in zip(df.columns, names)})
+    return df
 
 
 def _load_xlsx_table(path: Path, table: dict[str, Any]) -> pl.DataFrame:
@@ -169,7 +154,6 @@ def _load_xlsx_table(path: Path, table: dict[str, Any]) -> pl.DataFrame:
 def _load_legacy_source_dataframes(
     source_folder: Path,
 ) -> dict[str, pl.DataFrame]:
-    """Keep old mapping artifacts executable during the catalog migration."""
     result = {}
     for path in sorted(source_folder.iterdir()):
         if path.suffix.lower() == ".csv":
@@ -187,7 +171,6 @@ def load_source_dataframes(
     mapping_spec: dict[str, Any],
     source_folder: Path,
 ) -> dict[str, pl.DataFrame]:
-    """Load catalog tables by stable ID using their recorded parser settings."""
     tables = _catalog_tables(mapping_spec)
     if not tables:
         return _load_legacy_source_dataframes(source_folder)
@@ -206,284 +189,291 @@ def load_source_dataframes(
             )
         result[table["source_table_id"]] = frame
     return result
+"""
+
+# ---------------------------------------------------------------------------
+# Artifact generation
+# ---------------------------------------------------------------------------
 
 
-def _concat_str(*args: Any) -> pl.Expr:
-    """Concatenate a variadic list of strings/expressions with pl.concat_str."""
-    exprs = [pl.lit(a) if not isinstance(a, pl.Expr) else a for a in args]
-    return pl.concat_str(exprs)
+def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
+    """Generate Python code for a single mapping column's transformation."""
+    target_column = col["target_column"]
+    ttype = col.get("transformation_type", "expression")
 
+    if ttype == "filter":
+        expr = col.get("filter_expression", "")
+        return (
+            "df = df.filter(eval("
+            f"{expr!r}, _NS, "
+            "{{name: df[name] for name in df.columns}}))\n"
+        )
 
-def _eval_globals() -> dict[str, Any]:
-    """Return the namespace used to evaluate polars_expression strings."""
-    return {
-        "pl": pl,
-        "col": pl.col,
-        "when": pl.when,
-        "concat": _concat_str,
-        "coalesce": pl.coalesce,
-        "null": None,
-        "Int64": pl.Int64,
-        "Float64": pl.Float64,
-        "String": pl.String,
-        "Date": pl.Date,
-        "Datetime": pl.Datetime,
-        "Boolean": pl.Boolean,
-    }
+    if ttype == "lookup":
+        lookup_table = col.get("lookup_source_table", "")
+        lookup_key = col.get("lookup_key", "")
+        lookup_value = col.get("lookup_value", "")
+        left_key = (
+            col["source_columns"][0]["source_column"]
+            if col.get("source_columns")
+            else lookup_key
+        )
+        return textwrap.dedent(f"""\
+            _lut = (
+                source_dfs[{lookup_table!r}]
+                .select([{lookup_key!r}, {lookup_value!r}])
+                .unique()
+            )
+            df = df.join(
+                _lut,
+                left_on={left_key!r},
+                right_on={lookup_key!r},
+                how="left",
+            ).rename({{{lookup_value!r}: {target_column!r}}})
+        """)
 
+    if ttype == "aggregation":
+        agg_table = col.get("aggregation_source_table", "")
+        agg_key = col.get("aggregation_group_key", "")
+        agg_expr = col.get("aggregation_expression", "")
+        base_key = (
+            col["source_columns"][0]["source_column"]
+            if col.get("source_columns")
+            else agg_key
+        )
+        return textwrap.dedent(f"""\
+            _agg_df = source_dfs[{agg_table!r}]
+            _local = {{
+                name: _agg_df[name] for name in _agg_df.columns
+            }}
+            _agg_expr = eval({agg_expr!r}, _NS, _local)
+            _grouped = _agg_df.group_by({agg_key!r}).agg(
+                _agg_expr.alias({target_column!r})
+            )
+            df = df.join(
+                _grouped,
+                left_on={base_key!r},
+                right_on={agg_key!r},
+                how="left",
+            )
+        """)
 
-def apply_row_expression(
-    df: pl.DataFrame,
-    mapping: dict[str, Any],
-) -> pl.DataFrame:
-    """Apply a per-row Polars expression to a DataFrame."""
-    target_column = mapping["target_column"]
-    source_columns = mapping.get("source_columns", [])
-    expression = mapping.get("polars_expression")
+    # Default: expression
+    source_columns = col.get("source_columns", [])
+    expression = col.get("polars_expression")
 
     if not source_columns:
-        return df.with_columns(pl.lit(None).alias(target_column))
+        return f"df = df.with_columns(pl.lit(None).alias({target_column!r}))\n"
 
     first_source = source_columns[0]["source_column"]
+
     if expression:
         local_vars = {
-            ref["source_column"]: df[ref["source_column"]]
+            ref["source_column"]: f"df[{ref['source_column']!r}]"
             for ref in source_columns
-            if ref["source_column"] in df.columns
         }
-        try:
-            result = eval(expression, _eval_globals(), local_vars)
-            return df.with_columns(result.alias(target_column))
-        except Exception:
-            return df.with_columns(pl.lit(None).alias(target_column))
-    if first_source in df.columns:
-        return df.with_columns(pl.col(first_source).alias(target_column))
-    return df.with_columns(pl.lit(None).alias(target_column))
+        return textwrap.dedent(f"""\
+            _local = {{{", ".join(f"{k!r}: {v}" for k, v in local_vars.items())}}}
+            _expr = eval({expression!r}, _NS, _local)
+            df = df.with_columns(_expr.alias({target_column!r}))
+        """)
+
+    return f"df = df.with_columns(pl.col({first_source!r}).alias({target_column!r}))\n"
 
 
-def apply_filter(
-    df: pl.DataFrame,
-    mapping: dict[str, Any],
-) -> pl.DataFrame:
-    """Apply a Polars filter expression to a DataFrame."""
-    expression = mapping.get("filter_expression")
-    if not expression:
-        return df
-    local_vars = {name: df[name] for name in df.columns}
-    try:
-        mask = eval(expression, _eval_globals(), local_vars)
-        return df.filter(mask)
-    except Exception:
-        return df
-
-
-def apply_lookup(
-    df: pl.DataFrame,
-    mapping: dict[str, Any],
-    source_dfs: dict[str, pl.DataFrame],
-) -> pl.DataFrame:
-    """Join a lookup table and bring in a value column."""
-    target_column = mapping["target_column"]
-    lookup_table = mapping.get("lookup_source_table")
-    lookup_key = mapping.get("lookup_key")
-    lookup_value = mapping.get("lookup_value")
-    source_columns = mapping.get("source_columns", [])
-
-    if not lookup_table:
-        return df.with_columns(pl.lit(None).alias(target_column))
-    if lookup_table not in source_dfs:
-        lookup_table = Path(lookup_table).stem
-    if lookup_table not in source_dfs:
-        return df.with_columns(pl.lit(None).alias(target_column))
-    if not lookup_key or not lookup_value:
-        return df.with_columns(pl.lit(None).alias(target_column))
-
-    left_key = source_columns[0]["source_column"] if source_columns else lookup_key
-    # LLMs sometimes confuse the lookup-table column name with the source column;
-    # fall back to case- and punctuation-insensitive matches on the current DataFrame.
-    def _normalise(name: str) -> str:
-        return name.lower().replace(" ", "_").replace("-", "_")
-
-    if left_key not in df.columns:
-        left_key = next(
-            (
-                c
-                for c in df.columns
-                if c.lower() == left_key.lower()
-                or _normalise(c) == _normalise(left_key)
-            ),
-            left_key,
-        )
-    if left_key not in df.columns:
-        return df.with_columns(pl.lit(None).alias(target_column))
-
-    right = source_dfs[lookup_table].select([lookup_key, lookup_value]).unique()
-    return df.join(right, left_on=left_key, right_on=lookup_key, how="left").rename(
-        {lookup_value: target_column}
-    )
-
-
-def apply_aggregation(
-    df: pl.DataFrame,
-    mapping: dict[str, Any],
-    source_dfs: dict[str, pl.DataFrame],
-) -> pl.DataFrame:
-    """Aggregate a source table and join the result back to the base table."""
-    target_column = mapping["target_column"]
-    agg_table = mapping.get("aggregation_source_table")
-    agg_key = mapping.get("aggregation_group_key")
-    agg_expression = mapping.get("aggregation_expression")
-    source_columns = mapping.get("source_columns", [])
-
-    if not agg_table or not agg_key or not agg_expression:
-        return df.with_columns(pl.lit(None).alias(target_column))
-    if agg_table not in source_dfs:
-        agg_table = Path(agg_table).stem
-    if agg_table not in source_dfs:
-        return df.with_columns(pl.lit(None).alias(target_column))
-
-    base_key = source_columns[0]["source_column"] if source_columns else agg_key
-
-    agg_df = source_dfs[agg_table]
-    local_vars = {name: agg_df[name] for name in agg_df.columns}
-    try:
-        agg_expr = eval(agg_expression, _eval_globals(), local_vars)
-    except Exception:
-        return df.with_columns(pl.lit(None).alias(target_column))
-
-    grouped = agg_df.group_by(agg_key).agg(agg_expr.alias(target_column))
-    return df.join(grouped, left_on=base_key, right_on=agg_key, how="left")
-
-
-def apply_mapping(
-    df: pl.DataFrame,
-    mapping: dict[str, Any],
-    source_dfs: dict[str, pl.DataFrame],
-) -> pl.DataFrame:
-    """Apply a single mapping to the working DataFrame."""
-    ttype = mapping.get("transformation_type", "expression")
-    if ttype == "filter":
-        return apply_filter(df, mapping)
-    if ttype == "lookup":
-        return apply_lookup(df, mapping, source_dfs)
-    if ttype == "aggregation":
-        return apply_aggregation(df, mapping, source_dfs)
-    return apply_row_expression(df, mapping)
-
-
-def enforce_dtypes(
-    df: pl.DataFrame,
-    target_table: str,
-    target_schema: dict[str, Any],
-) -> pl.DataFrame:
-    """Cast columns to the dtypes declared in the target schema."""
-    table = next(
-        (t for t in target_schema.get("tables", []) if t["name"] == target_table),
-        None,
-    )
-    if table is None:
-        return df
-    casts = []
-    for col in table.get("columns", []):
-        dtype = col.get("dtype")
-        name = col["name"]
-        if not dtype or name not in df.columns:
-            continue
-        current_dtype = str(df[name].dtype).lower()
-        if "null" in current_dtype:
-            continue
-        if dtype == "Date":
-            if "date" in current_dtype and "datetime" not in current_dtype:
-                continue
-            if "datetime" in current_dtype:
-                casts.append(pl.col(name).dt.date().alias(name))
-            else:
-                casts.append(pl.col(name).str.to_date(strict=False).alias(name))
-        elif dtype == "Datetime":
-            if "datetime" in current_dtype:
-                continue
-            casts.append(pl.col(name).str.to_datetime(strict=False).alias(name))
-        else:
-            polars_dtype = getattr(pl, dtype, None)
-            if polars_dtype is not None:
-                casts.append(pl.col(name).cast(polars_dtype, strict=False))
-    if casts:
-        df = df.with_columns(casts)
-    return df
-
-
-def build_target_tables(
+def generate_polars_script(
     mapping_spec: dict[str, Any],
-    source_folder: Path,
-) -> dict[str, pl.DataFrame]:
-    """Build all target tables from the source files and mappings."""
-    source_dfs = load_source_dataframes(mapping_spec, source_folder)
-    target_schema = mapping_spec.get("target_schema_json", {})
+    target_schema: TargetSchema,
+) -> str:
+    """Generate a unique standalone Polars pipeline script from a mapping spec.
 
+    Each generated script embeds the transformation logic for every column,
+    eliminating the need for eval() on LLM-generated expressions at runtime.
+    The source-loading helpers are inlined so the script is fully self-contained.
+    """
+    imports = """\
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import io
+import json
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+from openpyxl import load_workbook
+from openpyxl.utils import range_boundaries
+"""
+
+    ns_setup = """\
+_NS: dict[str, Any] = {
+    "pl": pl,
+    "col": pl.col,
+    "when": pl.when,
+    "concat": lambda *a: pl.concat_str([
+        pl.lit(x) if not isinstance(x, pl.Expr) else x for x in a
+    ]),
+    "coalesce": pl.coalesce,
+    "null": None,
+    "Int64": pl.Int64,
+    "Float64": pl.Float64,
+    "String": pl.String,
+    "Date": pl.Date,
+    "Datetime": pl.Datetime,
+    "Boolean": pl.Boolean,
+}
+"""
+
+    # Group columns by target table
     columns_by_table: dict[str, list[dict[str, Any]]] = {}
-    for col in mapping_spec["columns"]:
-        columns_by_table.setdefault(col["target_table"], []).append(col)
+    for c in mapping_spec["columns"]:
+        columns_by_table.setdefault(c["target_table"], []).append(c)
 
-    result: dict[str, pl.DataFrame] = {}
+    # Determine base source key per target table
+    base_keys: dict[str, str] = {}
     for target_table, columns in columns_by_table.items():
-        # Determine base source table from the first non-aggregation/lookup mapping
         base_source = target_table
-        for col in columns:
-            if col.get("source_columns"):
-                source_ref = col["source_columns"][0]
+        for c in columns:
+            if c.get("source_columns"):
+                source_ref = c["source_columns"][0]
                 base_source = source_ref.get(
                     "source_table_id",
-                    source_ref["source_table"],
+                    source_ref.get("source_table", target_table),
                 )
                 break
+        base_keys[target_table] = base_source
 
-        # Legacy artifacts may still identify a source by filename.
-        source_key = base_source
-        if source_key not in source_dfs:
-            stem_key = Path(base_source).stem
-            source_key = stem_key if stem_key in source_dfs else base_source
-        if source_key not in source_dfs:
-            raise ValueError(f"Source table not found: {base_source}")
+    # Generate transformation code per target table
+    table_blocks: list[str] = []
+    for target_table in sorted(columns_by_table):
+        columns = columns_by_table[target_table]
+        source_key = base_keys[target_table]
+        lines = [
+            f"# --- target table: {target_table} ---",
+            f"_sk = {source_key!r}",
+            "if _sk not in source_dfs:",
+            "    _stem = Path(_sk).stem",
+            "    _sk = _stem if _stem in source_dfs else _sk",
+            "df = source_dfs[_sk].clone()",
+            "",
+        ]
 
-        df = source_dfs[source_key].clone()
+        # Filters first
+        for c in columns:
+            if c.get("transformation_type") == "filter":
+                lines.append(_generate_transform_code(c, source_key))
 
-        # Apply filters first
-        for col in columns:
-            if col.get("transformation_type") == "filter":
-                df = apply_mapping(df, col, source_dfs)
-
-        # Apply remaining mappings
-        for col in columns:
-            if col.get("transformation_type") != "filter":
-                df = apply_mapping(df, col, source_dfs)
+        # Remaining transformations
+        for c in columns:
+            if c.get("transformation_type") != "filter":
+                lines.append(_generate_transform_code(c, source_key))
 
         target_cols = [c["target_column"] for c in columns]
-        df = df.select([c for c in target_cols if c in df.columns])
-        df = enforce_dtypes(df, target_table, target_schema)
-        result[target_table] = df
+        col_set = {cc["target_column"] for cc in columns}
+        selected = [repr(c) for c in target_cols if c in col_set]
+        lines.append(f"df = df.select([{', '.join(selected)}])")
+        lines.append(f"_write_table({target_table!r}, df)")
+        lines.append("")
 
-    return result
+        table_blocks.append("\n".join(lines))
+
+    # Enforce dtypes
+    dtype_blocks: list[str] = []
+    for table in target_schema.tables:
+        casts = []
+        for col in table.columns:
+            if col.dtype:
+                casts.append(f'("{{name}}", "{col.dtype}")')
+        if casts:
+            dtype_blocks.append(
+                f'    "tables": {{"{table.name}": [{", ".join(casts)}]}},'
+            )
+
+    # Assemble full script
+    main_body = textwrap.dedent("""\
+        def _write_table(name: str, df: pl.DataFrame) -> None:
+            _dtype = _DTYPES.get(name, {})
+            for col_name, dtype_str in _dtype.items():
+                if col_name not in df.columns:
+                    continue
+                current = str(df[col_name].dtype).lower()
+                if "null" in current:
+                    continue
+                if dtype_str == "Date":
+                    if "date" in current and "datetime" not in current:
+                        continue
+                    if "datetime" in current:
+                        df = df.with_columns(
+                            pl.col(col_name).dt.date().alias(col_name)
+                        )
+                    else:
+                        df = df.with_columns(
+                            pl.col(col_name)
+                            .str.to_date(strict=False)
+                            .alias(col_name)
+                        )
+                elif dtype_str == "Datetime":
+                    if "datetime" in current:
+                        continue
+                    df = df.with_columns(
+                        pl.col(col_name)
+                        .str.to_datetime(strict=False)
+                        .alias(col_name)
+                    )
+                else:
+                    polars_dtype = getattr(pl, dtype_str, None)
+                    if polars_dtype is not None:
+                        df = df.with_columns(
+                            pl.col(col_name)
+                            .cast(polars_dtype, strict=False)
+                        )
+            df.write_csv(_OUTPUT_DIR / f"{name}.csv")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source-folder", required=True, type=Path)
-    parser.add_argument("--output-folder", default=".", type=Path)
-    args = parser.parse_args()
+        def build_target_tables() -> None:
+    """)
+    for block in table_blocks:
+        main_body += textwrap.indent(block, "    ") + "\n"
 
-    pipeline_dir = Path(__file__).parent
-    mapping_spec = load_mapping_json(pipeline_dir / "mapping.json")
-    tables = build_target_tables(mapping_spec, args.source_folder)
+    main_body += textwrap.dedent("""\
 
-    args.output_folder.mkdir(parents=True, exist_ok=True)
-    # Write every target table so multi-table specs are complete.
-    for name, df in tables.items():
-        df.write_csv(args.output_folder / f"{name}.csv")
+        if __name__ == "__main__":
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--source-folder", required=True, type=Path)
+            parser.add_argument("--output-folder", default=".", type=Path)
+            args = parser.parse_args()
 
+            pipeline_dir = Path(__file__).parent
+            mapping_spec = load_mapping_json(pipeline_dir / "mapping.json")
+            source_dfs = load_source_dataframes(mapping_spec, args.source_folder)
+            _OUTPUT_DIR = args.output_folder
+            _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            build_target_tables()
+    """)
 
-if __name__ == "__main__":
-    main()
-'''
+    dtype_dict: dict[str, dict[str, str]] = {}
+    for table in target_schema.tables:
+        for col in table.columns:
+            if col.dtype:
+                dtype_dict.setdefault(table.name, {})[col.name] = col.dtype
+
+    script = "\n".join(
+        [
+            '"""Auto-generated single-file Polars transformation pipeline."""',
+            imports,
+            _SOURCE_LOADING_HELPERS,
+            ns_setup,
+            f"_DTYPES: dict[str, dict[str, str]] = {json.dumps(dtype_dict, indent=4)}",
+            "",
+            "_OUTPUT_DIR: Path = Path('.')",
+            "",
+            main_body,
+        ]
+    )
+
+    return script
 
 
 def generate_polars_pipeline_script(
@@ -492,7 +482,7 @@ def generate_polars_pipeline_script(
 ) -> GeneratedPipelineScript:
     """Generate a standalone single-file Polars pipeline script."""
     target_tables = sorted({c["target_table"] for c in mapping_spec["columns"]})
-    content = _PIPELINE_TEMPLATE
+    content = generate_polars_script(mapping_spec, target_schema)
     return GeneratedPipelineScript(
         file_path=Path("pipeline.py"),
         content=content,
@@ -650,7 +640,7 @@ def execute_generated_pipeline(
 
         subprocess.run(
             [
-                "python",
+                sys.executable,
                 str(pipeline_py_path),
                 "--source-folder",
                 str(source_folder),
@@ -658,6 +648,7 @@ def execute_generated_pipeline(
                 str(output_folder),
             ],
             check=True,
+            capture_output=True,
         )
 
     csv_files = sorted(output_folder.glob("*.csv"))
