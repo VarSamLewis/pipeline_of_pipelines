@@ -6,9 +6,12 @@ import uuid
 
 import pytest
 from mapping import (
+    _build_catalog_index,
+    _build_table_index,
     build_mapping_prompt,
     check_target_schema_coverage,
     parse_llm_mapping_response,
+    resolve_composite_keys,
     validate_mapping_columns,
 )
 from models import ExtractedEvidence, ProposedMapping, SourceColumnRef, TargetSchema
@@ -84,41 +87,217 @@ def test_parse_llm_mapping_response_requires_target_fields() -> None:
         )
 
 
-def test_validate_mapping_columns_reports_missing_sources() -> None:
-    """Validation should flag source columns that do not exist in profiles."""
-    target_schema = TargetSchema(
-        client_code="test",
-        name="default",
-        tables=[
-            {
-                "name": "records",
-                "description": "",
-                "columns": [
-                    {"name": "customer_id", "dtype": "Int64", "required": True}
-                ],
-            }
-        ],
-    )
+def test_resolve_composite_keys_populates_ids() -> None:
+    """Resolver should populate source_table_id and source_column_id."""
+    raw_file_id = uuid.uuid4()
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "table-1",
+                    "raw_file_id": str(raw_file_id),
+                    "original_filename": "data.csv",
+                    "display_name": "Orders",
+                    "columns": [
+                        {
+                            "source_column_id": "column-1",
+                            "normalized_name": "revenue",
+                        }
+                    ],
+                }
+            ]
+        }
+    ]
     mappings = [
         ProposedMapping(
             target_table="records",
-            target_column="customer_id",
+            target_column="revenue",
             source_columns=[
-                SourceColumnRef(source_table="data", source_column="missing_col")
+                SourceColumnRef(
+                    source_table="data.csv::Orders",
+                    source_column="revenue",
+                )
             ],
         )
     ]
-    profiles = [
+
+    errors = resolve_composite_keys(mappings, catalogs)
+
+    assert errors == []
+    ref = mappings[0].source_columns[0]
+    assert ref.source_table_id == "table-1"
+    assert ref.source_column_id == "column-1"
+    assert ref.raw_file_id == raw_file_id
+    assert ref.source_table == "Orders"
+    assert ref.source_column == "revenue"
+
+
+def test_resolve_composite_keys_case_insensitive_column() -> None:
+    """Resolver should match columns case-insensitively."""
+    catalogs = [
         {
-            "source_table": "data",
-            "columns": [{"column": "cust_id", "inferred_type": "integer"}],
+            "tables": [
+                {
+                    "source_table_id": "t1",
+                    "original_filename": "data.csv",
+                    "display_name": "Sheet1",
+                    "columns": [
+                        {
+                            "source_column_id": "c1",
+                            "normalized_name": "CustomerID",
+                        }
+                    ],
+                }
+            ]
         }
     ]
+    mappings = [
+        ProposedMapping(
+            target_table="out",
+            target_column="id",
+            source_columns=[
+                SourceColumnRef(
+                    source_table="data.csv::Sheet1",
+                    source_column="customerid",
+                )
+            ],
+        )
+    ]
 
-    results = validate_mapping_columns(mappings, target_schema, profiles)
+    errors = resolve_composite_keys(mappings, catalogs)
 
-    assert len(results) == 1
-    assert any("missing_col" in err for err in results[0]["validation_errors"])
+    assert errors == []
+    assert mappings[0].source_columns[0].source_column_id == "c1"
+
+
+def test_resolve_composite_keys_display_name_fallback() -> None:
+    """Resolver should fall back to display_name when composite key fails."""
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "t1",
+                    "original_filename": "data.csv",
+                    "display_name": "Orders",
+                    "columns": [
+                        {
+                            "source_column_id": "c1",
+                            "normalized_name": "Revenue",
+                        }
+                    ],
+                }
+            ]
+        }
+    ]
+    mappings = [
+        ProposedMapping(
+            target_table="out",
+            target_column="rev",
+            source_columns=[
+                SourceColumnRef(
+                    source_table="Orders",
+                    source_column="Revenue",
+                )
+            ],
+        )
+    ]
+
+    errors = resolve_composite_keys(mappings, catalogs)
+
+    assert errors == []
+    assert mappings[0].source_columns[0].source_table_id == "t1"
+    assert mappings[0].source_columns[0].source_column_id == "c1"
+
+
+def test_resolve_composite_keys_errors_on_missing_column() -> None:
+    """Resolver should return an error when a column cannot be resolved."""
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "t1",
+                    "original_filename": "data.csv",
+                    "display_name": "Orders",
+                    "columns": [
+                        {
+                            "source_column_id": "c1",
+                            "normalized_name": "Revenue",
+                        }
+                    ],
+                }
+            ]
+        }
+    ]
+    mappings = [
+        ProposedMapping(
+            target_table="out",
+            target_column="rev",
+            source_columns=[
+                SourceColumnRef(
+                    source_table="data.csv::Orders",
+                    source_column="MissingCol",
+                )
+            ],
+        )
+    ]
+
+    errors = resolve_composite_keys(mappings, catalogs)
+
+    assert len(errors) == 1
+    assert "MissingCol" in errors[0]
+
+
+def test_resolve_composite_keys_resolves_lookup_table() -> None:
+    """Resolver should resolve lookup_source_table composite keys to source_table_id."""
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "base-tbl",
+                    "original_filename": "data.csv",
+                    "display_name": "Main",
+                    "columns": [
+                        {
+                            "source_column_id": "bc1",
+                            "normalized_name": "code",
+                        }
+                    ],
+                },
+                {
+                    "source_table_id": "lookup-tbl",
+                    "original_filename": "lookup.csv",
+                    "display_name": "Lookups",
+                    "columns": [
+                        {
+                            "source_column_id": "lc1",
+                            "normalized_name": "code",
+                        }
+                    ],
+                },
+            ]
+        }
+    ]
+    mappings = [
+        ProposedMapping(
+            target_table="out",
+            target_column="name",
+            source_columns=[
+                SourceColumnRef(
+                    source_table="data.csv::Main",
+                    source_column="code",
+                )
+            ],
+            transformation_type="lookup",
+            lookup_source_table="lookup.csv::Lookups",
+            lookup_key="code",
+            lookup_value="name",
+        )
+    ]
+
+    errors = resolve_composite_keys(mappings, catalogs)
+
+    assert errors == []
+    assert mappings[0].lookup_source_table == "lookup-tbl"
 
 
 def test_validate_mapping_columns_accepts_catalog_ids() -> None:
@@ -247,8 +426,8 @@ def test_check_target_schema_coverage_reports_missing_columns() -> None:
     assert coverage["missing_optional"] == [("records", "total_spend")]
 
 
-def test_build_mapping_prompt_includes_evidence_ids() -> None:
-    """The prompt should expose evidence IDs so the LLM can cite them."""
+def test_build_mapping_prompt_includes_composite_keys() -> None:
+    """The prompt should expose composite keys so the LLM can reference sources."""
     target_schema = TargetSchema(
         client_code="test",
         name="default",
@@ -281,7 +460,14 @@ def test_build_mapping_prompt_includes_evidence_ids() -> None:
                 {
                     "source_table_id": "table-1",
                     "raw_file_id": str(raw_file_id),
-                    "columns": [{"source_column_id": "column-1"}],
+                    "original_filename": "data.csv",
+                    "display_name": "Customers",
+                    "columns": [
+                        {
+                            "source_column_id": "column-1",
+                            "normalized_name": "cust_id",
+                        }
+                    ],
                 }
             ],
         }
@@ -293,6 +479,49 @@ def test_build_mapping_prompt_includes_evidence_ids() -> None:
     user_content = messages[1]["content"]
     assert str(evidence_id) in user_content
     assert "Evidence ID" in user_content
-    assert "Canonical source catalogs" in user_content
-    assert "source_table_id" in user_content
-    assert "source_column_id" in user_content
+    assert "Available source columns" in user_content
+    assert "data.csv::Customers::cust_id" in user_content
+
+
+def test_build_catalog_index_builds_correct_keys() -> None:
+    """Catalog index should map composite keys to (table, column) tuples."""
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "original_filename": "data.csv",
+                    "display_name": "Orders",
+                    "columns": [
+                        {"normalized_name": "Revenue"},
+                        {"normalized_name": "Qty"},
+                    ],
+                }
+            ]
+        }
+    ]
+
+    index = _build_catalog_index(catalogs)
+
+    assert "data.csv::Orders::Revenue" in index
+    assert "data.csv::Orders::Qty" in index
+    assert index["data.csv::Orders::Revenue"][1]["normalized_name"] == "Revenue"
+
+
+def test_build_table_index_builds_correct_keys() -> None:
+    """Table index should map composite keys to table dicts."""
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "t1",
+                    "original_filename": "data.csv",
+                    "display_name": "Orders",
+                }
+            ]
+        }
+    ]
+
+    index = _build_table_index(catalogs)
+
+    assert "data.csv::Orders" in index
+    assert index["data.csv::Orders"]["source_table_id"] == "t1"

@@ -41,37 +41,157 @@ def _catalog_tables(source_catalogs: list[dict[str, Any]]) -> list[dict[str, Any
     return tables
 
 
-def _canonicalize_mapping_references(
+_KEY_DELIM = "::"
+
+
+def _build_catalog_index(
+    source_catalogs: list[dict[str, Any]],
+) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Build a mapping from ``filename::sheet::column`` to (table, column)."""
+    index: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for table in _catalog_tables(source_catalogs):
+        filename = table.get("original_filename") or "unknown"
+        sheet = (
+            table.get("display_name")
+            or table.get("location", {}).get("sheet_name")
+            or ""
+        )
+        for col in table.get("columns", []):
+            col_name = (
+                col.get("normalized_name")
+                or col.get("original_name")
+                or col.get("header")
+                or col.get("column")
+                or ""
+            )
+            key = f"{filename}{_KEY_DELIM}{sheet}{_KEY_DELIM}{col_name}"
+            index[key] = (table, col)
+    return index
+
+
+def _build_table_index(
+    source_catalogs: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build a mapping from ``filename::sheet`` to the catalog table."""
+    index: dict[str, dict[str, Any]] = {}
+    for table in _catalog_tables(source_catalogs):
+        filename = table.get("original_filename") or "unknown"
+        sheet = (
+            table.get("display_name")
+            or table.get("location", {}).get("sheet_name")
+            or ""
+        )
+        key = f"{filename}{_KEY_DELIM}{sheet}"
+        index[key] = table
+    return index
+
+
+def _resolve_table_key(
+    table_key: str,
+    tbl_index: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve a table key by exact composite match or display-name fallback."""
+    entry = tbl_index.get(table_key)
+    if entry is not None:
+        return entry
+    for candidate in tbl_index.values():
+        if candidate.get("display_name", "").lower() == table_key.lower():
+            return candidate
+    return None
+
+
+def resolve_composite_keys(
     mappings: list[ProposedMapping],
     source_catalogs: list[dict[str, Any]],
-) -> None:
-    """Replace LLM display fields with canonical catalog values in place."""
-    tables = {
-        table["source_table_id"]: table
-        for table in _catalog_tables(source_catalogs)
-        if table.get("source_table_id")
-    }
-    columns = {
-        column["source_column_id"]: column
-        for table in tables.values()
-        for column in table.get("columns", [])
-        if column.get("source_column_id")
-    }
+) -> list[str]:
+    """Resolve ``filename::sheet::column`` keys to catalog entries in place.
+
+    Populates ``source_table_id``, ``source_column_id``, ``raw_file_id``,
+    ``source_table``, and ``source_column`` on each ``SourceColumnRef``.
+    Also resolves ``lookup_source_table`` and ``aggregation_source_table``.
+
+    Returns a list of error strings (empty on success).
+    """
+    col_index = _build_catalog_index(source_catalogs)
+    tbl_index = _build_table_index(source_catalogs)
+    errors: list[str] = []
+
     for mapping in mappings:
         for ref in mapping.source_columns:
-            table = tables.get(ref.source_table_id or "")
-            column = columns.get(ref.source_column_id or "")
-            if table is None or column is None:
+            table_key = ref.source_table
+            col_name = ref.source_column
+
+            # 1. Exact composite key: filename::sheet::column
+            col_entry = col_index.get(f"{table_key}{_KEY_DELIM}{col_name}")
+
+            # 2. Table composite key + case-insensitive column name.
+            if col_entry is None:
+                table_entry = tbl_index.get(table_key)
+                if table_entry is not None:
+                    for col in table_entry.get("columns", []):
+                        candidate = (
+                            col.get("normalized_name")
+                            or col.get("original_name")
+                            or col.get("header")
+                            or col.get("column")
+                            or ""
+                        )
+                        if candidate.lower() == col_name.lower():
+                            col_entry = (table_entry, col)
+                            break
+
+            # 3. Display-name table fallback + case-insensitive column.
+            if col_entry is None:
+                for _tbl_key, table_entry in tbl_index.items():
+                    if table_entry.get("display_name", "").lower() == table_key.lower():
+                        for col in table_entry.get("columns", []):
+                            candidate = (
+                                col.get("normalized_name")
+                                or col.get("original_name")
+                                or col.get("header")
+                                or col.get("column")
+                                or ""
+                            )
+                            if candidate.lower() == col_name.lower():
+                                col_entry = (table_entry, col)
+                                break
+                    if col_entry is not None:
+                        break
+
+            if col_entry is None:
+                errors.append(
+                    f"source column {col_name!r} not found for key {table_key!r}"
+                )
                 continue
-            ref.raw_file_id = uuid.UUID(str(table["raw_file_id"]))
+
+            table, col = col_entry
+            ref.source_table_id = table.get("source_table_id", "")
+            ref.source_column_id = col.get("source_column_id", "")
+            raw_id = table.get("raw_file_id")
+            if raw_id:
+                ref.raw_file_id = uuid.UUID(str(raw_id))
             ref.source_table = str(
                 table.get("display_name") or table.get("source_table_id")
             )
             ref.source_column = str(
-                column.get("normalized_name")
-                or column.get("original_name")
-                or column.get("source_column_id")
+                col.get("normalized_name")
+                or col.get("original_name")
+                or col.get("source_column_id")
             )
+
+        for field_name in ("lookup_source_table", "aggregation_source_table"):
+            table_key = getattr(mapping, field_name)
+            if not table_key:
+                continue
+            table_entry = _resolve_table_key(table_key, tbl_index)
+            if table_entry is None:
+                errors.append(
+                    f"{field_name} {table_key!r} is not in the catalog"
+                )
+                continue
+            setattr(mapping, field_name, table_entry.get("source_table_id", ""))
+
+    return errors
 
 
 def _gather_targeted_evidence(
@@ -148,39 +268,43 @@ def build_mapping_prompt(
     business_rules: list[BusinessRule],
     raw_file_summary: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    """Build an ID-grounded mapping prompt from catalogs and evidence."""
+    """Build a composite-key-grounded mapping prompt."""
     evidence_entries = [
         f"Evidence ID {e.id}:\n{e.content[:800]}" for e in evidence_items
     ]
     evidence_text = "\n---\n".join(evidence_entries)
     rules_text = "\n".join(f"- {r.rule_text}" for r in business_rules)
+
+    col_index = _build_catalog_index(source_catalogs)
+    tbl_index = _build_table_index(source_catalogs)
+    source_index_text = "\n".join(f"- {key}" for key in sorted(col_index))
+    table_index_text = "\n".join(f"- {key}" for key in sorted(tbl_index))
+
     prompt = {
         "role": "system",
         "content": (
             "You are a data-mapping assistant. Given a target schema, source "
             "catalog, and evidence retrieved from a vector database, "
             "propose source-to-target column mappings. Each mapping may use one or "
-            "more source columns. You MUST copy source_table_id, source_column_id, "
-            "and raw_file_id exactly from the catalog for every source reference. "
-            "Never invent an ID or identify a source by filename alone. Use evidence "
-            "IDs to cite support for each mapping. Return valid JSON with a "
-            "'mappings' array."
+            "more source columns. Reference sources using composite keys in the "
+            "format filename::sheet::column (e.g. data.csv::Orders::Revenue). "
+            "Never invent a composite key. Use evidence IDs to cite support for "
+            "each mapping. Return valid JSON with a 'mappings' array."
         ),
     }
     user_content = (
         f"Target schema:\n{target_schema.model_dump_json(indent=2)}\n\n"
         f"Source files:\n{json.dumps(raw_file_summary, indent=2)}\n\n"
-        f"Canonical source catalogs:\n"
-        f"{json.dumps(source_catalogs, indent=2, default=str)}\n\n"
+        f"Available source columns (use these composite keys):\n"
+        f"{source_index_text}\n\n"
+        f"Available source tables (for lookup_source_table / "
+        f"aggregation_source_table):\n{table_index_text}\n\n"
         f"Evidence retrieved from the vector database for this mapping:\n"
         f"{evidence_text}\n\n"
         f"Business rules:\n{rules_text}\n\n"
         'Return JSON with this shape: {"mappings": [{"target_table": "...", '
-        '"target_column": "...", "source_columns": [{"source_table_id": '
-        '"catalog-table-id", "source_column_id": "catalog-column-id", '
-        '"raw_file_id": "catalog-raw-file-id", "source_table": '
-        '"human-readable table name", "source_column": '
-        '"exact normalized_name from the catalog"}], '
+        '"target_column": "...", "source_columns": [{"source_table": '
+        '"filename::sheet", "source_column": "column_name"}], '
         '"transformation_logic": '
         '"...", "transformation_type": "expression", '
         '"polars_expression": "col(\'source_col\').cast(pl.Int64)", '
@@ -211,14 +335,14 @@ def build_mapping_prompt(
         "\"~col('order_id').cast(str).str.starts_with('9999')\". "
         "For aggregations use transformation_type=aggregation with "
         "aggregation_source_table, aggregation_group_key, and "
-        "aggregation_expression. aggregation_source_table must be a catalog "
-        'source_table_id, e.g. "aggregation_source_table": "catalog-table-id", '
+        "aggregation_expression. aggregation_source_table must be a table "
+        'composite key, e.g. "aggregation_source_table": "data.csv::Orders", '
         '"aggregation_group_key": "cust_id", '
         "\"aggregation_expression\": \"(col('qty') * col('unit_price')).sum()\". "
         "For cross-table lookups use transformation_type=lookup with "
         "lookup_source_table, lookup_key, and lookup_value. lookup_source_table "
-        "must be a catalog source_table_id, e.g. "
-        '"lookup_source_table": "catalog-table-id", "lookup_key": "prod_sku", '
+        "must be a table composite key, e.g. "
+        '"lookup_source_table": "data.csv::LookupTable", "lookup_key": "prod_sku", '
         '"lookup_value": "prod_name". '
         "For lookups the source_columns should reference the column in the "
         "base/source table that contains the join key, not the lookup table column. "
@@ -422,6 +546,12 @@ def propose_mapping_spec(
     )
     response = call_mapping_llm(messages, model, api_key, base_url)
     proposed = parse_llm_mapping_response(response, mapping_spec_id, target_schema)
+    resolution_errors = resolve_composite_keys(proposed, source_catalogs)
+    if resolution_errors:
+        raise ValueError(
+            "LLM mapping failed source resolution: "
+            + "; ".join(resolution_errors)
+        )
     validation = validate_mapping_columns(proposed, target_schema, source_catalogs)
     validation_errors = [
         error
@@ -430,10 +560,9 @@ def propose_mapping_spec(
     ]
     if validation_errors:
         raise ValueError(
-            "LLM mapping failed source-catalog validation: "
+            "LLM mapping failed validation: "
             + "; ".join(validation_errors)
         )
-    _canonicalize_mapping_references(proposed, source_catalogs)
 
     delete_mapping_columns(session, mapping_spec_id)
     columns = [
@@ -491,14 +620,6 @@ def validate_mapping_columns(
         for column in table.get("columns", [])
         if column.get("source_column_id")
     }
-    legacy_sources = {
-        (
-            p.get("sheet_name", p.get("source_table", "")),
-            col.get("header") or col.get("column"),
-        )
-        for p in catalog_tables
-        for col in p.get("columns", [])
-    }
     target_columns = {(t.name, c.name) for t in target_schema.tables for c in t.columns}
 
     results = []
@@ -507,49 +628,39 @@ def validate_mapping_columns(
         if (mapping.target_table, mapping.target_column) not in target_columns:
             errors.append("target column not in target schema")
         for ref in mapping.source_columns:
-            if catalog_by_table_id:
-                if not ref.source_table_id:
-                    errors.append(
-                        f"source {ref.source_table!r}.{ref.source_column!r} "
-                        "is missing source_table_id"
-                    )
-                    continue
-                table = catalog_by_table_id.get(ref.source_table_id)
-                if table is None:
-                    errors.append(
-                        f"source_table_id {ref.source_table_id!r} is not in the catalog"
-                    )
-                    continue
-                if not ref.source_column_id:
-                    errors.append(
-                        f"source {ref.source_table!r}.{ref.source_column!r} "
-                        "is missing source_column_id"
-                    )
-                    continue
-                resolved = catalog_columns_by_id.get(ref.source_column_id)
-                if resolved is None or resolved[0] is not table:
-                    errors.append(
-                        f"source_column_id {ref.source_column_id!r} does not belong "
-                        f"to source_table_id {ref.source_table_id!r}"
-                    )
-                    continue
-                expected_raw_file_id = table.get("raw_file_id")
-                if expected_raw_file_id and str(ref.raw_file_id or "") != str(
-                    expected_raw_file_id
-                ):
-                    errors.append(
-                        f"raw_file_id for source_column_id "
-                        f"{ref.source_column_id!r} does not match the catalog"
-                    )
-            elif (ref.source_table, ref.source_column) not in legacy_sources:
+            if not ref.source_table_id:
                 errors.append(
-                    f"source column {ref.source_column!r} "
-                    f"not found in {ref.source_table!r}"
+                    f"source {ref.source_table!r}.{ref.source_column!r} "
+                    "is missing source_table_id"
                 )
-        for field_name in ("lookup_source_table", "aggregation_source_table"):
-            table_id = getattr(mapping, field_name)
-            if table_id and catalog_by_table_id and table_id not in catalog_by_table_id:
-                errors.append(f"{field_name} {table_id!r} is not in the catalog")
+                continue
+            table = catalog_by_table_id.get(ref.source_table_id)
+            if table is None:
+                errors.append(
+                    f"source_table_id {ref.source_table_id!r} is not in the catalog"
+                )
+                continue
+            if not ref.source_column_id:
+                errors.append(
+                    f"source {ref.source_table!r}.{ref.source_column!r} "
+                    "is missing source_column_id"
+                )
+                continue
+            resolved = catalog_columns_by_id.get(ref.source_column_id)
+            if resolved is None or resolved[0] is not table:
+                errors.append(
+                    f"source_column_id {ref.source_column_id!r} does not belong "
+                    f"to source_table_id {ref.source_table_id!r}"
+                )
+                continue
+            expected_raw_file_id = table.get("raw_file_id")
+            if expected_raw_file_id and str(ref.raw_file_id or "") != str(
+                expected_raw_file_id
+            ):
+                errors.append(
+                    f"raw_file_id for source_column_id "
+                    f"{ref.source_column_id!r} does not match the catalog"
+                )
         results.append(
             {
                 "target_table": mapping.target_table,
