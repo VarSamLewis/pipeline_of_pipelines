@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from parser import (
     build_polars_from_mapping_source,
+    discover_source_tables,
     parse_email_to_dict,
     parse_pdf_to_text,
     parse_text_document,
@@ -125,3 +126,89 @@ def test_build_polars_from_mapping_source_csv() -> None:
     df = build_polars_from_mapping_source(csv_bytes, "csv", "a.csv")
     assert df.shape == (2, 2)
     assert df.columns == ["a", "b"]
+
+
+def test_discover_csv_dialect_encoding_and_profile() -> None:
+    """CSV discovery should preserve parser decisions and profile its columns."""
+    csv_bytes = (
+        "Customer export\r\n"
+        "id;name;note\r\n"
+        '1;André;"uses; delimiter"\r\n'
+        "2;Zoë;\r\n"
+    ).encode("cp1252")
+
+    catalog = discover_source_tables(
+        csv_bytes,
+        "csv",
+        original_filename="renamed.csv",
+    )
+
+    assert len(catalog.tables) == 1
+    table = catalog.tables[0]
+    assert table.location.encoding == "cp1252"
+    assert table.location.delimiter == ";"
+    assert table.location.header_row == 2
+    assert table.row_count == 2
+    assert [column.normalized_name for column in table.columns] == [
+        "id",
+        "name",
+        "note",
+    ]
+    assert table.columns[2].null_rate == 0.5
+    assert any(warning.code == "encoding_fallback" for warning in catalog.warnings)
+    assert any(warning.code == "preamble_detected" for warning in table.warnings)
+
+
+def test_discover_csv_table_id_is_independent_of_filename() -> None:
+    """Renaming an unchanged file must not change its source table identity."""
+    contents = b"id,name\n1,Alice\n"
+    first = discover_source_tables(contents, "csv", original_filename="first.csv")
+    second = discover_source_tables(contents, "csv", original_filename="renamed.csv")
+
+    assert first.tables[0].source_table_id == second.tables[0].source_table_id
+
+
+def test_discover_xlsx_catalogues_every_sheet_and_region(tmp_path: Path) -> None:
+    """Every worksheet and practical table region should receive a catalog entry."""
+    pytest.importorskip("openpyxl")
+    from openpyxl import Workbook
+
+    path = tmp_path / "multi.xlsx"
+    wb = Workbook()
+    first = wb.active
+    first.title = "Customers"
+    first.append(["Customer report"])
+    first.append(["id", "name"])
+    first.append([1, "Alice"])
+    first.append([2, "Bob"])
+    second = wb.create_sheet("Lookups")
+    second.append(["code", "label"])
+    second.append(["A", "Alpha"])
+    second.append([])
+    second.append(["country", "region"])
+    second.append(["GB", "Europe"])
+    wb.save(path)
+
+    catalog = discover_source_tables(
+        path.read_bytes(),
+        "xlsx",
+        original_filename=path.name,
+    )
+
+    assert {table.location.sheet_name for table in catalog.tables} == {
+        "Customers",
+        "Lookups",
+    }
+    assert len(catalog.tables) == 3
+    customers = next(
+        table for table in catalog.tables if table.location.sheet_name == "Customers"
+    )
+    assert customers.location.header_row == 2
+    assert customers.row_count == 2
+    assert [column.normalized_name for column in customers.columns] == ["id", "name"]
+
+
+def test_discover_csv_reports_malformed_quoting() -> None:
+    """Malformed quoting should fail with an actionable diagnostic."""
+    with pytest.raises(ValueError, match="Malformed CSV"):
+        discover_source_tables(b'id,name\n1,"Alice\n', "csv")

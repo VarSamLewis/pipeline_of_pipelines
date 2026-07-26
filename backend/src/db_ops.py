@@ -36,14 +36,11 @@ from models import (
     TargetSchema,
 )
 from parser import (
-    build_polars_from_mapping_source,
+    discover_source_tables,
     extract_evidence_chunks,
-    get_sheet_names,
     parse_email_to_dict,
     parse_pdf_to_text,
     parse_text_document,
-    profile_polars_dataframe,
-    summarise_sheet,
 )
 from repositories.clients import (
     create_ingestion_batch,
@@ -289,26 +286,18 @@ def _parse_raw_file(
     file_type: str,
 ) -> None:
     """Parse a raw file and store profiles/evidence."""
-    if file_type == "xlsx":
-        sheet_names = get_sheet_names(file_bytes)
-        profiles = []
-        for sheet_name in sheet_names:
-            profile = summarise_sheet(file_bytes, sheet_name=sheet_name)
-            profiles.append(profile)
-            # Profile the first sheet as a DataFrame for completeness
-            if sheet_name == sheet_names[0]:
-                df = build_polars_from_mapping_source(file_bytes, "xlsx", sheet_name)
-                profile_polars = profile_polars_dataframe(df, sheet_name)
-                profiles.append(profile_polars)
-        create_spreadsheet_profile(session, raw_file.id, {"sheets": profiles})
-    elif file_type == "csv":
-        df = build_polars_from_mapping_source(
-            file_bytes, "csv", raw_file.original_filename
+    if file_type in {"csv", "xlsx"}:
+        catalog = discover_source_tables(
+            file_bytes,
+            file_type,
+            raw_file_id=raw_file.id,
+            file_sha256=raw_file.sha256,
+            original_filename=raw_file.original_filename,
         )
         create_spreadsheet_profile(
             session,
             raw_file.id,
-            profile_polars_dataframe(df, raw_file.original_filename),
+            catalog.model_dump(mode="json"),
         )
 
     parsed: dict[str, Any] = {}
@@ -348,10 +337,11 @@ def create_spreadsheet_profile(
     profile_json: dict[str, Any],
 ) -> SpreadsheetProfile:
     """Store a spreadsheet profile extracted from a raw file."""
-    profile = SpreadsheetProfile(
-        raw_file_id=raw_file_id,
-        profile_json=profile_json,
-    )
+    profile = get_spreadsheet_profile(session, raw_file_id)
+    if profile is None:
+        profile = SpreadsheetProfile(raw_file_id=raw_file_id, profile_json=profile_json)
+    else:
+        profile.profile_json = profile_json
     session.add(profile)
     session.commit()
     session.refresh(profile)

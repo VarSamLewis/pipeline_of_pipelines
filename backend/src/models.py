@@ -129,9 +129,82 @@ class TargetSchema(BaseModel):
     )
 
 
+class ParseWarning(BaseModel):
+    """A structured, reviewable warning emitted during source discovery."""
+
+    code: str
+    message: str
+    severity: str = Field(default="warning", pattern="^(info|warning|error)$")
+    location: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceLocation(BaseModel):
+    """Physical location and parser settings for a discovered source table."""
+
+    sheet_name: str | None = None
+    cell_range: str | None = None
+    header_row: int
+    data_start_row: int
+    encoding: str | None = None
+    delimiter: str | None = None
+    quote_char: str | None = None
+    newline: str | None = None
+
+
+class SourceColumn(BaseModel):
+    """Profile of one column in a discovered source table."""
+
+    source_column_id: str
+    ordinal: int
+    original_name: str
+    normalized_name: str
+    inferred_type: str
+    examples: list[str] = Field(default_factory=list)
+    null_count: int
+    null_rate: float
+    cardinality: int
+    candidate_key_score: float
+
+
+class SourceTable(BaseModel):
+    """Canonical description and profile of one discovered tabular region."""
+
+    source_table_id: str
+    raw_file_id: uuid.UUID | None = None
+    file_sha256: str
+    original_filename: str | None = None
+    display_name: str
+    location: SourceLocation
+    row_count: int
+    columns: list[SourceColumn] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    warnings: list[ParseWarning] = Field(default_factory=list)
+
+
+class SourceCatalog(BaseModel):
+    """Versioned catalog of every table discovered in one raw source file."""
+
+    schema_version: int = 1
+    raw_file_id: uuid.UUID | None = None
+    file_sha256: str
+    original_filename: str | None = None
+    file_type: str
+    tables: list[SourceTable] = Field(default_factory=list)
+    warnings: list[ParseWarning] = Field(default_factory=list)
+
+
 class SourceColumnRef(BaseModel):
     """Reference to one source column used in a mapping."""
 
+    source_table_id: str | None = Field(
+        default=None,
+        description="Stable identifier from the canonical source catalog.",
+    )
+    source_column_id: str | None = Field(
+        default=None,
+        description="Stable column identifier from the canonical source catalog.",
+    )
     raw_file_id: uuid.UUID | None = Field(
         default=None,
         description="UUID of the source raw file when known.",

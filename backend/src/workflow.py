@@ -7,7 +7,6 @@ and result approval. HTTP modules validate input and translate responses only.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import shutil
 import uuid
@@ -26,6 +25,7 @@ from db_ops import (
     get_raw_file_by_id,
     get_session,
     update_mapping_spec_status,
+    update_raw_file_status,
 )
 from dependencies import get_artifact_store, get_object_store
 from file_ops import (
@@ -39,6 +39,7 @@ from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import (
     Client,
     ExecutionRun,
+    FileStatus,
     GeneratedArtifact,
     MappingSpec,
     MappingSpecStatus,
@@ -208,10 +209,20 @@ def ingest_and_propose(
                 continue
             file_type = detect_file_type(raw_file.original_filename)
             data = object_store.get(raw_file.storage_key)
-            # Continue even if one file fails to parse; the LLM will work with
-            # whatever profiles and evidence were extracted.
-            with contextlib.suppress(Exception):
+            try:
                 _parse_raw_file(session, raw_file, data, file_type)
+                update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
+            except Exception as exc:
+                update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
+                raw_file.meta = {
+                    **raw_file.meta,
+                    "parse_error": {
+                        "code": "parse_failed",
+                        "message": str(exc),
+                    },
+                }
+                session.add(raw_file)
+                session.commit()
 
         propose_mapping_spec(
             session,

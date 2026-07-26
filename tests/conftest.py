@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -64,14 +65,30 @@ def mock_openai(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def fake_call_llm(messages: list[dict[str, str]], **kwargs: object) -> dict:
         """Return a deterministic mapping proposal for the simple test schema."""
+        prompt = messages[-1]["content"]
+        table_ids = re.findall(r'"source_table_id": "([^"]+)"', prompt)
+        column_ids = re.findall(r'"source_column_id": "([^"]+)"', prompt)
+        raw_file_ids = re.findall(r'"raw_file_id": "([^"]+)"', prompt)
+        table_id = table_ids[0] if table_ids else None
+        raw_file_id = raw_file_ids[0] if raw_file_ids else None
+
+        def source_ref(index: int, column: str) -> dict[str, str | None]:
+            return {
+                "source_table_id": table_id,
+                "source_column_id": (
+                    column_ids[index] if index < len(column_ids) else None
+                ),
+                "raw_file_id": raw_file_id,
+                "source_table": "data.csv",
+                "source_column": column,
+            }
+
         return {
             "mappings": [
                 {
                     "target_table": "records",
                     "target_column": "record_id",
-                    "source_columns": [
-                        {"source_table": "data.csv", "source_column": "id"}
-                    ],
+                    "source_columns": [source_ref(0, "id")],
                     "transformation_logic": "Direct map",
                     "polars_expression": None,
                     "tests": ["not_null"],
@@ -82,9 +99,7 @@ def mock_openai(monkeypatch: pytest.MonkeyPatch) -> None:
                 {
                     "target_table": "records",
                     "target_column": "full_name",
-                    "source_columns": [
-                        {"source_table": "data.csv", "source_column": "name"}
-                    ],
+                    "source_columns": [source_ref(1, "name")],
                     "transformation_logic": "Direct map",
                     "polars_expression": None,
                     "tests": [],
@@ -95,9 +110,7 @@ def mock_openai(monkeypatch: pytest.MonkeyPatch) -> None:
                 {
                     "target_table": "records",
                     "target_column": "score",
-                    "source_columns": [
-                        {"source_table": "data.csv", "source_column": "score"}
-                    ],
+                    "source_columns": [source_ref(2, "score")],
                     "transformation_logic": "Direct map",
                     "polars_expression": None,
                     "tests": [],
