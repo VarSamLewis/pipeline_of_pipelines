@@ -353,17 +353,28 @@ def _row_score(row: list[Any], following_rows: list[list[Any]]) -> float:
 
 
 def _non_blank_row_runs(rows: list[list[Any]]) -> list[tuple[int, int]]:
+    """Return populated regions separated by at least two consecutive blank rows."""
     runs: list[tuple[int, int]] = []
     start: int | None = None
+    last_populated: int | None = None
+    blank_count = 0
     for index, row in enumerate(rows):
         populated = any(value not in (None, "") for value in row)
-        if populated and start is None:
-            start = index
-        elif not populated and start is not None:
-            runs.append((start, index - 1))
-            start = None
-    if start is not None:
-        runs.append((start, len(rows) - 1))
+        if populated:
+            if start is None:
+                start = index
+            last_populated = index
+            blank_count = 0
+        elif start is not None:
+            blank_count += 1
+            if blank_count >= 2:
+                if last_populated is not None:
+                    runs.append((start, last_populated))
+                start = None
+                last_populated = None
+                blank_count = 0
+    if start is not None and last_populated is not None:
+        runs.append((start, last_populated))
     return runs
 
 

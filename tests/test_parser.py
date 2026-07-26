@@ -185,6 +185,7 @@ def test_discover_xlsx_catalogues_every_sheet_and_region(tmp_path: Path) -> None
     second.append(["code", "label"])
     second.append(["A", "Alpha"])
     second.append([])
+    second.append([])
     second.append(["country", "region"])
     second.append(["GB", "Europe"])
     wb.save(path)
@@ -206,6 +207,27 @@ def test_discover_xlsx_catalogues_every_sheet_and_region(tmp_path: Path) -> None
     assert customers.location.header_row == 2
     assert customers.row_count == 2
     assert [column.normalized_name for column in customers.columns] == ["id", "name"]
+
+
+def test_discover_xlsx_tolerates_one_blank_row_inside_table(tmp_path: Path) -> None:
+    """A single blank row should not split one logical table into two regions."""
+    pytest.importorskip("openpyxl")
+    from openpyxl import Workbook
+
+    path = tmp_path / "blank-row.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["id", "name"])
+    sheet.append([1, "Alice"])
+    sheet.append([])
+    sheet.append([2, "Bob"])
+    workbook.save(path)
+
+    catalog = discover_source_tables(path.read_bytes(), "xlsx")
+
+    assert len(catalog.tables) == 1
+    assert catalog.tables[0].row_count == 2
+    assert catalog.tables[0].location.cell_range == "A1:B4"
 
 
 def test_discover_csv_reports_malformed_quoting() -> None:
