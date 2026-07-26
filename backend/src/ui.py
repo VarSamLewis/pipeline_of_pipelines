@@ -122,6 +122,27 @@ def mapping_review_page(
     """Render the proposed mapping JSON for human review."""
     mapping = get_mapping_review(spec_id)
     mapping_json = json.dumps(mapping, indent=2, default=str)
+    source_tables = [
+        table
+        for catalog in mapping.get("source_catalogs", [])
+        for table in catalog.get("tables", [])
+    ]
+    parse_warnings = [
+        {
+            **warning,
+            "source": catalog.get("original_filename") or "Source file",
+        }
+        for catalog in mapping.get("source_catalogs", [])
+        for warning in catalog.get("warnings", [])
+    ]
+    parse_warnings.extend(
+        {
+            **warning,
+            "source": table.get("display_name") or table.get("source_table_id"),
+        }
+        for table in source_tables
+        for warning in table.get("warnings", [])
+    )
     return templates.TemplateResponse(
         request,
         "mapping.html",
@@ -129,6 +150,8 @@ def mapping_review_page(
             **_user_context(request, user),
             "spec_id": str(spec_id),
             "mapping_json": mapping_json,
+            "source_tables": source_tables,
+            "parse_warnings": parse_warnings,
         },
     )
 

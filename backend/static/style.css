@@ -215,3 +215,19 @@ tr:hover { background: #f8f9fa; }
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+.table-scroll { overflow-x: auto; }
+
+.warning-panel {
+  border-color: #d97706;
+  background: #fffbeb;
+}
+
+.warning-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.warning-list li { margin: 0.5rem 0; }
+.warning-error { color: #991b1b; }
+.warning-warning { color: #92400e; }

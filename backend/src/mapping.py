@@ -41,6 +41,39 @@ def _catalog_tables(source_catalogs: list[dict[str, Any]]) -> list[dict[str, Any
     return tables
 
 
+def _canonicalize_mapping_references(
+    mappings: list[ProposedMapping],
+    source_catalogs: list[dict[str, Any]],
+) -> None:
+    """Replace LLM display fields with canonical catalog values in place."""
+    tables = {
+        table["source_table_id"]: table
+        for table in _catalog_tables(source_catalogs)
+        if table.get("source_table_id")
+    }
+    columns = {
+        column["source_column_id"]: column
+        for table in tables.values()
+        for column in table.get("columns", [])
+        if column.get("source_column_id")
+    }
+    for mapping in mappings:
+        for ref in mapping.source_columns:
+            table = tables.get(ref.source_table_id or "")
+            column = columns.get(ref.source_column_id or "")
+            if table is None or column is None:
+                continue
+            ref.raw_file_id = uuid.UUID(str(table["raw_file_id"]))
+            ref.source_table = str(
+                table.get("display_name") or table.get("source_table_id")
+            )
+            ref.source_column = str(
+                column.get("normalized_name")
+                or column.get("original_name")
+                or column.get("source_column_id")
+            )
+
+
 def _gather_targeted_evidence(
     session: Any,
     client_id: uuid.UUID,
@@ -146,7 +179,8 @@ def build_mapping_prompt(
         '"target_column": "...", "source_columns": [{"source_table_id": '
         '"catalog-table-id", "source_column_id": "catalog-column-id", '
         '"raw_file_id": "catalog-raw-file-id", "source_table": '
-        '"human-readable table name", "source_column": "original column name"}], '
+        '"human-readable table name", "source_column": '
+        '"exact normalized_name from the catalog"}], '
         '"transformation_logic": '
         '"...", "transformation_type": "expression", '
         '"polars_expression": "col(\'source_col\').cast(pl.Int64)", '
@@ -399,6 +433,7 @@ def propose_mapping_spec(
             "LLM mapping failed source-catalog validation: "
             + "; ".join(validation_errors)
         )
+    _canonicalize_mapping_references(proposed, source_catalogs)
 
     delete_mapping_columns(session, mapping_spec_id)
     columns = [

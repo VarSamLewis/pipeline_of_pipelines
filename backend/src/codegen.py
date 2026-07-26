@@ -46,10 +46,16 @@ lookups, and aggregations), and writes one CSV per target table.
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
+import io
 import json
 from pathlib import Path
+from typing import Any
 
 import polars as pl
+from openpyxl import load_workbook
+from openpyxl.utils import range_boundaries
 
 
 def load_mapping_json(path: Path) -> dict[str, Any]:
@@ -57,35 +63,148 @@ def load_mapping_json(path: Path) -> dict[str, Any]:
         return json.load(f)
 
 
-def discover_source_files(source_folder: Path) -> dict[str, Path]:
-    """Map logical source table names to CSV or Excel file paths."""
-    mapping = {}
-    for p in sorted(source_folder.iterdir()):
-        if not p.is_file():
+def _catalog_tables(mapping_spec: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        table
+        for catalog in mapping_spec.get("source_catalogs", [])
+        for table in catalog.get("tables", [])
+    ]
+
+
+def _resolve_source_path(source_folder: Path, table: dict[str, Any]) -> Path:
+    """Resolve one catalog table to exactly one content-verified local file."""
+    original_filename = table.get("original_filename")
+    raw_file_id = table.get("raw_file_id")
+    candidates = []
+    if original_filename:
+        exact = source_folder / original_filename
+        if exact.is_file():
+            candidates.append(exact)
+    if raw_file_id:
+        candidates.extend(
+            path
+            for path in source_folder.glob(f"{raw_file_id}_*")
+            if path.is_file() and path not in candidates
+        )
+    if len(candidates) != 1:
+        raise ValueError(
+            f"Expected exactly one local file for source table "
+            f"{table['source_table_id']}, found {len(candidates)}"
+        )
+    path = candidates[0]
+    expected_hash = table.get("file_sha256")
+    if expected_hash:
+        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"Content hash mismatch for source table {table['source_table_id']}"
+            )
+    return path
+
+
+def _catalog_column_names(table: dict[str, Any]) -> list[str]:
+    return [column["normalized_name"] for column in table.get("columns", [])]
+
+
+def _rows_to_dataframe(
+    rows: list[list[Any]],
+    table: dict[str, Any],
+) -> pl.DataFrame:
+    names = _catalog_column_names(table)
+    width = len(names)
+    header = [(str(value).strip() if value is not None else "") for value in rows[0]]
+    data_rows = []
+    for row in rows[1:]:
+        padded = (list(row) + [None] * width)[:width]
+        comparable = [
+            str(value).strip() if value is not None else "" for value in padded
+        ]
+        if not any(value not in (None, "") for value in padded):
             continue
-        name = p.stem
-        if p.suffix.lower() == ".csv":
-            mapping[name] = p
-        elif p.suffix.lower() in {".xlsx", ".xls"}:
-            mapping[name] = p
-    return mapping
+        if comparable == header[:width]:
+            continue
+        data_rows.append(padded)
+    return pl.DataFrame(data_rows, schema=names, orient="row", infer_schema_length=None)
 
 
-def load_source_dataframes(source_folder: Path) -> dict[str, pl.DataFrame]:
-    """Load every source file into a DataFrame keyed by file/sheet name."""
-    source_files = discover_source_files(source_folder)
-    result: dict[str, pl.DataFrame] = {}
-    for name, path in source_files.items():
+def _load_csv_table(path: Path, table: dict[str, Any]) -> pl.DataFrame:
+    location = table["location"]
+    encoding = location.get("encoding") or "utf-8"
+    text = path.read_bytes().decode(encoding)
+    rows = list(
+        csv.reader(
+            io.StringIO(text),
+            delimiter=location.get("delimiter") or ",",
+            quotechar=location.get("quote_char") or '"',
+            strict=True,
+        )
+    )
+    header_index = int(location["header_row"]) - 1
+    return _rows_to_dataframe(rows[header_index:], table)
+
+
+def _load_xlsx_table(path: Path, table: dict[str, Any]) -> pl.DataFrame:
+    location = table["location"]
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        worksheet = workbook[location["sheet_name"]]
+        min_col, min_row, max_col, max_row = range_boundaries(
+            location["cell_range"]
+        )
+        rows = [
+            list(row)
+            for row in worksheet.iter_rows(
+                min_row=min_row,
+                max_row=max_row,
+                min_col=min_col,
+                max_col=max_col,
+                values_only=True,
+            )
+        ]
+    finally:
+        workbook.close()
+    return _rows_to_dataframe(rows, table)
+
+
+def _load_legacy_source_dataframes(
+    source_folder: Path,
+) -> dict[str, pl.DataFrame]:
+    """Keep old mapping artifacts executable during the catalog migration."""
+    result = {}
+    for path in sorted(source_folder.iterdir()):
         if path.suffix.lower() == ".csv":
-            result[name] = pl.read_csv(path)
+            result[path.stem] = pl.read_csv(path)
         elif path.suffix.lower() in {".xlsx", ".xls"}:
-            # Read every sheet and add it to the source pool
             sheets = pl.read_excel(path, sheet_id=None, engine="openpyxl")
             if isinstance(sheets, dict):
-                for sheet_name, df in sheets.items():
-                    result[str(sheet_name)] = df
+                result.update({str(name): frame for name, frame in sheets.items()})
             else:
-                result[name] = sheets
+                result[path.stem] = sheets
+    return result
+
+
+def load_source_dataframes(
+    mapping_spec: dict[str, Any],
+    source_folder: Path,
+) -> dict[str, pl.DataFrame]:
+    """Load catalog tables by stable ID using their recorded parser settings."""
+    tables = _catalog_tables(mapping_spec)
+    if not tables:
+        return _load_legacy_source_dataframes(source_folder)
+    result = {}
+    for table in tables:
+        path = _resolve_source_path(source_folder, table)
+        file_type = path.suffix.lower()
+        if file_type == ".csv":
+            frame = _load_csv_table(path, table)
+        elif file_type == ".xlsx":
+            frame = _load_xlsx_table(path, table)
+        else:
+            raise ValueError(
+                f"Unsupported tabular source type for {table['source_table_id']}: "
+                f"{file_type}"
+            )
+        result[table["source_table_id"]] = frame
     return result
 
 
@@ -298,7 +417,7 @@ def build_target_tables(
     source_folder: Path,
 ) -> dict[str, pl.DataFrame]:
     """Build all target tables from the source files and mappings."""
-    source_dfs = load_source_dataframes(source_folder)
+    source_dfs = load_source_dataframes(mapping_spec, source_folder)
     target_schema = mapping_spec.get("target_schema_json", {})
 
     columns_by_table: dict[str, list[dict[str, Any]]] = {}
@@ -311,10 +430,14 @@ def build_target_tables(
         base_source = target_table
         for col in columns:
             if col.get("source_columns"):
-                base_source = col["source_columns"][0]["source_table"]
+                source_ref = col["source_columns"][0]
+                base_source = source_ref.get(
+                    "source_table_id",
+                    source_ref["source_table"],
+                )
                 break
 
-        # Source table keys are file stems; the LLM may use the full filename.
+        # Legacy artifacts may still identify a source by filename.
         source_key = base_source
         if source_key not in source_dfs:
             stem_key = Path(base_source).stem
@@ -522,7 +645,8 @@ def execute_generated_pipeline(
                 if raw_file is None:
                     continue
                 data = object_store.get(raw_file.storage_key)
-                (source_folder / raw_file.original_filename).write_bytes(data)
+                runtime_name = f"{raw_file.id}_{raw_file.original_filename}"
+                (source_folder / runtime_name).write_bytes(data)
 
         subprocess.run(
             [
