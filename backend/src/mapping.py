@@ -28,11 +28,57 @@ from models import (
 )
 
 
+def _catalog_tables(source_catalogs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten canonical catalogs while tolerating legacy profile shapes."""
+    tables: list[dict[str, Any]] = []
+    for catalog in source_catalogs:
+        if "tables" in catalog:
+            tables.extend(catalog.get("tables", []))
+        elif "sheets" in catalog:
+            tables.extend(catalog.get("sheets", []))
+        else:
+            tables.append(catalog)
+    return tables
+
+
+def _canonicalize_mapping_references(
+    mappings: list[ProposedMapping],
+    source_catalogs: list[dict[str, Any]],
+) -> None:
+    """Replace LLM display fields with canonical catalog values in place."""
+    tables = {
+        table["source_table_id"]: table
+        for table in _catalog_tables(source_catalogs)
+        if table.get("source_table_id")
+    }
+    columns = {
+        column["source_column_id"]: column
+        for table in tables.values()
+        for column in table.get("columns", [])
+        if column.get("source_column_id")
+    }
+    for mapping in mappings:
+        for ref in mapping.source_columns:
+            table = tables.get(ref.source_table_id or "")
+            column = columns.get(ref.source_column_id or "")
+            if table is None or column is None:
+                continue
+            ref.raw_file_id = uuid.UUID(str(table["raw_file_id"]))
+            ref.source_table = str(
+                table.get("display_name") or table.get("source_table_id")
+            )
+            ref.source_column = str(
+                column.get("normalized_name")
+                or column.get("original_name")
+                or column.get("source_column_id")
+            )
+
+
 def _gather_targeted_evidence(
     session: Any,
     client_id: uuid.UUID,
     target_schema: TargetSchema,
-    spreadsheet_profiles: list[dict[str, Any]],
+    source_catalogs: list[dict[str, Any]],
     search_evidence_by_text: Any,
     top_k_per_query: int = 5,
     max_total: int = 40,
@@ -51,16 +97,23 @@ def _gather_targeted_evidence(
             queries.add(f"map {col.name}")
             queries.add(f"{table.name} {col.name}")
 
-    # Source-driven queries from spreadsheet profiles
-    for profile in spreadsheet_profiles:
-        sheets = profile if isinstance(profile, list) else [profile]
-        for sheet in sheets:
-            sheet_name = sheet.get("sheet_name", "")
-            for col in sheet.get("columns", []):
-                header = col.get("header") or col.get("column")
-                if header:
-                    queries.add(f"{sheet_name} {header}")
-                    queries.add(f"column {header}")
+    # Source-driven queries from the canonical catalog.
+    for source_table_info in _catalog_tables(source_catalogs):
+        table_name = (
+            source_table_info.get("display_name")
+            or source_table_info.get("sheet_name")
+            or source_table_info.get("source_table", "")
+        )
+        for col in source_table_info.get("columns", []):
+            header = (
+                col.get("original_name")
+                or col.get("normalized_name")
+                or col.get("header")
+                or col.get("column")
+            )
+            if header:
+                queries.add(f"{table_name} {header}")
+                queries.add(f"column {header}")
 
     # Cross-reference queries for the trickiest columns
     queries.add("region code mapping")
@@ -90,12 +143,12 @@ def _gather_targeted_evidence(
 
 def build_mapping_prompt(
     target_schema: TargetSchema,
-    spreadsheet_profiles: list[dict[str, Any]],
+    source_catalogs: list[dict[str, Any]],
     evidence_items: list[ExtractedEvidence],
     business_rules: list[BusinessRule],
     raw_file_summary: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
-    """Build a chat-completion prompt from target schema, profiles, and evidence."""
+    """Build an ID-grounded mapping prompt from catalogs and evidence."""
     evidence_entries = [
         f"Evidence ID {e.id}:\n{e.content[:800]}" for e in evidence_items
     ]
@@ -105,23 +158,30 @@ def build_mapping_prompt(
         "role": "system",
         "content": (
             "You are a data-mapping assistant. Given a target schema, source "
-            "spreadsheet profiles, and evidence retrieved from a vector database, "
+            "catalog, and evidence retrieved from a vector database, "
             "propose source-to-target column mappings. Each mapping may use one or "
-            "more source columns. Use the evidence IDs to cite which evidence supports "
-            "each mapping. Return valid JSON with a 'mappings' array."
+            "more source columns. You MUST copy source_table_id, source_column_id, "
+            "and raw_file_id exactly from the catalog for every source reference. "
+            "Never invent an ID or identify a source by filename alone. Use evidence "
+            "IDs to cite support for each mapping. Return valid JSON with a "
+            "'mappings' array."
         ),
     }
     user_content = (
         f"Target schema:\n{target_schema.model_dump_json(indent=2)}\n\n"
         f"Source files:\n{json.dumps(raw_file_summary, indent=2)}\n\n"
-        f"Spreadsheet profiles:\n"
-        f"{json.dumps(spreadsheet_profiles, indent=2, default=str)}\n\n"
+        f"Canonical source catalogs:\n"
+        f"{json.dumps(source_catalogs, indent=2, default=str)}\n\n"
         f"Evidence retrieved from the vector database for this mapping:\n"
         f"{evidence_text}\n\n"
         f"Business rules:\n{rules_text}\n\n"
         'Return JSON with this shape: {"mappings": [{"target_table": "...", '
-        '"target_column": "...", "source_columns": [{"source_table": '
-        '"...", "source_column": "..."}], "transformation_logic": '
+        '"target_column": "...", "source_columns": [{"source_table_id": '
+        '"catalog-table-id", "source_column_id": "catalog-column-id", '
+        '"raw_file_id": "catalog-raw-file-id", "source_table": '
+        '"human-readable table name", "source_column": '
+        '"exact normalized_name from the catalog"}], '
+        '"transformation_logic": '
         '"...", "transformation_type": "expression", '
         '"polars_expression": "col(\'source_col\').cast(pl.Int64)", '
         '"tests": ["not_null", "unique"], '
@@ -151,12 +211,14 @@ def build_mapping_prompt(
         "\"~col('order_id').cast(str).str.starts_with('9999')\". "
         "For aggregations use transformation_type=aggregation with "
         "aggregation_source_table, aggregation_group_key, and "
-        'aggregation_expression, e.g. "aggregation_source_table": "orders", '
+        "aggregation_expression. aggregation_source_table must be a catalog "
+        'source_table_id, e.g. "aggregation_source_table": "catalog-table-id", '
         '"aggregation_group_key": "cust_id", '
         "\"aggregation_expression\": \"(col('qty') * col('unit_price')).sum()\". "
         "For cross-table lookups use transformation_type=lookup with "
-        "lookup_source_table, lookup_key, and lookup_value, e.g. "
-        '"lookup_source_table": "products", "lookup_key": "prod_sku", '
+        "lookup_source_table, lookup_key, and lookup_value. lookup_source_table "
+        "must be a catalog source_table_id, e.g. "
+        '"lookup_source_table": "catalog-table-id", "lookup_key": "prod_sku", '
         '"lookup_value": "prod_name". '
         "For lookups the source_columns should reference the column in the "
         "base/source table that contains the join key, not the lookup table column. "
@@ -310,11 +372,11 @@ def propose_mapping_spec(
     ]
     raw_files = [rf for rf in raw_files if rf is not None]
 
-    spreadsheet_profiles: list[dict[str, Any]] = []
+    source_catalogs: list[dict[str, Any]] = []
     for raw_file in raw_files:
         profile = get_spreadsheet_profile(session, raw_file.id)
         if profile:
-            spreadsheet_profiles.append(profile.profile_json)
+            source_catalogs.append(profile.profile_json)
 
     raw_file_summary = [
         {
@@ -329,7 +391,7 @@ def propose_mapping_spec(
         session,
         spec.client_id,
         target_schema,
-        spreadsheet_profiles,
+        source_catalogs,
         search_evidence_by_text,
         top_k_per_query=max(1, top_k_evidence // 2),
         max_total=top_k_evidence * 4,
@@ -353,13 +415,25 @@ def propose_mapping_spec(
 
     messages = build_mapping_prompt(
         target_schema,
-        spreadsheet_profiles,
+        source_catalogs,
         evidence_items,
         business_rules,
         raw_file_summary,
     )
     response = call_mapping_llm(messages, model, api_key, base_url)
     proposed = parse_llm_mapping_response(response, mapping_spec_id, target_schema)
+    validation = validate_mapping_columns(proposed, target_schema, source_catalogs)
+    validation_errors = [
+        error
+        for result in validation
+        for error in result["validation_errors"]
+    ]
+    if validation_errors:
+        raise ValueError(
+            "LLM mapping failed source-catalog validation: "
+            + "; ".join(validation_errors)
+        )
+    _canonicalize_mapping_references(proposed, source_catalogs)
 
     delete_mapping_columns(session, mapping_spec_id)
     columns = [
@@ -405,12 +479,24 @@ def validate_mapping_columns(
     spreadsheet_profiles: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Validate proposed mappings against the target schema and source columns."""
-    available_sources = {
+    catalog_tables = _catalog_tables(spreadsheet_profiles)
+    catalog_by_table_id = {
+        table["source_table_id"]: table
+        for table in catalog_tables
+        if table.get("source_table_id")
+    }
+    catalog_columns_by_id = {
+        column["source_column_id"]: (table, column)
+        for table in catalog_tables
+        for column in table.get("columns", [])
+        if column.get("source_column_id")
+    }
+    legacy_sources = {
         (
             p.get("sheet_name", p.get("source_table", "")),
             col.get("header") or col.get("column"),
         )
-        for p in spreadsheet_profiles
+        for p in catalog_tables
         for col in p.get("columns", [])
     }
     target_columns = {(t.name, c.name) for t in target_schema.tables for c in t.columns}
@@ -421,11 +507,49 @@ def validate_mapping_columns(
         if (mapping.target_table, mapping.target_column) not in target_columns:
             errors.append("target column not in target schema")
         for ref in mapping.source_columns:
-            if (ref.source_table, ref.source_column) not in available_sources:
+            if catalog_by_table_id:
+                if not ref.source_table_id:
+                    errors.append(
+                        f"source {ref.source_table!r}.{ref.source_column!r} "
+                        "is missing source_table_id"
+                    )
+                    continue
+                table = catalog_by_table_id.get(ref.source_table_id)
+                if table is None:
+                    errors.append(
+                        f"source_table_id {ref.source_table_id!r} is not in the catalog"
+                    )
+                    continue
+                if not ref.source_column_id:
+                    errors.append(
+                        f"source {ref.source_table!r}.{ref.source_column!r} "
+                        "is missing source_column_id"
+                    )
+                    continue
+                resolved = catalog_columns_by_id.get(ref.source_column_id)
+                if resolved is None or resolved[0] is not table:
+                    errors.append(
+                        f"source_column_id {ref.source_column_id!r} does not belong "
+                        f"to source_table_id {ref.source_table_id!r}"
+                    )
+                    continue
+                expected_raw_file_id = table.get("raw_file_id")
+                if expected_raw_file_id and str(ref.raw_file_id or "") != str(
+                    expected_raw_file_id
+                ):
+                    errors.append(
+                        f"raw_file_id for source_column_id "
+                        f"{ref.source_column_id!r} does not match the catalog"
+                    )
+            elif (ref.source_table, ref.source_column) not in legacy_sources:
                 errors.append(
                     f"source column {ref.source_column!r} "
                     f"not found in {ref.source_table!r}"
                 )
+        for field_name in ("lookup_source_table", "aggregation_source_table"):
+            table_id = getattr(mapping, field_name)
+            if table_id and catalog_by_table_id and table_id not in catalog_by_table_id:
+                errors.append(f"{field_name} {table_id!r} is not in the catalog")
         results.append(
             {
                 "target_table": mapping.target_table,

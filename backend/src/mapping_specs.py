@@ -10,7 +10,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from db_ops import get_mapping_columns, get_mapping_spec, get_session
+from db_ops import (
+    get_mapping_columns,
+    get_mapping_spec,
+    get_session,
+    get_spreadsheet_profile,
+)
 from models import MappingColumn, TargetSchema
 
 
@@ -47,6 +52,11 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
         if spec is None:
             raise ValueError(f"Mapping spec not found: {spec_id}")
         columns = get_mapping_columns(session, spec_id)
+        source_catalogs = []
+        for raw_file_id in spec.source_raw_file_ids:
+            profile = get_spreadsheet_profile(session, raw_file_id)
+            if profile is not None:
+                source_catalogs.append(profile.profile_json)
         return {
             "id": str(spec.id),
             "client_id": str(spec.client_id),
@@ -56,6 +66,7 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
                 str(value) for value in spec.source_raw_file_ids
             ],
             "target_schema_json": spec.target_schema_json,
+            "source_catalogs": source_catalogs,
             "description": spec.description,
             "approved_by": spec.approved_by,
             "columns": [_column_to_dict(column) for column in columns],

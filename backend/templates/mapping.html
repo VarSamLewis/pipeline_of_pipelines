@@ -6,6 +6,61 @@
 <h1>Review mapping</h1>
 
 <div class="card">
+  <h2>Discovered source tables</h2>
+  <p class="muted">These exact files, sheets, ranges, and parser decisions will be used when the pipeline runs.</p>
+  {% if source_tables %}
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Location</th>
+          <th>Header</th>
+          <th>Rows</th>
+          <th>Confidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for table in source_tables %}
+        <tr>
+          <td>
+            <strong>{{ table.display_name }}</strong><br>
+            <span class="muted">{{ table.original_filename }}</span>
+          </td>
+          <td>
+            {% if table.location.sheet_name %}{{ table.location.sheet_name }}{% endif %}
+            {% if table.location.cell_range %}!{{ table.location.cell_range }}{% else %}CSV{% endif %}
+          </td>
+          <td>Row {{ table.location.header_row }}</td>
+          <td>{{ table.row_count }}</td>
+          <td>{{ "%.0f"|format(table.confidence * 100) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No tabular sources were catalogued.</p>
+  {% endif %}
+</div>
+
+{% if parse_warnings %}
+<div class="card warning-panel" role="alert">
+  <h2>Parsing warnings</h2>
+  <p>Review these warnings before approving the mapping.</p>
+  <ul class="warning-list">
+    {% for warning in parse_warnings %}
+    <li class="warning-{{ warning.severity }}">
+      <strong>{{ warning.source }}: {{ warning.code }}</strong>
+      — {{ warning.message }}
+      {% if warning.location %}<span class="muted">({{ warning.location }})</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
   <h2>Proposed mapping</h2>
   <p class="muted">This is the raw mapping JSON produced by the LLM. Review it before generating code and running the pipeline.</p>
   <pre class="code-editor">{{ mapping_json }}</pre>
