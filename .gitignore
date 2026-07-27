@@ -21,7 +21,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+data/execution-logs/
+data/object-store/
+data/output-folders/
+data/target-schema/
 # Virtual environments
 .env
 .venv

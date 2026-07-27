@@ -1,0 +1,29 @@
+From: compliance@example.com
+To: data-team@example.com
+Subject: EA packaging submission rules for 2024
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hi team,
+
+Please ensure the 2024 packaging submission follows these business rules:
+
+1. All weights must be reported in tonnes. If the source unit is kilograms,
+   divide by 1000.
+
+2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.
+   Treat "transport" as Tertiary.
+
+3. Activity "supplied" should be normalised to "Supplied as goods".
+
+4. Filter out any rows flagged as TEST or DUPLICATE in the Data Quality Flag
+   column before submission.
+
+5. Nation is determined by site reference using the site_locations.csv lookup.
+   Any site not in the lookup should default to England.
+
+6. The submission_id should be a concatenation of Record ID, reporting period,
+   site_id and packaging material code, separated by hyphens.
+
+Thanks,
+Compliance

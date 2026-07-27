@@ -661,6 +661,68 @@ def validate_mapping_columns(
                     f"raw_file_id for source_column_id "
                     f"{ref.source_column_id!r} does not match the catalog"
                 )
+        if mapping.transformation_type == "lookup" and mapping.lookup_source_table:
+            lookup_tbl = catalog_by_table_id.get(
+                mapping.lookup_source_table
+            )
+            if lookup_tbl is None:
+                errors.append(
+                    f"lookup_source_table "
+                    f"{mapping.lookup_source_table!r} "
+                    "is not in the catalog"
+                )
+            else:
+                tbl_col_names = {
+                    c.get("normalized_name") or c.get("original_name")
+                    for c in lookup_tbl.get("columns", [])
+                }
+                if (
+                    mapping.lookup_key
+                    and mapping.lookup_key not in tbl_col_names
+                ):
+                    errors.append(
+                        f"lookup_key {mapping.lookup_key!r} not "
+                        "found in lookup table "
+                        f"{mapping.lookup_source_table!r}"
+                    )
+                if (
+                    mapping.lookup_value
+                    and mapping.lookup_value not in tbl_col_names
+                ):
+                    errors.append(
+                        f"lookup_value {mapping.lookup_value!r} not "
+                        "found in lookup table "
+                        f"{mapping.lookup_source_table!r}"
+                    )
+        if (
+            mapping.transformation_type == "aggregation"
+            and mapping.aggregation_source_table
+        ):
+            agg_tbl = catalog_by_table_id.get(
+                mapping.aggregation_source_table
+            )
+            if agg_tbl is None:
+                errors.append(
+                    f"aggregation_source_table "
+                    f"{mapping.aggregation_source_table!r} "
+                    "is not in the catalog"
+                )
+            else:
+                tbl_col_names = {
+                    c.get("normalized_name") or c.get("original_name")
+                    for c in agg_tbl.get("columns", [])
+                }
+                if (
+                    mapping.aggregation_group_key
+                    and mapping.aggregation_group_key
+                    not in tbl_col_names
+                ):
+                    errors.append(
+                        f"aggregation_group_key "
+                        f"{mapping.aggregation_group_key!r} not "
+                        "found in aggregation table "
+                        f"{mapping.aggregation_source_table!r}"
+                    )
         results.append(
             {
                 "target_table": mapping.target_table,
