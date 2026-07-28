@@ -420,6 +420,16 @@ def _normalize_polars_expression(expression: str | None) -> str | None:
         r".str.replace(\1, \2\3\2)",
         expression,
     )
+    # Replace bare 'null' with Python None (defined in generated scripts).
+    expression = re.sub(r"\bnull\b", "None", expression)
+    # LLMs sometimes try to index .str.extract() with [0]; Polars already
+    # returns the first capture group, so the index is both invalid and
+    # unnecessary.
+    expression = re.sub(
+        r"\.str\.extract\(((?:[^()]*|\([^()]*\))*)\)\[0\]",
+        r".str.extract(\1)",
+        expression,
+    )
     return expression
 
 
