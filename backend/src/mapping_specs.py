@@ -17,6 +17,7 @@ from db_ops import (
     get_session,
     get_spreadsheet_profile,
 )
+from mapping import _normalize_polars_expression
 from models import MappingColumn, TargetSchema
 
 
@@ -27,15 +28,21 @@ def _column_to_dict(column: MappingColumn) -> dict[str, Any]:
         "target_column": column.target_column,
         "source_columns": column.source_columns_json,
         "transformation_logic": column.transformation_logic,
-        "polars_expression": column.polars_expression,
+        "polars_expression": _normalize_polars_expression(
+            column.polars_expression
+        ),
         "transformation_type": column.transformation_type,
         "aggregation_source_table": column.aggregation_source_table,
-        "aggregation_expression": column.aggregation_expression,
+        "aggregation_expression": _normalize_polars_expression(
+            column.aggregation_expression
+        ),
         "aggregation_group_key": column.aggregation_group_key,
         "lookup_source_table": column.lookup_source_table,
         "lookup_key": column.lookup_key,
         "lookup_value": column.lookup_value,
-        "filter_expression": column.filter_expression,
+        "filter_expression": _normalize_polars_expression(
+            column.filter_expression
+        ),
         "tests": column.tests,
         "evidence_ids": [str(value) for value in column.evidence_ids],
         "business_rule_ids": [

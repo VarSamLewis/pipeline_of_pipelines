@@ -192,6 +192,28 @@ def load_source_dataframes(
 """
 
 # ---------------------------------------------------------------------------
+# Expression helpers (inlined into every generated pipeline.py)
+# ---------------------------------------------------------------------------
+
+_EXPRESSION_HELPERS = """\
+from polars import col, when, coalesce, lit, concat_str
+
+null = None
+Int64 = pl.Int64
+Float64 = pl.Float64
+String = pl.String
+Date = pl.Date
+Datetime = pl.Datetime
+Boolean = pl.Boolean
+
+
+def concat(*args: Any) -> pl.Expr:
+    return pl.concat_str([
+        pl.lit(x) if not isinstance(x, pl.Expr) else x for x in args
+    ])
+"""
+
+# ---------------------------------------------------------------------------
 # Artifact generation
 # ---------------------------------------------------------------------------
 
@@ -203,11 +225,7 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
 
     if ttype == "filter":
         expr = col.get("filter_expression", "")
-        return (
-            "df = df.filter(eval("
-            f"{expr!r}, _NS, "
-            "{{name: df[name] for name in df.columns}}))\n"
-        )
+        return f"df = df.filter({expr})\n"
 
     if ttype == "lookup":
         lookup_table = col.get("lookup_source_table", "")
@@ -243,12 +261,8 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
         )
         return textwrap.dedent(f"""\
             _agg_df = source_dfs[{agg_table!r}]
-            _local = {{
-                name: _agg_df[name] for name in _agg_df.columns
-            }}
-            _agg_expr = eval({agg_expr!r}, _NS, _local)
             _grouped = _agg_df.group_by({agg_key!r}).agg(
-                _agg_expr.alias({target_column!r})
+                ({agg_expr}).alias({target_column!r})
             )
             df = df.join(
                 _grouped,
@@ -268,15 +282,11 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
     first_source = source_columns[0]["source_column"]
 
     if expression:
-        local_vars = {
-            ref["source_column"]: f"df[{ref['source_column']!r}]"
-            for ref in source_columns
-        }
-        return textwrap.dedent(f"""\
-            _local = {{{", ".join(f"{k!r}: {v}" for k, v in local_vars.items())}}}
-            _expr = eval({expression!r}, _NS, _local)
-            df = df.with_columns(_expr.alias({target_column!r}))
-        """)
+        return (
+            f"df = df.with_columns(\n"
+            f"    ({expression}).alias({target_column!r})\n"
+            f")\n"
+        )
 
     return f"df = df.with_columns(pl.col({first_source!r}).alias({target_column!r}))\n"
 
@@ -305,25 +315,6 @@ from typing import Any
 import polars as pl
 from openpyxl import load_workbook
 from openpyxl.utils import range_boundaries
-"""
-
-    ns_setup = """\
-_NS: dict[str, Any] = {
-    "pl": pl,
-    "col": pl.col,
-    "when": pl.when,
-    "concat": lambda *a: pl.concat_str([
-        pl.lit(x) if not isinstance(x, pl.Expr) else x for x in a
-    ]),
-    "coalesce": pl.coalesce,
-    "null": None,
-    "Int64": pl.Int64,
-    "Float64": pl.Float64,
-    "String": pl.String,
-    "Date": pl.Date,
-    "Datetime": pl.Datetime,
-    "Boolean": pl.Boolean,
-}
 """
 
     # Group columns by target table
@@ -464,7 +455,7 @@ _NS: dict[str, Any] = {
             '"""Auto-generated single-file Polars transformation pipeline."""',
             imports,
             _SOURCE_LOADING_HELPERS,
-            ns_setup,
+            _EXPRESSION_HELPERS,
             f"_DTYPES: dict[str, dict[str, str]] = {json.dumps(dtype_dict, indent=4)}",
             "",
             "_OUTPUT_DIR: Path = Path('.')",
@@ -638,7 +629,7 @@ def execute_generated_pipeline(
                 runtime_name = f"{raw_file.id}_{raw_file.original_filename}"
                 (source_folder / runtime_name).write_bytes(data)
 
-        subprocess.run(
+        result = subprocess.run(
             [
                 sys.executable,
                 str(pipeline_py_path),
@@ -647,9 +638,13 @@ def execute_generated_pipeline(
                 "--output-folder",
                 str(output_folder),
             ],
-            check=True,
             capture_output=True,
         )
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")
+            raise RuntimeError(
+                f"Pipeline execution failed (exit {result.returncode}):\n{stderr}"
+            )
 
     csv_files = sorted(output_folder.glob("*.csv"))
     return {p.stem: p for p in csv_files}
