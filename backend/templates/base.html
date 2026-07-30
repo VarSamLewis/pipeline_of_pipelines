@@ -6,11 +6,31 @@
   <title>{% block title %}Pipeline of Pipelines{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script>
+    (function () {
+      var saved = localStorage.getItem('theme');
+      if (saved === 'dark' || saved === 'light') {
+        document.documentElement.setAttribute('data-theme', saved);
+      } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 </head>
 <body>
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <p id="loading-message">Working...</p>
+    </div>
+  </div>
+
   <nav>
     <a class="brand" href="/">Pipeline of Pipelines</a>
     <div class="user">
+      <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode">
+        <span id="theme-icon">&#9790;</span>
+      </button>
       {% if user %}
         <span>{{ user.email }} ({{ user.role.value }})</span>
         <form action="/auth/logout" method="post" style="display:inline;">
@@ -22,5 +42,45 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+
+  <script>
+    function toggleTheme() {
+      var html = document.documentElement;
+      var current = html.getAttribute('data-theme');
+      var next = current === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateThemeIcon(next);
+    }
+
+    function updateThemeIcon(theme) {
+      var icon = document.getElementById('theme-icon');
+      icon.textContent = theme === 'dark' ? '\u2600' : '\u263E';
+    }
+
+    (function () {
+      var current = document.documentElement.getAttribute('data-theme') || 'light';
+      updateThemeIcon(current);
+    })();
+
+    document.body.addEventListener('htmx:beforeRequest', function (evt) {
+      var elt = evt.detail.elt;
+      var form = elt && elt.closest ? elt.closest('form') : null;
+      var overlay = document.getElementById('loading-overlay');
+      var msg = document.getElementById('loading-message');
+      if (form && form.getAttribute('hx-indicator')) {
+        msg.textContent = 'Processing...';
+        overlay.classList.add('active');
+      }
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function () {
+      document.getElementById('loading-overlay').classList.remove('active');
+    });
+
+    document.body.addEventListener('htmx:responseError', function () {
+      document.getElementById('loading-overlay').classList.remove('active');
+    });
+  </script>
 </body>
 </html>

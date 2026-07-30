@@ -1,0 +1,67 @@
+{% if proposals %}
+<div class="chat-message user-message">
+  <div class="msg-bubble">
+    <strong>You:</strong>
+    <p>{{ feedback }}</p>
+  </div>
+</div>
+<div class="chat-message assistant-message">
+  <div class="msg-bubble">
+    <strong>Proposed changes:</strong>
+  </div>
+</div>
+{% for p in proposals %}
+<div class="chat-diff" id="diff-{{ loop.index }}">
+  <div class="diff-header">
+    <span class="diff-target">{{ p.target_table }}.{{ p.target_column }}</span>
+    <span class="diff-field">{{ p.field }}</span>
+    <span class="diff-reason">{{ p.reason }}</span>
+  </div>
+  <div class="diff-body">
+    <div class="diff-old">
+      <div class="diff-label">Before</div>
+      <code>{{ p.old_value or 'None' }}</code>
+    </div>
+    <div class="diff-new">
+      <div class="diff-label">After</div>
+      <code>{{ p.new_value }}</code>
+    </div>
+  </div>
+  <button class="btn btn-success btn-sm chat-apply-btn"
+          data-changes='[{"column_id": "{{ p.column_id }}", "field": "{{ p.field }}", "new_value": {{ p.new_value | tojson }}}]'>
+    Apply
+  </button>
+</div>
+{% endfor %}
+<script>
+document.querySelectorAll('.chat-apply-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var changes = JSON.parse(this.getAttribute('data-changes'));
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.style.display = 'none';
+    var input = document.createElement('input');
+    input.name = 'changes_json';
+    input.value = JSON.stringify(changes);
+    form.appendChild(input);
+    var hxAttrs = {
+      'hx-post': '{{ "/mapping/" ~ spec_id ~ "/chat/apply" if page == "mapping" else "/results/" ~ run_id ~ "/chat/apply" }}',
+      'hx-target': '#chat-messages-{{ sidebar_id }}',
+      'hx-swap': 'beforeend',
+    };
+    for (var key in hxAttrs) { form.setAttribute(key, hxAttrs[key]); }
+    document.body.appendChild(form);
+    htmx.trigger(form, 'submit');
+    document.body.removeChild(form);
+    btn.disabled = true;
+    btn.textContent = 'Applied';
+  });
+});
+</script>
+{% else %}
+<div class="chat-message assistant-message">
+  <div class="msg-bubble">
+    <p class="muted">No changes proposed. Try being more specific about what to fix.</p>
+  </div>
+</div>
+{% endif %}

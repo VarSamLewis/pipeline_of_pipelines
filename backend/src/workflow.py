@@ -73,7 +73,6 @@ def get_or_create_client(
     session: Any,
     existing_client_id: uuid.UUID | None,
     new_client_name: str | None,
-    new_client_code: str | None,
 ) -> Client:
     """Resolve a client from an existing id or create a new one."""
     if existing_client_id:
@@ -82,18 +81,26 @@ def get_or_create_client(
             raise ValueError("Selected client not found")
         return client
 
-    if not new_client_name or not new_client_code:
-        msg = "Either select an existing client or provide new client details"
+    if not new_client_name:
+        msg = "Either select an existing client or provide a client name"
         raise ValueError(msg)
 
-    existing = get_client_by_code(session, new_client_code)
+    import re
+
+    code = re.sub(r"[^a-z0-9]+", "-", new_client_name.strip().lower()).strip("-")
+    if not code:
+        code = "client"
+
+    existing = get_client_by_code(session, code)
     if existing is not None:
-        raise ValueError(f"Client code '{new_client_code}' already exists")
+        import random
+
+        code = f"{code}-{random.randint(1000, 9999)}"
 
     return create_client(
         session,
         name=new_client_name,
-        code=new_client_code,
+        code=code,
         metadata={},
     )
 
@@ -149,7 +156,6 @@ def _store_raw_file(
 def ingest_and_propose(
     existing_client_id: uuid.UUID | None,
     new_client_name: str | None,
-    new_client_code: str | None,
     source_uploads: list[Any],
     target_schema_bytes: bytes,
     model: str | None = None,
@@ -159,7 +165,6 @@ def ingest_and_propose(
     Args:
         existing_client_id: UUID of an existing client, if selected.
         new_client_name: Name for a new client, if creating one.
-        new_client_code: Short code for a new client, if creating one.
         source_uploads: List of uploaded source files.
         target_schema_bytes: Raw bytes of the uploaded target schema JSON.
         model: LLM model to use for mapping proposal.
@@ -175,7 +180,7 @@ def ingest_and_propose(
 
     with get_session() as session:
         client = get_or_create_client(
-            session, existing_client_id, new_client_name, new_client_code
+            session, existing_client_id, new_client_name
         )
         batch = create_ingestion_batch(
             session,
@@ -476,3 +481,118 @@ def get_result_review(run_id: uuid.UUID) -> dict[str, Any]:
         "pipeline_py": read_optional("pipeline.py"),
         "mapping_json": read_optional("mapping.json"),
     }
+
+
+def refine_mapping(
+    spec_id: uuid.UUID,
+    feedback: str,
+) -> list[dict[str, Any]]:
+    """Propose column-level refinements based on user feedback."""
+    from feedback import propose_refinements, store_feedback
+    proposals = propose_refinements(spec_id, feedback)
+    store_feedback(feedback, spec_id)
+    return proposals
+
+
+def apply_refinements(
+    spec_id: uuid.UUID,
+    changes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply approved changes to mapping columns and regenerate artifacts."""
+    from codegen import generate_artifact_set
+    from db_ops import get_session
+    from mapping_specs import load_mapping_spec
+    from models import MappingColumn
+
+    with get_session() as session:
+        for change in changes:
+            column_id = change.get("column_id")
+            field = change.get("field")
+            new_value = change.get("new_value")
+            if not column_id or not field:
+                continue
+            column = session.get(MappingColumn, uuid.UUID(str(column_id)))
+            if column is None or column.mapping_spec_id != spec_id:
+                continue
+            setattr(column, field, new_value)
+            session.add(column)
+        session.commit()
+
+    output_folder = get_artifact_store().folder(spec_id)
+    generate_artifact_set(spec_id, output_folder)
+    return load_mapping_spec(spec_id)
+
+
+def refine_from_results(
+    run_id: uuid.UUID,
+    feedback: str,
+) -> list[dict[str, Any]]:
+    """Propose refinements with execution context from a results page."""
+    from db_ops import get_session
+    from feedback import propose_refinements, store_feedback
+    from models import ExecutionRun, ValidationResult
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise ValueError(f"Execution run not found: {run_id}")
+        spec_id = run.mapping_spec_id
+
+        failures = list(
+            session.exec(
+                select(ValidationResult).where(
+                    ValidationResult.execution_run_id == run_id,
+                    not ValidationResult.passed,
+                )
+            ).all()
+        )
+        validation_context = None
+        if failures:
+            validation_context = {
+                "failed_tests": [
+                    {
+                        "test_name": f.test_name,
+                        "severity": f.severity,
+                        "details": f.details,
+                    }
+                    for f in failures
+                ]
+            }
+
+    proposals = propose_refinements(spec_id, feedback, validation_context)
+    store_feedback(feedback, spec_id, run_id)
+    return proposals
+
+
+def apply_refinements_and_reexecute(
+    run_id: uuid.UUID,
+    changes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply approved changes, regenerate artifacts, and re-execute."""
+    from codegen import generate_artifact_set
+    from db_ops import get_session
+    from models import ExecutionRun, MappingColumn
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise ValueError(f"Execution run not found: {run_id}")
+        spec_id = run.mapping_spec_id
+
+        for change in changes:
+            column_id = change.get("column_id")
+            field = change.get("field")
+            new_value = change.get("new_value")
+            if not column_id or not field:
+                continue
+            column = session.get(MappingColumn, uuid.UUID(str(column_id)))
+            if column is None or column.mapping_spec_id != spec_id:
+                continue
+            setattr(column, field, new_value)
+            session.add(column)
+        session.commit()
+
+    output_folder = get_artifact_store().folder(spec_id)
+    generate_artifact_set(spec_id, output_folder)
+    result = execute_approved_mapping(spec_id, output_folder=output_folder)
+    return result

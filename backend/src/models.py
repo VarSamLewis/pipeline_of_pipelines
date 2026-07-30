@@ -278,12 +278,6 @@ class ProposedMapping(BaseModel):
         default_factory=list,
         description="Business rules cited for this mapping.",
     )
-    confidence: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="LLM confidence score.",
-    )
 
 
 class PipelineOutputFolder(BaseModel):
@@ -493,7 +487,6 @@ class MappingColumn(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(JSON),
     )
-    confidence: float | None = SQLField(default=None)
     sort_order: int = SQLField(default=0)
 
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import polars as pl
@@ -80,7 +81,6 @@ def upload_submit(
     request: Request,
     client_select: str = Form(""),
     new_client_name: str = Form(""),
-    new_client_code: str = Form(""),
     source_files: list[UploadFile] = File(default_factory=list),
     target_schema: UploadFile = File(...),
     user: Any = Depends(require_auth),
@@ -94,7 +94,6 @@ def upload_submit(
         spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
-            new_client_code=new_client_code or None,
             source_uploads=valid_source_files,
             target_schema_bytes=target_schema_bytes,
         )
@@ -119,9 +118,33 @@ def mapping_review_page(
     spec_id: uuid.UUID,
     user: Any = Depends(require_auth),
 ) -> Any:
-    """Render the proposed mapping JSON for human review."""
+    """Render the proposed mapping for human review."""
+    from models import TargetSchema
+
     mapping = get_mapping_review(spec_id)
-    mapping_json = json.dumps(mapping, indent=2, default=str)
+
+    columns = mapping.get("columns", [])
+    columns_by_table: dict[str, list[dict[str, Any]]] = {}
+    for col in columns:
+        columns_by_table.setdefault(col["target_table"], []).append(col)
+
+    target_column_info: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        ts = mapping.get("target_schema_json")
+        if ts:
+            schema = TargetSchema.model_validate(ts)
+            for table in schema.tables:
+                for col in table.columns:
+                    target_column_info[(table.name, col.name)] = {
+                        "dtype": col.dtype,
+                        "required": col.required,
+                        "description": col.description,
+                        "allowed_values": col.allowed_values,
+                        "unique": col.unique,
+                    }
+    except Exception:
+        pass
+
     source_tables = [
         table
         for catalog in mapping.get("source_catalogs", [])
@@ -149,11 +172,38 @@ def mapping_review_page(
         {
             **_user_context(request, user),
             "spec_id": str(spec_id),
-            "mapping_json": mapping_json,
+            "columns_by_table": columns_by_table,
+            "target_column_info": target_column_info,
+            "mapping_json": json.dumps(mapping, indent=2, default=str),
             "source_tables": source_tables,
             "parse_warnings": parse_warnings,
+            "generated_at": datetime.now(UTC).strftime("%d %b %Y at %H:%M UTC"),
         },
     )
+
+
+@router.post("/mapping/{spec_id}")
+def mapping_post(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    changes_json: str = Form(None),
+) -> Any:
+    """Handle POST to the mapping page (apply chat refinements or redirect)."""
+    if changes_json:
+        from workflow import apply_refinements
+
+        try:
+            changes = json.loads(changes_json)
+            apply_refinements(spec_id, changes)
+        except (ValueError, json.JSONDecodeError) as exc:
+            return templates.TemplateResponse(
+                request,
+                "partials/error.html",
+                {**_user_context(request, user), "message": str(exc)},
+            )
+        return _htmx_redirect(request, f"/mapping/{spec_id}")
+    return _htmx_redirect(request, f"/mapping/{spec_id}")
 
 
 @router.post("/mapping/{spec_id}/confirm")
@@ -297,3 +347,124 @@ def results_reject(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _htmx_redirect(request, f"/mapping/{spec_id}")
+
+
+# ---------------------------------------------------------------------------
+# Feedback chat (mapping review and results pages)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/mapping/{spec_id}/chat")
+def mapping_chat(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    feedback: str = Form(...),
+) -> Any:
+    """Send feedback on the mapping review page and get proposed changes."""
+    from workflow import refine_mapping
+
+    try:
+        proposals = refine_mapping(spec_id, feedback)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "partials/chat_diff.html",
+        {
+            **_user_context(request, user),
+            "proposals": proposals,
+            "feedback": feedback,
+            "spec_id": str(spec_id),
+            "sidebar_id": "mapping",
+            "page": "mapping",
+        },
+    )
+
+
+@router.post("/mapping/{spec_id}/chat/apply")
+def mapping_chat_apply(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    changes_json: str = Form(...),
+) -> Any:
+    """Apply approved changes from mapping chat feedback."""
+    import json as _json
+
+    from workflow import apply_refinements
+
+    try:
+        changes = _json.loads(changes_json)
+        apply_refinements(spec_id, changes)
+    except (ValueError, _json.JSONDecodeError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+
+    return _htmx_redirect(request, f"/mapping/{spec_id}")
+
+
+@router.post("/results/{run_id}/chat")
+def results_chat(
+    request: Request,
+    run_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    feedback: str = Form(...),
+) -> Any:
+    """Send feedback on the results page and get proposed changes."""
+    from workflow import refine_from_results
+
+    try:
+        proposals = refine_from_results(run_id, feedback)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "partials/chat_diff.html",
+        {
+            **_user_context(request, user),
+            "proposals": proposals,
+            "feedback": feedback,
+            "run_id": str(run_id),
+            "sidebar_id": "results",
+            "page": "results",
+        },
+    )
+
+
+@router.post("/results/{run_id}/chat/apply")
+def results_chat_apply(
+    request: Request,
+    run_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    changes_json: str = Form(...),
+) -> Any:
+    """Apply approved changes from results chat feedback and re-execute."""
+    import json as _json
+
+    from workflow import apply_refinements_and_reexecute
+
+    try:
+        changes = _json.loads(changes_json)
+        apply_refinements_and_reexecute(run_id, changes)
+    except (ValueError, _json.JSONDecodeError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+
+    return _htmx_redirect(request, f"/results/{run_id}")

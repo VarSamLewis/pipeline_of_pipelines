@@ -275,6 +275,9 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
     # Default: expression
     source_columns = col.get("source_columns", [])
     expression = col.get("polars_expression")
+    if expression:
+        from mapping import _normalize_polars_expression
+        expression = _normalize_polars_expression(expression)
 
     if not source_columns:
         return f"df = df.with_columns(pl.lit(None).alias({target_column!r}))\n"

@@ -1,0 +1,27 @@
+<div class="chat-sidebar" id="chat-sidebar-{{ sidebar_id }}">
+  <div class="chat-header">
+    <strong>Feedback</strong>
+    <span class="muted" style="font-size:0.8rem;">Describe what to fix</span>
+  </div>
+  <div class="chat-messages" id="chat-messages-{{ sidebar_id }}">
+    <div class="chat-placeholder">
+      <p class="muted">Type feedback below to refine the mapping. The LLM will propose specific column-level changes.</p>
+    </div>
+  </div>
+  <div class="chat-input">
+    <form hx-post="/{{ page }}/{{ page_id }}/chat"
+          hx-target="#chat-messages-{{ sidebar_id }}"
+          hx-swap="beforeend"
+          hx-indicator="#chat-spinner-{{ sidebar_id }}"
+          class="chat-form">
+      <textarea name="feedback"
+                rows="2"
+                placeholder="e.g. Add Q4 to the reporting_period expression..."
+                required></textarea>
+      <button class="btn btn-primary btn-sm" type="submit">
+        <span id="chat-spinner-{{ sidebar_id }}" class="spinner" style="display:none;"></span>
+        Send
+      </button>
+    </form>
+  </div>
+</div>

@@ -569,7 +569,6 @@ def create_mapping_columns(
             tests=col.get("tests", []),
             evidence_ids=col.get("evidence_ids", []),
             business_rule_ids=col.get("business_rule_ids", []),
-            confidence=col.get("confidence"),
             sort_order=idx,
         )
         session.add(record)

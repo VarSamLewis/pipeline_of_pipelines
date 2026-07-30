@@ -28,10 +28,6 @@
         <label for="new_client_name">New client name</label>
         <input type="text" id="new_client_name" name="new_client_name" placeholder="e.g. Acme Ltd">
       </div>
-      <div class="form-group">
-        <label for="new_client_code">New client code</label>
-        <input type="text" id="new_client_code" name="new_client_code" placeholder="e.g. acme">
-      </div>
     </div>
 
     <div class="form-group">
@@ -57,13 +53,13 @@
 
 <script>
 function toggleNewClient(select) {
-  const fields = document.getElementById('new-client-fields');
+  var fields = document.getElementById('new-client-fields');
   if (select.value === '') {
     fields.style.display = 'block';
-    fields.querySelectorAll('input').forEach(i => i.required = true);
+    fields.querySelectorAll('input').forEach(function (i) { i.required = true; });
   } else {
     fields.style.display = 'none';
-    fields.querySelectorAll('input').forEach(i => i.required = false);
+    fields.querySelectorAll('input').forEach(function (i) { i.required = false; });
   }
 }
 </script>

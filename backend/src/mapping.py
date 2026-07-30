@@ -309,8 +309,7 @@ def build_mapping_prompt(
         '"...", "transformation_type": "expression", '
         '"polars_expression": "col(\'source_col\').cast(pl.Int64)", '
         '"tests": ["not_null", "unique"], '
-        '"evidence_ids": ["..."], "business_rule_ids": ["..."], '
-        '"confidence": 0.95}]}. '
+        '"evidence_ids": ["..."], "business_rule_ids": ["..."]}]}. '
         "tests must be an array of plain strings, not objects. "
         "For per-row expressions use transformation_type=expression with valid "
         "Polars syntax. Available globals: pl, col, when, concat, coalesce, null, "
@@ -430,6 +429,12 @@ def _normalize_polars_expression(expression: str | None) -> str | None:
         r".str.extract(\1)",
         expression,
     )
+    # strict_cast fails on type mismatches; use non-strict cast instead.
+    expression = re.sub(
+        r"\.strict_cast\(([^()]+)\)",
+        r".cast(\1, strict=False)",
+        expression,
+    )
     return expression
 
 
@@ -472,7 +477,6 @@ def parse_llm_mapping_response(
                 business_rule_ids=[
                     uuid.UUID(x) for x in raw.get("business_rule_ids", [])
                 ],
-                confidence=raw.get("confidence"),
             )
         )
     return mappings
@@ -593,7 +597,6 @@ def propose_mapping_spec(
             "tests": m.tests,
             "evidence_ids": [str(eid) for eid in m.evidence_ids],
             "business_rule_ids": [str(rid) for rid in m.business_rule_ids],
-            "confidence": m.confidence,
         }
         for m in proposed
     ]

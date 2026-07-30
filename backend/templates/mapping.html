@@ -3,92 +3,188 @@
 {% block title %}Review mapping - Pipeline of Pipelines{% endblock %}
 
 {% block content %}
-<h1>Review mapping</h1>
+<div class="layout-with-sidebar">
+  <div class="layout-main">
+    <h1>Review mapping</h1>
 
-<div class="card">
-  <h2>Discovered source tables</h2>
-  <p class="muted">These exact files, sheets, ranges, and parser decisions will be used when the pipeline runs.</p>
-  {% if source_tables %}
-  <div class="table-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th>Source</th>
-          <th>Location</th>
-          <th>Header</th>
-          <th>Rows</th>
-          <th>Confidence</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for table in source_tables %}
-        <tr>
-          <td>
-            <strong>{{ table.display_name }}</strong><br>
-            <span class="muted">{{ table.original_filename }}</span>
-          </td>
-          <td>
-            {% if table.location.sheet_name %}{{ table.location.sheet_name }}{% endif %}
-            {% if table.location.cell_range %}!{{ table.location.cell_range }}{% else %}CSV{% endif %}
-          </td>
-          <td>Row {{ table.location.header_row }}</td>
-          <td>{{ table.row_count }}</td>
-          <td>{{ "%.0f"|format(table.confidence * 100) }}%</td>
-        </tr>
+    <div class="card">
+      <h2>Discovered source tables</h2>
+      <p class="muted">These exact files, sheets, ranges, and parser decisions will be used when the pipeline runs.</p>
+      {% if source_tables %}
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Location</th>
+              <th>Header</th>
+              <th>Rows</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for table in source_tables %}
+            <tr>
+              <td>
+                <strong>{{ table.display_name }}</strong><br>
+                <span class="muted">{{ table.original_filename }}</span>
+              </td>
+              <td>
+                {% if table.location.sheet_name %}{{ table.location.sheet_name }}{% endif %}
+                {% if table.location.cell_range %}!{{ table.location.cell_range }}{% else %}CSV{% endif %}
+              </td>
+              <td>Row {{ table.location.header_row }}</td>
+              <td>{{ table.row_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="muted">No tabular sources were catalogued.</p>
+      {% endif %}
+    </div>
+
+    {% if parse_warnings %}
+    <div class="card warning-panel" role="alert">
+      <h2>Parsing warnings</h2>
+      <p>Review these warnings before approving the mapping.</p>
+      <ul class="warning-list">
+        {% for warning in parse_warnings %}
+        <li class="warning-{{ warning.severity }}">
+          <strong>{{ warning.source }}: {{ warning.code }}</strong>
+          — {{ warning.message }}
+          {% if warning.location %}<span class="muted">({{ warning.location }})</span>{% endif %}
+        </li>
         {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="muted">No tabular sources were catalogued.</p>
-  {% endif %}
-</div>
+      </ul>
+    </div>
+    {% endif %}
 
-{% if parse_warnings %}
-<div class="card warning-panel" role="alert">
-  <h2>Parsing warnings</h2>
-  <p>Review these warnings before approving the mapping.</p>
-  <ul class="warning-list">
-    {% for warning in parse_warnings %}
-    <li class="warning-{{ warning.severity }}">
-      <strong>{{ warning.source }}: {{ warning.code }}</strong>
-      — {{ warning.message }}
-      {% if warning.location %}<span class="muted">({{ warning.location }})</span>{% endif %}
-    </li>
+    <h2>Proposed mapping</h2>
+    {% if generated_at %}<p class="timestamp">Generated {{ generated_at }}</p>{% endif %}
+
+    {% for table_name, columns in columns_by_table.items() %}
+    <div class="card">
+      <div class="card-header">
+        <h3>{{ table_name }}</h3>
+      </div>
+      <div class="table-scroll">
+        <table class="mapping-table">
+          <thead>
+            <tr>
+              <th>Target column</th>
+              <th>Source</th>
+              <th>Type</th>
+              <th>Expression</th>
+              <th>Tests</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for col in columns %}
+            {% set tc = target_column_info.get((table_name, col.target_column)) %}
+            <tr>
+              <td class="col-target">
+                <strong>{{ col.target_column }}</strong>
+                {% if tc %}
+                <div class="col-meta">
+                  {% if tc.dtype %}<span class="dtype-label">{{ tc.dtype }}</span>{% endif %}
+                  {% if tc.required %}<span class="badge badge-required">required</span>{% endif %}
+                </div>
+                {% endif %}
+              </td>
+              <td class="col-source">
+                {% if col.transformation_type == "lookup" %}
+                  Lookup <span class="muted">via</span>
+                  {% if col.lookup_source_table %}{{ col.lookup_source_table }}{% endif %}
+                  {% if col.lookup_key and col.lookup_value %}({{ col.lookup_key }} → {{ col.lookup_value }}){% endif %}
+                {% elif col.transformation_type == "aggregation" %}
+                  Aggregate <span class="muted">from</span>
+                  {% if col.aggregation_source_table %}{{ col.aggregation_source_table }}{% endif %}
+                  {% if col.aggregation_group_key %}<span class="muted">grouped by</span> {{ col.aggregation_group_key }}{% endif %}
+                {% elif col.transformation_type == "filter" %}
+                  Filter
+                {% else %}
+                  {% for src in col.source_columns %}
+                    <span class="source-ref">{{ src.get("source_table", "") }}<wbr>::<wbr>{{ src.get("source_column", "") }}</span>{% if not loop.last %}, {% endif %}
+                  {% endfor %}
+                {% endif %}
+              </td>
+              <td class="col-type">
+                <span class="badge badge-type-{{ col.transformation_type or "expression" }}">
+                  {{ col.transformation_type or "expression" }}
+                </span>
+              </td>
+              <td class="col-expr">
+                {% if col.polars_expression %}
+                <code class="expr-code">{{ col.polars_expression }}</code>
+                {% elif col.filter_expression %}
+                <code class="expr-code">{{ col.filter_expression }}</code>
+                {% elif col.transformation_logic %}
+                <span class="muted">{{ col.transformation_logic }}</span>
+                {% else %}
+                <span class="muted">—</span>
+                {% endif %}
+              </td>
+              <td class="col-tests">
+                {% if col.tests %}
+                  <div class="test-list">
+                  {% for test in col.tests %}
+                    <span class="badge badge-test">{{ test }}</span>
+                  {% endfor %}
+                  </div>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
     {% endfor %}
-  </ul>
-</div>
-{% endif %}
 
-<div class="card">
-  <h2>Proposed mapping</h2>
-  <p class="muted">This is the raw mapping JSON produced by the LLM. Review it before generating code and running the pipeline.</p>
-  <pre class="code-editor">{{ mapping_json }}</pre>
-</div>
+    <div class="card">
+      <details>
+        <summary style="cursor:pointer;font-weight:600;">Raw mapping JSON</summary>
+        <pre class="code-editor" style="min-height:200px;">{{ mapping_json }}</pre>
+      </details>
+    </div>
 
-<div class="card">
-  <form
-    hx-post="/mapping/{{ spec_id }}/confirm"
-    hx-target="#mapping-result"
-    hx-swap="innerHTML"
-    hx-indicator="#mapping-spinner"
-    style="display:inline;"
-  >
-    <button class="btn btn-success" type="submit">
-      <span id="mapping-spinner" class="spinner" style="display:none;"></span>
-      Confirm & run pipeline
-    </button>
-  </form>
+    <div class="card">
+      <form
+        hx-post="/mapping/{{ spec_id }}/confirm"
+        hx-target="#mapping-result"
+        hx-swap="innerHTML"
+        hx-indicator="#mapping-spinner"
+        style="display:inline;"
+      >
+        <button class="btn btn-success" type="submit">
+          <span id="mapping-spinner" class="spinner" style="display:none;"></span>
+          Confirm &amp; run pipeline
+        </button>
+      </form>
 
-  <form
-    hx-post="/mapping/{{ spec_id }}/reject"
-    hx-target="#mapping-result"
-    hx-swap="innerHTML"
-    style="display:inline; margin-left: 0.5rem;"
-  >
-    <button class="btn btn-danger" type="submit">Reject & re-upload</button>
-  </form>
+      <form
+        hx-post="/mapping/{{ spec_id }}/reject"
+        hx-target="#mapping-result"
+        hx-swap="innerHTML"
+        hx-indicator="#mapping-spinner"
+        style="display:inline; margin-left: 0.5rem;"
+      >
+        <button class="btn btn-danger" type="submit">
+          Reject &amp; re-upload
+        </button>
+      </form>
 
-  <div id="mapping-result" style="margin-top: 1rem;"></div>
+      <div id="mapping-result" style="margin-top: 1rem;"></div>
+    </div>
+  </div>
+
+  <div class="layout-sidebar">
+    {% with sidebar_id = "mapping", page = "mapping", page_id = spec_id %}
+      {% include "partials/chat_sidebar.html" %}
+    {% endwith %}
+  </div>
 </div>
 {% endblock %}

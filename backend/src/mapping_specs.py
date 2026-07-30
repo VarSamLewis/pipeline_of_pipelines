@@ -48,7 +48,6 @@ def _column_to_dict(column: MappingColumn) -> dict[str, Any]:
         "business_rule_ids": [
             str(value) for value in column.business_rule_ids
         ],
-        "confidence": column.confidence,
         "sort_order": column.sort_order,
     }
 
