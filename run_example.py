@@ -1,9 +1,9 @@
-"""Single-script clean rerun of the packaging-client example.
+"""Single-script clean rerun of the BOM product example.
 
 This script:
 1. Ensures Postgres is running.
 2. Resets the database and cleans generated artifacts.
-3. Generates a few thousand messy packaging records plus lookups/rules.
+3. Generates a few thousand messy product records plus lookups/rules.
 4. Ingests the client folder, creates a mapping spec, and asks the LLM to propose
    mappings.
 5. Applies deterministic human-review fixes.
@@ -43,8 +43,8 @@ OBJECT_STORE_DIR = PROJECT_ROOT / "data" / "object-store"
 OUTPUT_FOLDERS_DIR = PROJECT_ROOT / "data" / "output-folders"
 TARGET_SCHEMAS_DIR = PROJECT_ROOT / "data" / "target-schemas"
 
-CLIENT_CODE = "packaging_client"
-DEFAULT_ROW_COUNT = 3000
+CLIENT_CODE = "bom_client"
+DEFAULT_ROW_COUNT = 2000
 
 random.seed(42)
 
@@ -133,122 +133,130 @@ def clean_artifacts() -> None:
 # ---------------------------------------------------------------------------
 
 MATERIAL_CODES = {
-    "PL01": "Plastic",
-    "PL02": "Plastic",
-    "GL01": "Glass",
-    "AL01": "Aluminium",
-    "ST01": "Steel",
-    "PC01": "Paper/card",
-    "FB01": "Fibre-based composite",
-    "WD01": "Wood",
-    "OT01": "Other",
+    "AL": "Aluminium",
+    "ST": "Steel",
+    "PL": "Plastic",
+    "CF": "Carbon Fibre",
+    "TI": "Titanium",
+    "CU": "Copper",
+    "RB": "Rubber",
+    "GL": "Glass",
+    "WD": "Wood",
+    "CE": "Ceramic",
 }
 
-SITE_NATIONS = {
-    "SITE-A": "England",
-    "SITE-B": "Scotland",
-    "SITE-C": "Wales",
-    "SITE-D": "Northern Ireland",
-    "SITE-E": "England",
+PRODUCT_LINES = {
+    "ELEC": "Electronics",
+    "MECH": "Mechanics",
+    "HYDR": "Hydraulics",
+    "PNEU": "Pneumatics",
+    "STRUC": "Structural",
+    "SOFT": "Software",
 }
 
-PACKAGING_TYPES = [
-    ("Primary Bottle", "Primary"),
-    ("primary jar", "Primary"),
-    ("Secondary Carton", "Secondary"),
-    ("secondary tray", "Secondary"),
-    ("Shipment Pallet", "Shipment"),
-    ("tertiary crate", "Tertiary"),
-    ("Tertiary Wrap", "Tertiary"),
+PRODUCT_NAMES = [
+    ("Widget 3000", "Widget"),
+    ("Bracket Assembly", "Bracket"),
+    ("Control Module X1", "Control Board"),
+    ("Hydraulic Pump P-50", "Hydraulic Pump"),
+    ("Sensor Array", "Sensor"),
+    ("Actuator Rod", "Actuator"),
+    ("Mounting Plate", "Mount Bracket"),
+    ("Gearbox Kit", "Gearbox"),
+    ("Heat Sink", "Heatsink"),
+    ("Cable Harness", "Cable"),
+    ("Seal Ring Kit", "Seal Kit"),
+    ("Piston Head", "Piston"),
+    ("Bus Bar", "Busbar"),
+    ("Filter Cartridge", "Filter"),
+    ("Throttle Valve", "Valve"),
+    ("Widgit Pro", "Widget"),  # deliberate misspelling in name
 ]
 
-ACTIVITIES = [
-    ("Supplied", "Supplied as goods"),
-    ("supplied", "Supplied as goods"),
-    ("Import", "Imported"),
-    ("Imported", "Imported"),
-    ("Export", "Exported"),
-    ("Exported", "Exported"),
+STATUS_VALUES = [
+    ("active", "Active"),
+    ("ACTIVE", "Active"),
+    ("Active", "Active"),
+    ("discontinued", "Discontinued"),
+    ("DISCONTINUED", "Discontinued"),
+    ("discont", "Discontinued"),
+    ("pending", "Pending"),
+    ("PENDING", "Pending"),
+    ("in dev", "Pending"),
 ]
 
 DATE_FORMATS = [
     "%d/%m/%Y",
     "%Y-%m-%d",
+    "%Y%m%d",
     "%d-%b-%Y",
 ]
 
-PERIOD_FORMATS = [
-    "2024-Q1",
-    "Q2 2024",
-    "2024-Q3",
-    "Q4 2024",
-]
-
-UNITS = ["kg", "tonnes"]
+WEIGHT_UNITS = ["kg", "g"]
 
 
 FIELDNAMES = [
-    "Record ID",
-    "Period",
-    "Org Code",
-    "Site Ref",
-    "Packaging Material Code",
-    "Packaging Type",
-    "Activity Type",
+    "SKU",
+    "Product Name",
+    "Product Line Code",
     "Weight",
-    "Unit",
-    "Record Date",
+    "Weight Unit",
+    "Material Code",
+    "Component Qty",
+    "Lead Time Days",
+    "Status",
+    "Last Updated",
     "Data Quality Flag",
     "Comment",
 ]
 
 
 def make_source_rows(count: int) -> list[dict[str, str]]:
-    """Create messy packaging source rows with deterministic noise."""
+    """Create messy BOM product source rows with deterministic noise."""
     rows: list[dict[str, str]] = []
-    base_date = datetime(2024, 1, 15)
+    base_date = datetime(2025, 1, 15)
 
     for i in range(1, count + 1):
+        name_variant, _ = random.choice(PRODUCT_NAMES)
         material_code = random.choice(list(MATERIAL_CODES.keys()))
-        packaging_type, _packaging_class = random.choice(PACKAGING_TYPES)
-        activity_raw, _activity_normalised = random.choice(ACTIVITIES)
-        weight = round(random.uniform(50, 5000), 2)
-        unit = random.choice(UNITS)
-        site = random.choice(list(SITE_NATIONS.keys()))
-        period = random.choice(PERIOD_FORMATS)
+        line_code = random.choice(list(PRODUCT_LINES.keys()))
+        weight = round(random.uniform(0.05, 250.0), 3)
+        unit = random.choice(WEIGHT_UNITS)
+        status_raw, _ = random.choice(STATUS_VALUES)
+        component_qty = random.randint(0, 50)
+        lead_time = random.randint(1, 120)
         date_fmt = random.choice(DATE_FORMATS)
-        record_date = (base_date + timedelta(days=random.randint(0, 360))).strftime(
+        record_date = (base_date + timedelta(days=random.randint(0, 540))).strftime(
             date_fmt
         )
 
         row: dict[str, str] = {
-            "Record ID": f"REC-{i:04d}",
-            "Period": period,
-            "Org Code": "ORG-12345",
-            "Site Ref": site,
-            "Packaging Material Code": material_code,
-            "Packaging Type": packaging_type,
-            "Activity Type": activity_raw,
+            "SKU": f"SKU-{i:05d}",
+            "Product Name": name_variant,
+            "Product Line Code": line_code,
             "Weight": str(weight),
-            "Unit": unit,
-            "Record Date": record_date,
+            "Weight Unit": unit,
+            "Material Code": material_code,
+            "Component Qty": str(component_qty),
+            "Lead Time Days": str(lead_time),
+            "Status": status_raw,
+            "Last Updated": record_date,
             "Data Quality Flag": "VALID",
             "Comment": "",
         }
         rows.append(row)
 
-    # Inject deterministic noise at low, fixed rates so the example stays messy
-    # but remains parseable.
+    # Inject deterministic noise at low, fixed rates.
     for i, row in enumerate(rows):
         bucket = i % 100
         if bucket == 0:
-            row["Period"] = "2024Q2"  # missing dash but still parseable
+            row["Product Line Code"] = "elec"  # lowercase
         elif bucket == 2:
-            row["Packaging Type"] = "PRIMARY bottle"  # mixed case
+            row["Weight Unit"] = "G"  # uppercase g
         elif bucket == 4:
-            row["Unit"] = "KG"  # uppercase
+            row["Status"] = "Discont"  # shorthand
         elif bucket == 6:
-            row["Record Date"] = "15-Mar-2024"  # different standard format
+            row["Last Updated"] = "20250115"  # compact format
         elif bucket == 8:
             row["Data Quality Flag"] = "TEST"
             row["Comment"] = "test record - exclude"
@@ -257,15 +265,17 @@ def make_source_rows(count: int) -> list[dict[str, str]]:
         elif bucket == 12:
             row["Weight"] = ""  # missing weight
         elif bucket == 14:
-            row["Packaging Material Code"] = "UNKNOWN"  # unknown material
+            row["Material Code"] = "XX"  # unknown material
         elif bucket == 16:
-            row["Site Ref"] = "SITE-Z"  # unknown site
+            row["Component Qty"] = "-1"  # negative quantity
+        elif bucket == 18:
+            row["Product Line Code"] = "ZZ"  # unknown line code
 
     return rows
 
 
 def write_source_csv(rows: list[dict[str, str]]) -> None:
-    """Write the main packaging source CSV."""
+    """Write the main product source CSV."""
     path = EXAMPLE_DIR / "packaging_data.csv"
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
@@ -277,110 +287,113 @@ def write_material_reference() -> None:
     """Write material code lookup table."""
     path = EXAMPLE_DIR / "material_reference.csv"
     with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["internal_code", "ea_material_name"])
+        writer = csv.DictWriter(f, fieldnames=["material_code", "material_name"])
+        writer.writeheader()
         for code, name in MATERIAL_CODES.items():
-            writer.writerow([code, name])
+            writer.writerow({"material_code": code, "material_name": name})
 
 
-def write_site_locations() -> None:
-    """Write site-to-nation lookup table."""
-    path = EXAMPLE_DIR / "site_locations.csv"
+def write_product_lines() -> None:
+    """Write product line code lookup table."""
+    path = EXAMPLE_DIR / "product_lines.csv"
     with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["site_ref", "nation"])
-        for site, nation in SITE_NATIONS.items():
-            writer.writerow([site, nation])
+        writer = csv.DictWriter(f, fieldnames=["line_code", "line_name"])
+        writer.writeheader()
+        for code, name in PRODUCT_LINES.items():
+            writer.writerow({"line_code": code, "line_name": name})
 
 
 def write_requirements_text() -> None:
-    """Write a plain-text requirements document for the EA submission."""
-    text = """Environment Agency Packaging Data Submission Requirements
+    """Write a plain-text requirements document for the BOM product data."""
+    text = """Product BOM Data Requirements
 
-Target schema: packaging_submission
+Target table: product_bom
 
-submission_id (String, required, unique):
-    A unique identifier for each record. Combine Record ID, reporting period,
-    site_id and packaging material code, separated by hyphens.
+sku (String, required, unique):
+    A unique product SKU identifier. Map directly from 'SKU', trim
+    whitespace, and convert to uppercase.
 
-reporting_period (String, required):
-    Normalise all period values to the format YYYY-QN, e.g. 2024-Q1.
-    Acceptable source formats include '2024-Q1', 'Q2 2024', '2024Q2'.
-    Use case-insensitive regex matching and always output 'YYYY-QN'.
+product_name (String, required):
+    Product name. Trim whitespace and convert to title case.
+    Known correction: 'Widgit' must be corrected to 'Widget'.
 
-organisation_id (String, required):
-    Map directly from 'Org Code'.
+product_line (String, required):
+    Lookup 'Product Line Code' in product_lines.csv keyed on
+    line_code and return line_name.
+    Allowed values: Electronics, Mechanics, Hydraulics, Pneumatics,
+    Structural, Software.
+    If a code is not found, default to 'Other'.
 
-site_id (String, required):
-    Map directly from 'Site Ref'.
+weight_kg (Float64, required):
+    Convert Weight to kilograms. If Weight Unit is 'g', divide by 1000.
+    If Weight Unit is 'kg', keep the value as-is. Round to 3 decimal
+    places. Missing weights should result in null and fail validation.
 
-nation (String, required):
-    Lookup 'Site Ref' in site_locations.csv and return the nation column.
-    Allowed values: England, Scotland, Wales, Northern Ireland.
-    If a site is not found, default to 'England'.
+primary_material (String, required):
+    Lookup 'Material Code' in material_reference.csv keyed on
+    material_code returning material_name.
+    Allowed values: Aluminium, Steel, Plastic, Carbon Fibre, Titanium,
+    Copper, Rubber, Glass, Wood, Ceramic.
+    If a code is not found, default to 'Plastic'.
 
-packaging_material (String, required):
-    Lookup 'Packaging Material Code' in material_reference.csv and return
-    ea_material_name. Allowed values: Plastic, Glass, Aluminium, Steel,
-    Paper/card, Fibre-based composite, Wood, Other.
+component_qty (Int64):
+    Number of sub-components. Map directly from 'Component Qty'.
+    Negative values must be set to null. Missing values remain null.
 
-packaging_class (String, required):
-    Normalise 'Packaging Type' to one of: Primary, Secondary, Shipment,
-    Tertiary. Case-insensitive match on the first word. 'tertiary crate'
-    maps to 'Tertiary'.
+lead_time_days (Int64):
+    Manufacturing lead time in calendar days. Map directly from
+    'Lead Time Days'. Missing values remain null.
 
-activity (String, required):
-    Normalise 'Activity Type' case-insensitively:
-    'supplied' -> 'Supplied as goods', 'import'/'imported' -> 'Imported',
-    'export'/'exported' -> 'Exported'.
+status (String, required):
+    Normalise 'Status' case-insensitively to one of:
+    'active' / 'ACTIVE' -> 'Active'
+    'discontinued' / 'DISCONTINUED' / 'discont' -> 'Discontinued'
+    'pending' / 'PENDING' / 'in dev' -> 'Pending'
+    Anything else defaults to 'Pending'.
 
-weight_tonnes (Float64, required):
-    Convert Weight to tonnes. If Unit is 'kg' or 'KG', divide by 1000.
-    If Unit is 'tonnes', keep the value as-is. Missing weights should
-    result in null and fail validation.
-
-submission_date (Date):
-    Normalise 'Record Date' to a date. Try formats d/m/Y, Y-m-d, d-M-Y
-    using coalesce.
+last_updated (Date):
+    Normalise 'Last Updated' to a date. Try formats:
+    d/m/Y, Y-m-d, YYYYMMDD, d-M-Y using coalesce.
 
 Data quality rules:
 - Exclude rows where Data Quality Flag is 'TEST' or 'DUPLICATE'.
-- Exclude rows with unknown sites or materials if they cannot be defaulted.
+- Exclude rows with missing SKU or product_name.
 """
     (EXAMPLE_DIR / "ea_submission_requirements.txt").write_text(text, encoding="utf-8")
 
 
 def write_business_rules_email() -> None:
     """Write an email containing additional business rules."""
-    email_text = """From: compliance@example.com
+    email_text = """From: engineering@example.com
 To: data-team@example.com
-Subject: EA packaging submission rules for 2024
+Subject: BOM product data rules for manufacturing catalog
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 
 Hi team,
 
-Please ensure the 2024 packaging submission follows these business rules:
+Please ensure the BOM product data follows these business rules:
 
-1. All weights must be reported in tonnes. If the source unit is kilograms,
-   divide by 1000.
+1. All weights must be reported in kilograms. If the source unit is 'g',
+   divide by 1000. Round final weight to 3 decimal places.
 
-2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.
-   Treat "transport" as Tertiary.
+2. Product status must be one of Active, Discontinued, or Pending.
+   Treat "in dev" as Pending and "discont" as Discontinued.
 
-3. Activity "supplied" should be normalised to "Supplied as goods".
+3. Product line is determined by line code using the product_lines.csv
+   lookup. Any code not in the lookup should default to "Other".
 
-4. Filter out any rows flagged as TEST or DUPLICATE in the Data Quality Flag
-   column before submission.
+4. Filter out any rows flagged as TEST or DUPLICATE in the Data Quality
+   Flag column before loading.
 
-5. Nation is determined by site reference using the site_locations.csv lookup.
-   Any site not in the lookup should default to England.
+5. Material code is determined by material_reference.csv lookup. Any
+   unknown material codes should default to "Plastic".
 
-6. The submission_id should be a concatenation of Record ID, reporting period,
-   site_id and packaging material code, separated by hyphens.
+6. The product name must be title-cased. There's a known misspelling:
+   "Widgit" should always be corrected to "Widget".
 
 Thanks,
-Compliance
+Engineering
 """
     (EXAMPLE_DIR / "business_rules.eml").write_text(email_text, encoding="utf-8")
 
@@ -389,127 +402,118 @@ def write_target_schema() -> None:
     """Write the supplied target schema JSON."""
     schema = {
         "client_code": CLIENT_CODE,
-        "name": "ea_packaging_submission",
-        "description": "UK Environment Agency EPR packaging data submission",
+        "name": "product_bom",
+        "description": "Product Bill of Materials data for manufacturing catalog",
         "tables": [
             {
-                "name": "packaging_submission",
-                "description": "Curated packaging records ready for EA submission",
+                "name": "product_bom",
+                "description": "Curated product BOM records with materials, weights and components",
                 "columns": [
                     {
-                        "name": "submission_id",
+                        "name": "sku",
                         "dtype": "String",
-                        "description": (
-                            "Unique record identifier. Build with concat of "
-                            "Record ID, Period, Site Ref and Packaging Material Code."
-                        ),
+                        "description": "Unique product SKU identifier. Direct map from SKU column, upper-cased and trimmed.",
                         "required": True,
                         "unique": True,
                     },
                     {
-                        "name": "reporting_period",
+                        "name": "product_name",
                         "dtype": "String",
                         "description": (
-                            "Normalised reporting period YYYY-QN. Source formats: "
-                            "'2024-Q1', 'Q2 2024', '2024Q3'. Use case-insensitive "
-                            "regex matching and always output 'YYYY-QN'."
+                            "Product name in title case. Trim whitespace and normalise "
+                            "to title case. Apply manual override for known misspellings "
+                            "(e.g. 'Widget' should never be 'Widgit')."
                         ),
                         "required": True,
                     },
                     {
-                        "name": "organisation_id",
+                        "name": "product_line",
                         "dtype": "String",
                         "description": (
-                            "Organisation identifier. Direct map from Org Code."
-                        ),
-                        "required": True,
-                    },
-                    {
-                        "name": "site_id",
-                        "dtype": "String",
-                        "description": "Site reference. Direct map from Site Ref.",
-                        "required": True,
-                    },
-                    {
-                        "name": "nation",
-                        "dtype": "String",
-                        "description": (
-                            "Nation where packaging was handled. Use a lookup "
-                            "transformation with site_locations.csv keyed on "
-                            "site_ref returning nation. Source column is Site Ref."
+                            "Product line name. Use a lookup transformation with "
+                            "product_lines.csv keyed on line_code returning line_name."
                         ),
                         "required": True,
                         "allowed_values": [
-                            "England",
-                            "Scotland",
-                            "Wales",
-                            "Northern Ireland",
+                            "Electronics",
+                            "Mechanics",
+                            "Hydraulics",
+                            "Pneumatics",
+                            "Structural",
+                            "Software",
                         ],
                     },
                     {
-                        "name": "packaging_material",
-                        "dtype": "String",
-                        "description": (
-                            "EA packaging material category. Use a lookup "
-                            "transformation with material_reference.csv keyed on "
-                            "internal_code returning ea_material_name. "
-                            "Source column is Packaging Material Code."
-                        ),
-                        "required": True,
-                        "allowed_values": [
-                            "Plastic",
-                            "Glass",
-                            "Aluminium",
-                            "Steel",
-                            "Paper/card",
-                            "Fibre-based composite",
-                            "Wood",
-                            "Other",
-                        ],
-                    },
-                    {
-                        "name": "packaging_class",
-                        "dtype": "String",
-                        "description": (
-                            "Packaging class. Map case-insensitively from the "
-                            "first word of Packaging Type: Primary, Secondary, "
-                            "Shipment, Tertiary."
-                        ),
-                        "required": True,
-                        "allowed_values": [
-                            "Primary",
-                            "Secondary",
-                            "Shipment",
-                            "Tertiary",
-                        ],
-                    },
-                    {
-                        "name": "activity",
-                        "dtype": "String",
-                        "description": (
-                            "Packaging activity. Normalise case-insensitively: "
-                            "supplied -> 'Supplied as goods', "
-                            "import/imported -> 'Imported', "
-                            "export/exported -> 'Exported'."
-                        ),
-                        "required": True,
-                    },
-                    {
-                        "name": "weight_tonnes",
+                        "name": "weight_kg",
                         "dtype": "Float64",
                         "description": (
-                            "Weight in tonnes. If Unit is 'kg' or 'KG' divide "
-                            "Weight by 1000, otherwise keep Weight as tonnes. "
-                            "Cast to Float64."
+                            "Product weight in kilograms. If Weight Unit is 'g' divide "
+                            "Weight by 1000, otherwise keep as kg. Cast to Float64."
                         ),
                         "required": True,
                     },
                     {
-                        "name": "submission_date",
+                        "name": "primary_material",
+                        "dtype": "String",
+                        "description": (
+                            "Primary manufacturing material. Use a lookup transformation "
+                            "with material_reference.csv keyed on material_code returning "
+                            "material_name. Source column is Material Code."
+                        ),
+                        "required": True,
+                        "allowed_values": [
+                            "Aluminium",
+                            "Steel",
+                            "Plastic",
+                            "Carbon Fibre",
+                            "Titanium",
+                            "Copper",
+                            "Rubber",
+                            "Glass",
+                            "Wood",
+                            "Ceramic",
+                        ],
+                    },
+                    {
+                        "name": "component_qty",
+                        "dtype": "Int64",
+                        "description": (
+                            "Number of sub-components / parts in the BOM. "
+                            "Cast to Int64. Negative values should be set to null."
+                        ),
+                        "required": False,
+                    },
+                    {
+                        "name": "lead_time_days",
+                        "dtype": "Int64",
+                        "description": (
+                            "Manufacturing lead time in calendar days. Cast to Int64."
+                        ),
+                        "required": False,
+                    },
+                    {
+                        "name": "status",
+                        "dtype": "String",
+                        "description": (
+                            "Product lifecycle status. Normalise case-insensitively: "
+                            "'active'/'ACTIVE' -> 'Active', "
+                            "'discontinued'/'DISCONTINUED'/'discont' -> 'Discontinued', "
+                            "'pending'/'PENDING'/'in dev' -> 'Pending'. "
+                            "Anything else defaults to 'Pending'."
+                        ),
+                        "required": True,
+                        "allowed_values": [
+                            "Active",
+                            "Discontinued",
+                            "Pending",
+                        ],
+                    },
+                    {
+                        "name": "last_updated",
                         "dtype": "Date",
                         "description": (
-                            "Date of record. Try formats '%d/%m/%Y', '%Y-%m-%d', "
-                            "'%d-%b-%Y' using coalesce."
+                            "Date the product record was last updated. Try formats "
+                            "'%d/%m/%Y', '%Y-%m-%d', '%Y%m%d', '%d-%b-%Y' using coalesce."
                         ),
                         "required": False,
                     },
@@ -523,17 +527,17 @@ def write_target_schema() -> None:
 
 
 def generate_fixtures(row_count: int) -> None:
-    """Generate the packaging_client example files."""
-    print(f"\nGenerating {row_count} packaging example rows...", flush=True)
+    """Generate the BOM product example files."""
+    print(f"\nGenerating {row_count} BOM product example rows...", flush=True)
     EXAMPLE_DIR.mkdir(parents=True, exist_ok=True)
     rows = make_source_rows(row_count)
     write_source_csv(rows)
     write_material_reference()
-    write_site_locations()
+    write_product_lines()
     write_requirements_text()
     write_business_rules_email()
     write_target_schema()
-    print(f"Generated packaging example in {EXAMPLE_DIR}", flush=True)
+    print(f"Generated BOM example in {EXAMPLE_DIR}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +558,7 @@ from db_ops import (  # noqa: E402
 )
 from file_ops import LocalObjectStore, load_target_schema  # noqa: E402
 from mapping import propose_mapping_spec  # noqa: E402
-from models import BusinessRule, ExtractedEvidence, MappingColumn, RawFile  # noqa: E402
+from models import BusinessRule, ExtractedEvidence, RawFile  # noqa: E402
 from pipeline import load_target_schema_from_spec, run_validation_tests  # noqa: E402
 
 
@@ -565,9 +569,9 @@ def ensure_client() -> uuid.UUID:
         if client is None:
             client = create_client(
                 session,
-                name="Packaging Client Ltd",
+                name="BOM Manufacturing Ltd",
                 code=CLIENT_CODE,
-                metadata={"sector": "packaging", "regulator": "EA"},
+                metadata={"sector": "manufacturing", "domain": "bom"},
             )
             print(f"Created client {client.id} ({CLIENT_CODE})", flush=True)
         else:
@@ -576,7 +580,7 @@ def ensure_client() -> uuid.UUID:
 
 
 def ingest_folder(client_id: uuid.UUID) -> dict[str, object]:
-    """Ingest the packaging client folder."""
+    """Ingest the BOM product client folder."""
     object_store = LocalObjectStore(str(OBJECT_STORE_DIR))
     with get_session() as session:
         result = ingest_client_folder(
@@ -584,7 +588,7 @@ def ingest_folder(client_id: uuid.UUID) -> dict[str, object]:
             client_id=client_id,
             folder_path=str(EXAMPLE_DIR),
             object_store=object_store,
-            label="EA packaging submission 2024",
+            label="BOM product catalog 2025",
         )
         print(f"Ingested batch {result.ingestion_batch_id}", flush=True)
         print(f"  raw files: {len(result.raw_file_ids)}", flush=True)
@@ -607,104 +611,13 @@ def create_spec(client_id: uuid.UUID, raw_file_ids: list[uuid.UUID]) -> uuid.UUI
             client_id=client_id,
             source_raw_file_ids=raw_file_ids,
             target_schema=target_schema,
-            description="EA EPR packaging submission mapping",
+            description="BOM product catalog mapping",
         )
         print(f"Created mapping spec {spec.id}", flush=True)
         return spec.id
 
 
-def _fix_mapping_columns(session: Any, spec_id: uuid.UUID) -> None:
-    """Apply human review fixes to LLM-proposed column mappings."""
-    columns = get_mapping_columns(session, spec_id)
-    for col in columns:
-        if col.target_column == "reporting_period":
-            col.polars_expression = (
-                "when(col('Period').str.contains(r'(?i)Q1'))"
-                ".then(pl.lit('2024-Q1'))"
-                ".when(col('Period').str.contains(r'(?i)Q2'))"
-                ".then(pl.lit('2024-Q2'))"
-                ".when(col('Period').str.contains(r'(?i)Q3'))"
-                ".then(pl.lit('2024-Q3'))"
-                ".when(col('Period').str.contains(r'(?i)Q4'))"
-                ".then(pl.lit('2024-Q4')).otherwise(null)"
-            )
-            col.transformation_logic = (
-                "Normalise period formats to YYYY-QN case-insensitively"
-            )
-        if col.target_column == "packaging_class":
-            col.polars_expression = (
-                "when(col('Packaging Type').str.contains(r'(?i)Primary'))"
-                ".then(pl.lit('Primary'))"
-                ".when(col('Packaging Type').str.contains(r'(?i)Secondary'))"
-                ".then(pl.lit('Secondary'))"
-                ".when(col('Packaging Type').str.contains(r'(?i)Shipment'))"
-                ".then(pl.lit('Shipment'))"
-                ".when(col('Packaging Type').str.contains(r'(?i)Tertiary'))"
-                ".then(pl.lit('Tertiary')).otherwise(null)"
-            )
-            col.transformation_logic = (
-                "Map packaging type case-insensitively to allowed class"
-            )
-        if col.target_column == "activity":
-            col.polars_expression = (
-                "when(col('Activity Type').str.strip_chars()"
-                ".str.contains(r'(?i)supplied'))"
-                ".then(pl.lit('Supplied as goods'))"
-                ".when(col('Activity Type').str.strip_chars()"
-                ".str.contains(r'(?i)import'))"
-                ".then(pl.lit('Imported'))"
-                ".when(col('Activity Type').str.strip_chars()"
-                ".str.contains(r'(?i)export'))"
-                ".then(pl.lit('Exported')).otherwise(null)"
-            )
-            col.transformation_logic = "Trim and map activity case-insensitively"
-        if col.target_column == "weight_tonnes":
-            col.polars_expression = (
-                "when(col('Unit').str.strip_chars()"
-                ".str.contains(r'(?i)^kg$'))"
-                ".then(col('Weight').cast(pl.Float64) / 1000)"
-                ".when(col('Unit').str.strip_chars()"
-                ".str.contains(r'(?i)tonnes'))"
-                ".then(col('Weight').cast(pl.Float64)).otherwise(null)"
-            )
-            col.transformation_logic = "Convert kg to tonnes, keep tonnes as-is"
-        if col.target_column == "submission_date":
-            col.polars_expression = (
-                "coalesce("
-                "col('Record Date').str.to_date('%d/%m/%Y', strict=False),"
-                "col('Record Date').str.to_date('%Y-%m-%d', strict=False),"
-                "col('Record Date').str.to_date('%d-%b-%Y', strict=False)"
-                ")"
-            )
-            col.transformation_logic = "Parse multiple date formats using coalesce"
-        session.add(col)
-    session.commit()
 
-    # Add a filter mapping for data quality flags (TEST / DUPLICATE).
-    filter_exists = any(c.target_column == "_data_quality_filter" for c in columns)
-    if not filter_exists:
-        filter_col = MappingColumn(
-            mapping_spec_id=spec_id,
-            target_table="packaging_submission",
-            target_column="_data_quality_filter",
-            source_columns_json=[
-                {
-                    "source_table": "packaging_data.csv",
-                    "source_column": "Data Quality Flag",
-                }
-            ],
-            transformation_logic="Exclude rows flagged TEST or DUPLICATE",
-            transformation_type="filter",
-            filter_expression=(
-                "~col('Data Quality Flag').str.strip_chars()"
-                ".str.to_uppercase().is_in(['TEST', 'DUPLICATE'])"
-            ),
-            tests=[],
-            sort_order=-1,
-        )
-        session.add(filter_col)
-        session.commit()
-    print("Applied human review fixes to proposed mappings", flush=True)
 
 
 def propose(spec_id: uuid.UUID) -> None:
@@ -720,7 +633,6 @@ def propose(spec_id: uuid.UUID) -> None:
             top_k_evidence=10,
         )
         print(f"Proposed mappings for spec {spec_id}", flush=True)
-        _fix_mapping_columns(session, spec_id)
 
 
 def approve(spec_id: uuid.UUID) -> None:
@@ -749,7 +661,7 @@ def generate_and_execute(spec_id: uuid.UUID) -> Path:
 
 def _load_results_dataframe(folder_path: Path) -> pl.DataFrame:
     """Read the generated results CSV."""
-    results_path = folder_path / "packaging_submission.csv"
+    results_path = folder_path / "product_bom.csv"
     if not results_path.exists():
         results_path = folder_path / "results.csv"
     if not results_path.exists():
@@ -771,17 +683,17 @@ def analyse_results(folder_path: Path) -> None:
     print(df.head(10).to_pandas().to_string(index=False), flush=True)
 
     print("\nValue counts:", flush=True)
-    for col in ["nation", "packaging_material", "packaging_class", "activity"]:
+    for col in ["product_line", "primary_material", "status"]:
         if col in df.columns:
             print(f"\n{col}:", flush=True)
             print(df[col].value_counts().to_pandas().to_string(index=False), flush=True)
 
-    print(f"\nTotal weight (tonnes): {df['weight_tonnes'].sum():.4f}", flush=True)
+    print(f"\nTotal weight (kg): {df['weight_kg'].sum():.3f}", flush=True)
 
     mapping_spec = load_mapping_spec(uuid.UUID(folder_path.name))
     target_schema = load_target_schema_from_spec(mapping_spec)
     test_results = run_validation_tests(
-        {"packaging_submission": df}, mapping_spec["columns"], target_schema
+        {"product_bom": df}, mapping_spec["columns"], target_schema
     )
     print("\nValidation results:", flush=True)
     error_count = sum(
@@ -930,7 +842,7 @@ def show_lineage(spec_id: uuid.UUID, folder_path: Path) -> None:
 def main() -> None:
     """Run the full example end-to-end."""
     parser = argparse.ArgumentParser(
-        description="Clean rerun of the packaging-client example."
+        description="Clean rerun of the BOM product example."
     )
     parser.add_argument(
         "--rows",
@@ -957,7 +869,7 @@ def main() -> None:
     print("\n=== Done ===", flush=True)
     print(f"Latest output folder: {folder_path}", flush=True)
     for name in (
-        "packaging_submission.csv",
+        "product_bom.csv",
         "lineage_report.txt",
         "pipeline.py",
         "mapping.json",

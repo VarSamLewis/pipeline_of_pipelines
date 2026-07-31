@@ -40,6 +40,7 @@ from workflow import (
     list_clients,
     reject_mapping,
     reject_result,
+    retry_pipeline_and_execute,
 )
 
 router = APIRouter()
@@ -220,6 +221,39 @@ def mapping_confirm(
             request,
             "partials/error.html",
             {**_user_context(request, user), "message": str(exc)},
+        )
+    except RuntimeError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/pipeline_error.html",
+            {
+                **_user_context(request, user),
+                "error": str(exc),
+                "spec_id": str(spec_id),
+            },
+        )
+    return _htmx_redirect(request, f"/results/{run_id}")
+
+
+@router.post("/mapping/{spec_id}/retry")
+def mapping_retry(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    error: str = Form(default=""),
+) -> Any:
+    """Retry pipeline code generation with the runtime error as feedback."""
+    try:
+        run_id = retry_pipeline_and_execute(spec_id, error)
+    except (ValueError, RuntimeError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/pipeline_error.html",
+            {
+                **_user_context(request, user),
+                "error": str(exc),
+                "spec_id": str(spec_id),
+            },
         )
     return _htmx_redirect(request, f"/results/{run_id}")
 

@@ -1,51 +1,53 @@
-Environment Agency Packaging Data Submission Requirements
+Product BOM Data Requirements
 
-Target schema: packaging_submission
+Target table: product_bom
 
-submission_id (String, required, unique):
-    A unique identifier for each record. Combine Record ID, reporting period,
-    site_id and packaging material code, separated by hyphens.
+sku (String, required, unique):
+    A unique product SKU identifier. Map directly from 'SKU', trim
+    whitespace, and convert to uppercase.
 
-reporting_period (String, required):
-    Normalise all period values to the format YYYY-QN, e.g. 2024-Q1.
-    Acceptable source formats include '2024-Q1', 'Q2 2024', '2024Q2'.
-    Use case-insensitive regex matching and always output 'YYYY-QN'.
+product_name (String, required):
+    Product name. Trim whitespace and convert to title case.
+    Known correction: 'Widgit' must be corrected to 'Widget'.
 
-organisation_id (String, required):
-    Map directly from 'Org Code'.
+product_line (String, required):
+    Lookup 'Product Line Code' in product_lines.csv (keyed on
+    line_code) and return line_name.
+    Allowed values: Electronics, Mechanics, Hydraulics, Pneumatics,
+    Structural, Software.
+    If a code is not found, default to 'Other'.
 
-site_id (String, required):
-    Map directly from 'Site Ref'.
+weight_kg (Float64, required):
+    Convert Weight to kilograms. If Weight Unit is 'g', divide by 1000.
+    If Weight Unit is 'kg', keep the value as-is. Round to 3 decimal
+    places. Missing weights should result in null and fail validation.
 
-nation (String, required):
-    Lookup 'Site Ref' in site_locations.csv and return the nation column.
-    Allowed values: England, Scotland, Wales, Northern Ireland.
-    If a site is not found, default to 'England'.
+primary_material (String, required):
+    Lookup 'Material Code' in material_reference.csv (keyed on
+    material_code) and return material_name.
+    Allowed values: Aluminium, Steel, Plastic, Carbon Fibre, Titanium,
+    Copper, Rubber, Glass, Wood, Ceramic.
+    If a code is not found, default to 'Plastic'.
 
-packaging_material (String, required):
-    Lookup 'Packaging Material Code' in material_reference.csv and return
-    ea_material_name. Allowed values: Plastic, Glass, Aluminium, Steel,
-    Paper/card, Fibre-based composite, Wood, Other.
+component_qty (Int64):
+    Number of sub-components. Map directly from 'Component Qty'.
+    Negative values must be set to null. Missing values remain null.
 
-packaging_class (String, required):
-    Normalise 'Packaging Type' to one of: Primary, Secondary, Shipment,
-    Tertiary. Case-insensitive match on the first word. 'tertiary crate'
-    maps to 'Tertiary'.
+lead_time_days (Int64):
+    Manufacturing lead time in calendar days. Map directly from
+    'Lead Time Days'. Missing values remain null.
 
-activity (String, required):
-    Normalise 'Activity Type' case-insensitively:
-    'supplied' -> 'Supplied as goods', 'import'/'imported' -> 'Imported',
-    'export'/'exported' -> 'Exported'.
+status (String, required):
+    Normalise 'Status' case-insensitively to one of:
+    'active' / 'ACTIVE' -> 'Active'
+    'discontinued' / 'DISCONTINUED' / 'discont' -> 'Discontinued'
+    'pending' / 'PENDING' / 'in dev' -> 'Pending'
+    Anything else defaults to 'Pending'.
 
-weight_tonnes (Float64, required):
-    Convert Weight to tonnes. If Unit is 'kg' or 'KG', divide by 1000.
-    If Unit is 'tonnes', keep the value as-is. Missing weights should
-    result in null and fail validation.
-
-submission_date (Date):
-    Normalise 'Record Date' to a date. Try formats d/m/Y, Y-m-d, d-M-Y
-    using coalesce.
+last_updated (Date):
+    Normalise 'Last Updated' to a date. Try formats:
+    d/m/Y, Y-m-d, YYYYMMDD, d-M-Y using coalesce.
 
 Data quality rules:
 - Exclude rows where Data Quality Flag is 'TEST' or 'DUPLICATE'.
-- Exclude rows with unknown sites or materials if they cannot be defaulted.
+- Exclude rows with missing SKU or product_name.

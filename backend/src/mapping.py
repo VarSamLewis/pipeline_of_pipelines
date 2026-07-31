@@ -86,6 +86,35 @@ def _build_table_index(
     return index
 
 
+def _build_column_detail_text(
+    source_catalogs: list[dict[str, Any]],
+) -> str:
+    """Build a human-readable listing of each table and its column names."""
+    lines: list[str] = []
+    for table in _catalog_tables(source_catalogs):
+        filename = table.get("original_filename") or "unknown"
+        sheet = (
+            table.get("display_name")
+            or table.get("location", {}).get("sheet_name")
+            or ""
+        )
+        table_key = f"{filename}{_KEY_DELIM}{sheet}"
+        col_names: list[str] = []
+        for col in table.get("columns", []):
+            name = (
+                col.get("normalized_name")
+                or col.get("original_name")
+                or col.get("header")
+                or col.get("column")
+                or ""
+            )
+            if name:
+                col_names.append(name)
+        if col_names:
+            lines.append(f"  {table_key}: {', '.join(col_names)}")
+    return "\n".join(lines)
+
+
 def _resolve_table_key(
     table_key: str,
     tbl_index: dict[str, dict[str, Any]],
@@ -299,6 +328,8 @@ def build_mapping_prompt(
         f"{source_index_text}\n\n"
         f"Available source tables (for lookup_source_table / "
         f"aggregation_source_table):\n{table_index_text}\n\n"
+        f"Tables and their columns:\n"
+        f"{_build_column_detail_text(source_catalogs)}\n\n"
         f"Evidence retrieved from the vector database for this mapping:\n"
         f"{evidence_text}\n\n"
         f"Business rules:\n{rules_text}\n\n"
@@ -325,6 +356,11 @@ def build_mapping_prompt(
         "col('dt').str.to_date('%Y-%m-%d', strict=False), "
         "col('dt').str.to_date('%d-%b-%Y', strict=False))`. "
         "For title case use col('x').str.to_titlecase(). "
+        "For uppercase use col('x').str.to_uppercase(). "
+        "For lowercase use col('x').str.to_lowercase(). "
+        "All polars string methods use str.to_* naming (to_uppercase, "
+        "to_lowercase, to_titlecase), never Python's .upper(), .lower() "
+        "or .title(). "
         "For code lookup/replace use col('x').str.strip_chars().replace("
         "{'A': 'Alpha', 'B': 'Beta'}). "
         "str.contains is case sensitive; use inline regex flag (?i) for "
@@ -343,6 +379,9 @@ def build_mapping_prompt(
         "must be a table composite key, e.g. "
         '"lookup_source_table": "data.csv::LookupTable", "lookup_key": "prod_sku", '
         '"lookup_value": "prod_name". '
+        "lookup_key and lookup_value must be exact column names from the "
+        "lookup table (as shown in the available source columns index above). "
+        "Do not derive them from the target column name. "
         "For lookups the source_columns should reference the column in the "
         "base/source table that contains the join key, not the lookup table column. "
         "Normalise categorical values to the exact allowed_values in the target "
@@ -350,6 +389,87 @@ def build_mapping_prompt(
         "Do not invent undefined functions; do not use str.strip() or bare when()."
     )
     return [prompt, {"role": "user", "content": user_content}]
+
+
+def build_codegen_retry_prompt(
+    target_schema: TargetSchema,
+    source_catalogs: list[dict[str, Any]],
+    evidence_items: list[ExtractedEvidence],
+    business_rules: list[BusinessRule],
+    raw_file_summary: list[dict[str, Any]],
+    mapping_json: str,
+    failed_code: str,
+    error_message: str,
+) -> list[dict[str, str]]:
+    """Build a prompt asking the LLM to fix generated pipeline code."""
+    evidence_entries = [
+        f"Evidence ID {e.id}:\n{e.content[:800]}" for e in evidence_items
+    ]
+    evidence_text = "\n---\n".join(evidence_entries)
+    rules_text = "\n".join(f"- {r.rule_text}" for r in business_rules)
+
+    col_index = _build_catalog_index(source_catalogs)
+    tbl_index = _build_table_index(source_catalogs)
+    source_index_text = "\n".join(f"- {key}" for key in sorted(col_index))
+    table_index_text = "\n".join(f"- {key}" for key in sorted(tbl_index))
+
+    prompt = {
+        "role": "system",
+        "content": (
+            "You are a Polars-pipeline code generator. Given a target schema, "
+            "source catalog, approved mappings, evidence, business rules, a "
+            "failing pipeline.py, and the runtime error, produce a corrected "
+            "standalone Polars pipeline.py that fixes the error while preserving "
+            "the approved mappings. Output ONLY valid Python code, no markdown "
+            "wrappers or explanation."
+        ),
+    }
+    user_content = (
+        f"Target schema:\n{target_schema.model_dump_json(indent=2)}\n\n"
+        f"Source files:\n{json.dumps(raw_file_summary, indent=2)}\n\n"
+        f"Available source columns (use these composite keys):\n"
+        f"{source_index_text}\n\n"
+        f"Tables and their columns:\n"
+        f"{_build_column_detail_text(source_catalogs)}\n\n"
+        f"Approved mappings (do NOT change these):\n"
+        f"{mapping_json}\n\n"
+        f"Evidence from vector database:\n{evidence_text}\n\n"
+        f"Business rules:\n{rules_text}\n\n"
+        f"Failed pipeline.py:\n```python\n{failed_code}\n```\n\n"
+        f"Runtime error:\n{error_message}\n\n"
+        "Return ONLY corrected Python code that implements the same "
+        "approved mappings. The script must read source files from "
+        "--source-folder and write results to --output-folder as CSV. "
+        "Use Polars API. Fix the error shown above."
+    )
+    return [prompt, {"role": "user", "content": user_content}]
+
+
+def call_codegen_llm(
+    messages: list[dict[str, str]],
+    model: str,
+    api_key: str | None,
+    base_url: str | None,
+) -> str:
+    """Call an OpenAI-compatible chat completion to get corrected code."""
+    settings = get_settings()
+    api_key = api_key or settings.openai_api_key
+    base_url = base_url or settings.openai_base_url
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    response = client.chat.completions.create(
+        model=model,
+        messages=cast(Any, messages),
+        temperature=0.2,
+    )
+    content = response.choices[0].message.content
+    if content is None:
+        raise RuntimeError("LLM returned empty content")
+    return content
 
 
 def call_mapping_llm(
@@ -684,29 +804,6 @@ def validate_mapping_columns(
                     f"{mapping.lookup_source_table!r} "
                     "is not in the catalog"
                 )
-            else:
-                tbl_col_names = {
-                    c.get("normalized_name") or c.get("original_name")
-                    for c in lookup_tbl.get("columns", [])
-                }
-                if (
-                    mapping.lookup_key
-                    and mapping.lookup_key not in tbl_col_names
-                ):
-                    errors.append(
-                        f"lookup_key {mapping.lookup_key!r} not "
-                        "found in lookup table "
-                        f"{mapping.lookup_source_table!r}"
-                    )
-                if (
-                    mapping.lookup_value
-                    and mapping.lookup_value not in tbl_col_names
-                ):
-                    errors.append(
-                        f"lookup_value {mapping.lookup_value!r} not "
-                        "found in lookup table "
-                        f"{mapping.lookup_source_table!r}"
-                    )
         if (
             mapping.transformation_type == "aggregation"
             and mapping.aggregation_source_table

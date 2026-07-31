@@ -1,0 +1,18 @@
+<div class="card" style="border-color: var(--danger);">
+  <p><strong>Pipeline execution failed</strong></p>
+  <p>The mapping was approved and pipeline.py was generated, but execution produced an error. This is a pipeline bug, not an application error.</p>
+  <pre style="background:var(--code-bg);padding:0.75rem;border-radius:0.25rem;margin-top:0.5rem;font-size:0.8rem;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto;">{{ error }}</pre>
+  <form
+    hx-post="/mapping/{{ spec_id }}/retry"
+    hx-target="this"
+    hx-swap="outerHTML"
+    hx-indicator="#retry-spinner"
+    style="margin-top:0.75rem;"
+  >
+    <input type="hidden" name="error" value="{{ error }}">
+    <button class="btn" type="submit">
+      <span id="retry-spinner" class="spinner" style="display:none;"></span>
+      Retry pipeline
+    </button>
+  </form>
+</div>

@@ -1,29 +1,30 @@
-From: compliance@example.com
+From: engineering@example.com
 To: data-team@example.com
-Subject: EA packaging submission rules for 2024
+Subject: BOM product data rules for manufacturing catalog
 MIME-Version: 1.0
 Content-Type: text/plain; charset="utf-8"
 
 Hi team,
 
-Please ensure the 2024 packaging submission follows these business rules:
+Please ensure the BOM product data follows these business rules:
 
-1. All weights must be reported in tonnes. If the source unit is kilograms,
-   divide by 1000.
+1. All weights must be reported in kilograms. If the source unit is 'g',
+   divide by 1000. Round final weight to 3 decimal places.
 
-2. Packaging class must be one of Primary, Secondary, Shipment, or Tertiary.
-   Treat "transport" as Tertiary.
+2. Product status must be one of Active, Discontinued, or Pending.
+   Treat "in dev" as Pending and "discont" as Discontinued.
 
-3. Activity "supplied" should be normalised to "Supplied as goods".
+3. Product line is determined by line code using the product_lines.csv
+   lookup. Any code not in the lookup should default to "Other".
 
-4. Filter out any rows flagged as TEST or DUPLICATE in the Data Quality Flag
-   column before submission.
+4. Filter out any rows flagged as TEST or DUPLICATE in the Data Quality
+   Flag column before loading.
 
-5. Nation is determined by site reference using the site_locations.csv lookup.
-   Any site not in the lookup should default to England.
+5. Material code is determined by material_reference.csv lookup. Any
+   unknown material codes should default to "Plastic".
 
-6. The submission_id should be a concatenation of Record ID, reporting period,
-   site_id and packaging material code, separated by hyphens.
+6. The product name must be title-cased. There's a known misspelling:
+   "Widgit" should always be corrected to "Widget".
 
 Thanks,
-Compliance
+Engineering

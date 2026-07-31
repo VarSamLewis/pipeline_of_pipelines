@@ -34,7 +34,12 @@ from file_ops import (
     compute_sha256,
     detect_file_type,
 )
-from mapping import propose_mapping_spec
+from mapping import (
+    _gather_targeted_evidence,
+    build_codegen_retry_prompt,
+    call_codegen_llm,
+    propose_mapping_spec,
+)
 from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import (
     Client,
@@ -378,6 +383,91 @@ def approve_mapping_and_execute(
     """Approve a mapping and execute it through the canonical runtime."""
     approve_mapping(spec_id, reviewer=reviewer, notes=notes)
     result = execute_approved_mapping(spec_id)
+    return uuid.UUID(result["execution_run_id"])
+
+
+def retry_pipeline_and_execute(
+    spec_id: uuid.UUID,
+    error_message: str,
+) -> uuid.UUID:
+    """Retry code generation with the failed pipeline + error, then re-execute."""
+    from db_ops import get_spreadsheet_profile, search_evidence_by_text
+    from models import BusinessRule, RawFile
+
+    folder = get_artifact_store().folder(spec_id)
+    pipeline_path = folder / "pipeline.py"
+    if not pipeline_path.exists():
+        raise RuntimeError("pipeline.py not found in output folder")
+    failed_code = pipeline_path.read_text()
+
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise ValueError("Mapping spec not found")
+
+        mapping_spec = load_mapping_spec(spec_id)
+        target_schema = load_target_schema_from_spec(mapping_spec)
+
+        raw_files = [
+            session.get(RawFile, rid)
+            for rid in spec.source_raw_file_ids
+        ]
+        raw_files = [rf for rf in raw_files if rf is not None]
+
+        source_catalogs: list[dict[str, Any]] = []
+        for raw_file in raw_files:
+            profile = get_spreadsheet_profile(session, raw_file.id)
+            if profile:
+                source_catalogs.append(profile.profile_json)
+
+        raw_file_summary = [
+            {
+                "filename": rf.original_filename,
+                "mime_type": rf.mime_type,
+                "raw_file_id": str(rf.id),
+            }
+            for rf in raw_files
+        ]
+
+        evidence_items = _gather_targeted_evidence(
+            session,
+            spec.client_id,
+            target_schema,
+            source_catalogs,
+            search_evidence_by_text=search_evidence_by_text,
+            top_k_per_query=5,
+            max_total=40,
+        )
+        business_rules = session.exec(
+            select(BusinessRule).where(
+                BusinessRule.client_id == spec.client_id,
+                BusinessRule.status == "approved",
+            )
+        ).all()
+
+    mapping_json = json.dumps(mapping_spec.get("columns", []), indent=2, default=str)
+    messages = build_codegen_retry_prompt(
+        target_schema,
+        source_catalogs,
+        evidence_items,
+        business_rules,
+        raw_file_summary,
+        mapping_json,
+        failed_code,
+        error_message,
+    )
+
+    settings = get_settings()
+    corrected_code = call_codegen_llm(
+        messages,
+        model="gpt-4o-mini",
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+    )
+
+    pipeline_path.write_text(corrected_code)
+
+    result = execute_approved_mapping(spec_id, output_folder=folder)
     return uuid.UUID(result["execution_run_id"])
 
 

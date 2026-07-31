@@ -1,107 +1,102 @@
 {
-  "client_code": "packaging_client",
-  "name": "ea_packaging_submission",
-  "description": "UK Environment Agency EPR packaging data submission",
+  "client_code": "bom_client",
+  "name": "product_bom",
+  "description": "Product Bill of Materials data for manufacturing catalog",
   "tables": [
     {
-      "name": "packaging_submission",
-      "description": "Curated packaging records ready for EA submission",
+      "name": "product_bom",
+      "description": "Curated product BOM records with materials, weights and components",
       "columns": [
         {
-          "name": "submission_id",
+          "name": "sku",
           "dtype": "String",
-          "description": "Unique record identifier. Build with concat of Record ID, Period, Site Ref and Packaging Material Code.",
+          "description": "Unique product SKU identifier. Direct map from SKU column, upper-cased and trimmed.",
           "required": true,
           "unique": true,
           "allowed_values": null
         },
         {
-          "name": "reporting_period",
+          "name": "product_name",
           "dtype": "String",
-          "description": "Normalised reporting period YYYY-QN. Source formats: '2024-Q1', 'Q2 2024', '2024Q3'. Use case-insensitive regex matching and always output 'YYYY-QN'.",
+          "description": "Product name in title case. Trim whitespace and normalise to title case. Apply manual override for known misspellings (e.g. 'Widget' should never be 'Widgit').",
           "required": true,
           "unique": false,
           "allowed_values": null
         },
         {
-          "name": "organisation_id",
+          "name": "product_line",
           "dtype": "String",
-          "description": "Organisation identifier. Direct map from Org Code.",
-          "required": true,
-          "unique": false,
-          "allowed_values": null
-        },
-        {
-          "name": "site_id",
-          "dtype": "String",
-          "description": "Site reference. Direct map from Site Ref.",
-          "required": true,
-          "unique": false,
-          "allowed_values": null
-        },
-        {
-          "name": "nation",
-          "dtype": "String",
-          "description": "Nation where packaging was handled. Use a lookup transformation with site_locations.csv keyed on site_ref returning nation. Source column is Site Ref.",
+          "description": "Product line name. Use a lookup transformation with product_lines.csv keyed on line_code returning line_name.",
           "required": true,
           "unique": false,
           "allowed_values": [
-            "England",
-            "Scotland",
-            "Wales",
-            "Northern Ireland"
+            "Electronics",
+            "Mechanics",
+            "Hydraulics",
+            "Pneumatics",
+            "Structural",
+            "Software"
           ]
         },
         {
-          "name": "packaging_material",
+          "name": "weight_kg",
+          "dtype": "Float64",
+          "description": "Product weight in kilograms. If Weight Unit is 'g' divide Weight by 1000, otherwise keep as kg. Cast to Float64.",
+          "required": true,
+          "unique": false,
+          "allowed_values": null
+        },
+        {
+          "name": "primary_material",
           "dtype": "String",
-          "description": "EA packaging material category. Use a lookup transformation with material_reference.csv keyed on internal_code returning ea_material_name. Source column is Packaging Material Code.",
+          "description": "Primary manufacturing material. Use a lookup transformation with material_reference.csv keyed on material_code returning material_name. Source column is Material Code.",
           "required": true,
           "unique": false,
           "allowed_values": [
-            "Plastic",
-            "Glass",
             "Aluminium",
             "Steel",
-            "Paper/card",
-            "Fibre-based composite",
+            "Plastic",
+            "Carbon Fibre",
+            "Titanium",
+            "Copper",
+            "Rubber",
+            "Glass",
             "Wood",
-            "Other"
+            "Ceramic"
           ]
         },
         {
-          "name": "packaging_class",
+          "name": "component_qty",
+          "dtype": "Int64",
+          "description": "Number of sub-components / parts in the BOM. Cast to Int64. Negative values should be set to null.",
+          "required": false,
+          "unique": false,
+          "allowed_values": null
+        },
+        {
+          "name": "lead_time_days",
+          "dtype": "Int64",
+          "description": "Manufacturing lead time in calendar days. Cast to Int64.",
+          "required": false,
+          "unique": false,
+          "allowed_values": null
+        },
+        {
+          "name": "status",
           "dtype": "String",
-          "description": "Packaging class. Map case-insensitively from the first word of Packaging Type: Primary, Secondary, Shipment, Tertiary.",
+          "description": "Product lifecycle status. Normalise case-insensitively: 'active'/'ACTIVE' -> 'Active', 'discontinued'/'DISCONTINUED'/'discont' -> 'Discontinued', 'pending'/'PENDING'/'in dev' -> 'Pending'. Anything else defaults to 'Pending'.",
           "required": true,
           "unique": false,
           "allowed_values": [
-            "Primary",
-            "Secondary",
-            "Shipment",
-            "Tertiary"
+            "Active",
+            "Discontinued",
+            "Pending"
           ]
         },
         {
-          "name": "activity",
-          "dtype": "String",
-          "description": "Packaging activity. Normalise case-insensitively: supplied -> 'Supplied as goods', import/imported -> 'Imported', export/exported -> 'Exported'.",
-          "required": true,
-          "unique": false,
-          "allowed_values": null
-        },
-        {
-          "name": "weight_tonnes",
-          "dtype": "Float64",
-          "description": "Weight in tonnes. If Unit is 'kg' or 'KG' divide Weight by 1000, otherwise keep Weight as tonnes. Cast to Float64.",
-          "required": true,
-          "unique": false,
-          "allowed_values": null
-        },
-        {
-          "name": "submission_date",
+          "name": "last_updated",
           "dtype": "Date",
-          "description": "Date of record. Try formats '%d/%m/%Y', '%Y-%m-%d', '%d-%b-%Y' using coalesce.",
+          "description": "Date the product record was last updated. Try formats '%d/%m/%Y', '%Y-%m-%d', '%Y%m%d', '%d-%b-%Y' using coalesce.",
           "required": false,
           "unique": false,
           "allowed_values": null
