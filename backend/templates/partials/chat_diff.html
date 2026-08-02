@@ -27,37 +27,22 @@
       <code>{{ p.new_value }}</code>
     </div>
   </div>
-  <button class="btn btn-success btn-sm chat-apply-btn"
-          data-changes='[{"column_id": "{{ p.column_id }}", "field": "{{ p.field }}", "new_value": {{ p.new_value | tojson }}}]'>
-    Apply
-  </button>
+  {% set apply_url = "/mapping/" ~ spec_id ~ "/chat/apply" if page == "mapping" else "/results/" ~ run_id ~ "/chat/apply" %}
+  {% set change_json = [{"column_id": p.column_id, "field": p.field, "new_value": p.new_value}] | tojson %}
+  <form
+    class="chat-apply-form"
+    method="post"
+    action="{{ apply_url }}"
+    hx-post="{{ apply_url }}"
+    hx-target="#chat-messages-{{ sidebar_id }}"
+    hx-swap="beforeend"
+    hx-indicator="#chat-spinner-{{ sidebar_id }}"
+  >
+    <input type="hidden" name="changes_json" value='{{ change_json }}'>
+    <button class="btn btn-success btn-sm" type="submit">Apply</button>
+  </form>
 </div>
 {% endfor %}
-<script>
-document.querySelectorAll('.chat-apply-btn').forEach(function(btn) {
-  btn.addEventListener('click', function() {
-    var changes = JSON.parse(this.getAttribute('data-changes'));
-    var form = document.createElement('form');
-    form.method = 'POST';
-    form.style.display = 'none';
-    var input = document.createElement('input');
-    input.name = 'changes_json';
-    input.value = JSON.stringify(changes);
-    form.appendChild(input);
-    var hxAttrs = {
-      'hx-post': '{{ "/mapping/" ~ spec_id ~ "/chat/apply" if page == "mapping" else "/results/" ~ run_id ~ "/chat/apply" }}',
-      'hx-target': '#chat-messages-{{ sidebar_id }}',
-      'hx-swap': 'beforeend',
-    };
-    for (var key in hxAttrs) { form.setAttribute(key, hxAttrs[key]); }
-    document.body.appendChild(form);
-    htmx.trigger(form, 'submit');
-    document.body.removeChild(form);
-    btn.disabled = true;
-    btn.textContent = 'Applied';
-  });
-});
-</script>
 {% else %}
 <div class="chat-message assistant-message">
   <div class="msg-bubble">

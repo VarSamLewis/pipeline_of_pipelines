@@ -188,22 +188,13 @@ def mapping_post(
     request: Request,
     spec_id: uuid.UUID,
     user: Any = Depends(require_auth),
-    changes_json: str = Form(None),
 ) -> Any:
-    """Handle POST to the mapping page (apply chat refinements or redirect)."""
-    if changes_json:
-        from workflow import apply_refinements
+    """Handle POST to the mapping page.
 
-        try:
-            changes = json.loads(changes_json)
-            apply_refinements(spec_id, changes)
-        except (ValueError, json.JSONDecodeError) as exc:
-            return templates.TemplateResponse(
-                request,
-                "partials/error.html",
-                {**_user_context(request, user), "message": str(exc)},
-            )
-        return _htmx_redirect(request, f"/mapping/{spec_id}")
+    Chat refinements are applied exclusively through the dedicated
+    ``/mapping/{spec_id}/chat/apply`` endpoint; a bare POST here just
+    re-renders the review page.
+    """
     return _htmx_redirect(request, f"/mapping/{spec_id}")
 
 

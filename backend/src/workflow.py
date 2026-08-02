@@ -632,7 +632,7 @@ def refine_from_results(
             session.exec(
                 select(ValidationResult).where(
                     ValidationResult.execution_run_id == run_id,
-                    not ValidationResult.passed,
+                    ValidationResult.passed == False,  # noqa: E712
                 )
             ).all()
         )
