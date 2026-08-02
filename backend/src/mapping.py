@@ -409,9 +409,7 @@ def build_codegen_retry_prompt(
     rules_text = "\n".join(f"- {r.rule_text}" for r in business_rules)
 
     col_index = _build_catalog_index(source_catalogs)
-    tbl_index = _build_table_index(source_catalogs)
     source_index_text = "\n".join(f"- {key}" for key in sorted(col_index))
-    table_index_text = "\n".join(f"- {key}" for key in sorted(tbl_index))
 
     prompt = {
         "role": "system",
