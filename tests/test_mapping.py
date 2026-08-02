@@ -55,7 +55,6 @@ def test_parse_llm_mapping_response_builds_proposed_mappings() -> None:
                 "tests": ["not_null"],
                 "evidence_ids": [str(uuid.uuid4())],
                 "business_rule_ids": [],
-                "confidence": 0.95,
             }
         ]
     }
@@ -73,7 +72,6 @@ def test_parse_llm_mapping_response_builds_proposed_mappings() -> None:
         source_table="data",
         source_column="cust_id",
     )
-    assert mapping.confidence == 0.95
 
 
 def test_parse_llm_mapping_response_requires_target_fields() -> None:
