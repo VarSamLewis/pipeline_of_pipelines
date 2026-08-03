@@ -1,5 +1,8 @@
 # Architecture
 
+> On-premises/hosting decision? See [Azure migration](azure_migration.md) for
+> the process of moving this platform to Azure Container Apps.
+
 Pipeline of Pipelines is an auditable, LLM-assisted data-transformation
 platform. A client uploads heterogeneous raw files (spreadsheets, PDFs,
 emails, text documents) and a target schema; the system extracts evidence,

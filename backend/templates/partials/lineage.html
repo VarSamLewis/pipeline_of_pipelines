@@ -1,0 +1,62 @@
+<div class="provenance-popover">
+  <div class="drawer-header">
+    <h3>Column provenance</h3>
+    <button type="button" class="btn btn-sm" onclick="this.closest('.provenance-popover').remove()">Close</button>
+  </div>
+
+  {% if rule %}
+    <p><strong>Target:</strong> {{ rule.get("target_table", "?") }}<wbr>::<wbr>{{ column }}</p>
+    <p>
+      <strong>Type:</strong>
+      <span class="badge badge-type-{{ rule.get("transformation_type") or "expression" }}">
+        {{ rule.get("transformation_type") or "expression" }}
+      </span>
+    </p>
+
+    {% if rule.get("transformation_logic") %}
+      <p class="muted">{{ rule.get("transformation_logic") }}</p>
+    {% endif %}
+
+    {% if rule.get("source_columns") %}
+      <p><strong>Source columns:</strong></p>
+      <ul style="margin:0.25rem 0 0.5rem 1.25rem;">
+        {% for src in rule.get("source_columns", []) %}
+          <li><code>{{ src.get("source_table", "") }}<wbr>::<wbr>{{ src.get("source_column", "") }}</code></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if rule.get("lookup_source_table") %}
+      <p><strong>Lookup:</strong> <code>{{ rule.get("lookup_source_table") }}</code>
+        (<code>{{ rule.get("lookup_key") }} → {{ rule.get("lookup_value") }}</code>)</p>
+    {% endif %}
+    {% if rule.get("aggregation_source_table") %}
+      <p><strong>Aggregation:</strong> <code>{{ rule.get("aggregation_source_table") }}</code>
+        grouped by <code>{{ rule.get("aggregation_group_key") }}</code></p>
+    {% endif %}
+
+    {% if rule.get("polars_expression") %}
+      <p><strong>Expression:</strong></p>
+      <pre class="code-editor" style="min-height:auto;font-size:0.8rem;">{{ rule.get("polars_expression") }}</pre>
+    {% elif rule.get("filter_expression") %}
+      <p><strong>Filter:</strong> <code>{{ rule.get("filter_expression") }}</code></p>
+    {% endif %}
+
+    {% if rule.get("tests") %}
+      <p><strong>Tests:</strong></p>
+      <div class="test-list">
+        {% for test in rule.get("tests", []) %}
+          <span class="badge badge-test">{{ test }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if rule.get("evidence_ids") or rule.get("business_rule_ids") %}
+      <p class="muted" style="font-size:0.85rem;">
+        Evidence: {{ rule.get("evidence_ids") | length }} · Business rules: {{ rule.get("business_rule_ids") | length }}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="muted">No mapping rule found for column <code>{{ column }}</code>.</p>
+  {% endif %}
+</div>

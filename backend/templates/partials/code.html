@@ -1,3 +1,46 @@
 <div id="code-view">
-  <pre class="code-editor">{{ code }}</pre>
+  {% set can_edit = user and user.role.value in ["reviewer", "approver", "admin"] %}
+
+  <div style="margin-bottom:0.5rem; display:flex; gap:0.5rem; align-items:center;">
+    <strong>generated/pipeline.py</strong>
+    <span class="muted" style="font-size:0.85rem;">manual edits bypass the mapping contract and are not overwritten on re-run</span>
+    {% if can_edit %}
+    <button
+      id="code-edit-toggle"
+      class="btn btn-sm"
+      style="margin-left:auto;"
+      onclick="document.getElementById('code-preview').hidden = true; document.getElementById('code-edit').hidden = false; this.hidden = true;"
+    >Edit code</button>
+    {% endif %}
+  </div>
+
+  <pre id="code-preview" class="code-editor">{{ code }}</pre>
+
+  <div id="code-edit" hidden>
+    <form
+      hx-post="/results/{{ run_id }}/code"
+      hx-target="#code-view"
+      hx-swap="innerHTML"
+    >
+      <textarea name="code" class="code-editor" style="min-height:60vh;">{{ code }}</textarea>
+      <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
+        <button type="submit" class="btn btn-success"
+                onclick="return confirm('Save will overwrite the generated pipeline.py. Manual edits bypass the mapping contract. Continue?');">
+          Save pipeline.py
+        </button>
+        <button type="button" class="btn btn-sm"
+                onclick="document.getElementById('code-preview').hidden = false; document.getElementById('code-edit').hidden = true; document.getElementById('code-edit-toggle').hidden = false;">
+          Cancel
+        </button>
+        <button
+          class="btn btn-sm"
+          hx-post="/results/{{ run_id }}/code/reset"
+          hx-target="#code-view"
+          hx-swap="innerHTML"
+          onclick="return confirm('Reset regenerates pipeline.py from the mapping contract and discards manual edits. Continue?');"
+          style="margin-left:auto;"
+        >Reset from mapping</button>
+      </div>
+    </form>
+  </div>
 </div>

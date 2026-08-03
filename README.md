@@ -8,7 +8,8 @@ Polars transformation pipeline, executes it, validates the results, and records
 full column-level lineage. Every step is **human-gated**.
 
 Documentation: [Architecture](docs/architecture.md) ·
-[Opportunities for improvement](docs/opportunities.md)
+[Opportunities for improvement](docs/opportunities.md) ·
+[Azure migration](docs/azure_migration.md)
 
 ## Features
 

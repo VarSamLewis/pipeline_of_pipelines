@@ -1,11 +1,48 @@
 <div id="csv-view">
+  {% set can_edit = user and user.role.value in ["reviewer", "approver", "admin"] %}
+
   <p class="muted">Rows {{ start_row }} - {{ end_row }} of {{ total_rows }}</p>
 
-  <table>
+  {% if override_count %}
+  <div class="override-banner">
+    <strong>{{ override_count }} override{{ "s" if override_count != 1 else "" }} applied</strong>
+    <div class="test-list" style="margin-top:0.35rem;">
+      {% for o in overrides %}
+      <span class="override-chip">
+        <code>{{ o.target_column }}={{ o.value }}</code> @ {{ o.row_key }}
+        <span class="muted" style="font-size:0.8rem;">{{ o.reason }}{% if o.created_by %} · {{ o.created_by }}{% endif %}</span>
+        {% if can_edit %}
+        <button
+          class="btn btn-sm"
+          hx-delete="/results/{{ run_id }}/overrides/{{ o.id }}"
+          hx-target="#results-view"
+          hx-swap="outerHTML"
+          title="Delete this override"
+        >&times;</button>
+        {% endif %}
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <table class="results-table">
     <thead>
       <tr>
         {% for col in columns %}
-          <th>{{ col }}</th>
+          <th>
+            {% if can_edit %}
+            <button
+              class="link-like"
+              hx-get="/results/{{ run_id }}/columns/{{ col }}/provenance"
+              hx-target="#provenance-popover"
+              hx-swap="innerHTML"
+              title="Show provenance for {{ col }}"
+            >{{ col }}</button>
+            {% else %}
+              {{ col }}
+            {% endif %}
+          </th>
         {% endfor %}
       </tr>
     </thead>
@@ -13,7 +50,20 @@
       {% for row in rows %}
         <tr>
           {% for col in columns %}
-            <td>{{ row.get(col, '') }}</td>
+            {% set cell_overridden = row.overridden.get(col, false) %}
+            <td class="{{ 'cell-overridden' if cell_overridden else '' }}">
+              {% if can_edit %}
+              <button
+                class="cell-value{{ ' cell-overridden' if cell_overridden else '' }}"
+                hx-get="/results/{{ run_id }}/overrides/new?column={{ col | urlencode }}&row={{ row.row_key | urlencode }}"
+                hx-target="#override-modal"
+                hx-swap="innerHTML"
+                title="{{ 'Overridden — click to edit override' if cell_overridden else 'Click to override this cell' }}"
+              >{{ row.cells.get(col, '') }}{% if cell_overridden %} <span class="override-dot">OVR</span>{% endif %}</button>
+              {% else %}
+                {{ row.cells.get(col, '') }}
+              {% endif %}
+            </td>
           {% endfor %}
         </tr>
       {% endfor %}
@@ -28,4 +78,7 @@
       <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page + 1 }}" hx-target="#results-view">Next</button>
     {% endif %}
   </div>
+
+  <div id="provenance-popover" class="provenance-popover-container"></div>
+  <div id="override-modal" class="override-backdrop-container"></div>
 </div>

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any
 
 import pytest
 import workflow
@@ -41,11 +42,19 @@ def apply_targets(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
         "apply_refinements_and_reexecute": [],
     }
 
-    def fake_apply(spec_id: uuid.UUID, changes: list[dict]) -> None:
-        calls["apply_refinements"].append((spec_id, changes))
+    def fake_apply(
+        spec_id: uuid.UUID,
+        changes: list[dict],
+        user: Any | None = None,
+    ) -> None:
+        calls["apply_refinements"].append((spec_id, changes, user))
 
-    def fake_apply_reexecute(run_id: uuid.UUID, changes: list[dict]) -> None:
-        calls["apply_refinements_and_reexecute"].append((run_id, changes))
+    def fake_apply_reexecute(
+        run_id: uuid.UUID,
+        changes: list[dict],
+        user: Any | None = None,
+    ) -> None:
+        calls["apply_refinements_and_reexecute"].append((run_id, changes, user))
 
     monkeypatch.setattr(workflow, "apply_refinements", fake_apply)
     monkeypatch.setattr(
@@ -77,7 +86,10 @@ def test_mapping_chat_apply_posts_to_dedicated_endpoint(
     )
 
     assert response.status_code in (200, 303), response.text
-    assert apply_targets["apply_refinements"] == [(spec_id, changes)]
+    assert len(apply_targets["apply_refinements"]) == 1
+    call_spec_id, call_changes, _user = apply_targets["apply_refinements"][0]
+    assert call_spec_id == spec_id
+    assert call_changes == changes
 
 
 def test_results_chat_apply_posts_to_dedicated_endpoint(
@@ -93,7 +105,11 @@ def test_results_chat_apply_posts_to_dedicated_endpoint(
     )
 
     assert response.status_code in (200, 303), response.text
-    assert apply_targets["apply_refinements_and_reexecute"] == [(run_id, changes)]
+    assert len(apply_targets["apply_refinements_and_reexecute"]) == 1
+    call = apply_targets["apply_refinements_and_reexecute"][0]
+    call_run_id, call_changes, _user = call
+    assert call_run_id == run_id
+    assert call_changes == changes
 
 
 def test_bare_post_to_results_page_has_no_fallback(

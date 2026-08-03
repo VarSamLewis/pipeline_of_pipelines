@@ -555,6 +555,27 @@ class ValidationResult(SQLModel, table=True):
     )
 
 
+class ResultOverride(SQLModel, table=True):
+    """Audited manual override of a generated output cell that survives re-runs.
+
+    Keyed by spec + column + row key so a re-execution of the same mapping spec
+    keeps the override. The reason is required so every override is auditable.
+    """
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    spec_id: uuid.UUID = SQLField(foreign_key="mappingspec.id", index=True)
+    run_id: uuid.UUID | None = SQLField(default=None, index=True)
+    target_table: str = SQLField(default="results")
+    target_column: str = SQLField(index=True)
+    row_key: str = SQLField(index=True)
+    value: str = SQLField(default="")
+    reason: str = SQLField(default="")
+    created_by: str | None = SQLField(default=None)
+    created_at: datetime.datetime = SQLField(
+        default_factory=datetime.datetime.utcnow,
+    )
+
+
 class StagingTable(SQLModel, table=True):
     """A curated staging table published by an execution run."""
 

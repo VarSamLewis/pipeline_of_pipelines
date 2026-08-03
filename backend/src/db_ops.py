@@ -32,6 +32,7 @@ from models import (
     MappingSpec,
     MappingSpecStatus,
     RawFile,
+    ResultOverride,
     SpreadsheetProfile,
     TargetSchema,
 )
@@ -702,3 +703,62 @@ def get_lineage_for_staging_column(
             for e in edges
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Result overrides
+# ---------------------------------------------------------------------------
+
+
+def create_result_override(
+    session: Session,
+    *,
+    spec_id: uuid.UUID,
+    run_id: uuid.UUID | None,
+    target_table: str,
+    target_column: str,
+    row_key: str,
+    value: str,
+    reason: str,
+    created_by: str | None = None,
+) -> ResultOverride:
+    """Create an audited manual override for a generated output cell."""
+    record = ResultOverride(
+        spec_id=spec_id,
+        run_id=run_id,
+        target_table=target_table,
+        target_column=target_column,
+        row_key=row_key,
+        value=value,
+        reason=reason,
+        created_by=created_by,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def list_result_overrides(
+    session: Session,
+    spec_id: uuid.UUID,
+) -> Sequence[ResultOverride]:
+    """Return all overrides for a mapping spec (oldest first)."""
+    records = session.exec(
+        select(ResultOverride).where(ResultOverride.spec_id == spec_id)
+    ).all()
+    return sorted(records, key=lambda o: o.created_at)
+
+
+def delete_result_override(
+    session: Session,
+    override_id: uuid.UUID,
+    spec_id: uuid.UUID,
+) -> bool:
+    """Delete an override, refusing to delete overrides of another spec."""
+    record = session.get(ResultOverride, override_id)
+    if record is None or record.spec_id != spec_id:
+        return False
+    session.delete(record)
+    session.commit()
+    return True

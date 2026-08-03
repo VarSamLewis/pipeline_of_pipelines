@@ -1,0 +1,131 @@
+<div class="drawer-backdrop" onclick="if (event.target === this) this.remove()">
+  <div class="drawer">
+    <div class="drawer-header">
+      <h3>Edit mapping column</h3>
+      <button type="button" class="btn btn-sm" onclick="this.closest('.drawer-backdrop').remove()">Close</button>
+    </div>
+
+    {% set tc = target_column_info.get((col.target_table, col.target_column)) %}
+
+    <form
+      hx-post="/mapping/{{ spec_id }}/columns/{{ col.id }}"
+      hx-target="#mapping-drawer"
+      hx-swap="innerHTML"
+    >
+      <div class="form-group">
+        <label>Target table</label>
+        <input type="text" value="{{ col.target_table or "" }}" disabled>
+        {% if tc and tc.description %}<p class="muted" style="font-size:0.85rem;margin-top:0.25rem;">{{ tc.description }}</p>{% endif %}
+      </div>
+
+      <div class="form-group">
+        <label>Target column</label>
+        <input type="text" name="target_column" value="{{ col.target_column or "" }}" required>
+        {% if tc %}
+          <p class="muted" style="font-size:0.85rem;margin-top:0.25rem;">
+            dtype: {{ tc.dtype or "unknown" }}{% if tc.required %} · required{% endif %}{% if tc.unique %} · unique{% endif %}
+            {% if tc.allowed_values %}; allowed: {{ tc.allowed_values | join(", ") }}{% endif %}
+          </p>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label>Transformation type</label>
+        <select name="transformation_type" id="ttype-select-{{ col.id }}">
+          {% for ttype in ["expression", "lookup", "aggregation", "filter"] %}
+          <option value="{{ ttype }}" {% if (col.transformation_type or "expression") == ttype %}selected{% endif %}>{{ ttype }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Source columns <span class="muted">(ctrl/cmd to select multiple)</span></label>
+        <select name="source_columns" multiple size="8">
+          {% set selected_sources = source_columns.split(",") %}
+          {% for opt in source_options %}
+          <option value="{{ opt.value }}" {% if opt.value in selected_sources %}selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted" style="font-size:0.85rem;margin-top:0.25rem;">Leave empty for expression/lookup/aggregation to use the fields below.</p>
+      </div>
+
+      <div class="form-group" data-ttype="expression">
+        <label>Polars expression</label>
+        <textarea name="polars_expression" placeholder="e.g. (pl.col('a').cast(pl.Float64) * pl.col('b')).round(2)">{{ col.polars_expression or "" }}</textarea>
+      </div>
+
+      <div class="form-group" data-ttype="lookup">
+        <label>Lookup source table <span class="muted">(filename::sheet)</span></label>
+        <input type="text" name="lookup_source" value="{{ col.lookup_source_table or "" }}">
+        <div class="grid grid-2" style="margin-top:0.5rem;">
+          <div>
+            <label>Lookup key column</label>
+            <input type="text" name="lookup_key" value="{{ col.lookup_key or "" }}">
+          </div>
+          <div>
+            <label>Lookup value column</label>
+            <input type="text" name="lookup_value" value="{{ col.lookup_value or "" }}">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group" data-ttype="aggregation">
+        <label>Aggregation source table <span class="muted">(filename::sheet)</span></label>
+        <input type="text" name="aggregation_source" value="{{ col.aggregation_source_table or "" }}">
+        <div class="form-group" style="margin-top:0.5rem;">
+          <label>Group key column</label>
+          <input type="text" name="aggregation_group_key" value="{{ col.aggregation_group_key or "" }}">
+        </div>
+        <div class="form-group">
+          <label>Aggregation expression</label>
+          <textarea name="aggregation_expression" placeholder="e.g. (pl.col('qty') * pl.col('unit_price')).sum()">{{ col.aggregation_expression or "" }}</textarea>
+        </div>
+      </div>
+
+      <div class="form-group" data-ttype="filter">
+        <label>Filter expression</label>
+        <textarea name="filter_expression" placeholder="e.g. pl.col('status') == 'active'">{{ col.filter_expression or "" }}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Tests <span class="muted">(one per line)</span></label>
+        <textarea name="tests" style="min-height:70px;" placeholder="not_null, unique, range 0..100, ...">{{ col.tests | join("\n") }}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label>LLM rationale / transformation logic</label>
+        <textarea name="rationale">{{ col.transformation_logic or "" }}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Sort order</label>
+        <input type="text" name="sort_order" value="{{ col.sort_order or 0 }}">
+      </div>
+
+      <div class="drawer-footer">
+        <button type="button" class="btn btn-sm" onclick="this.closest('.drawer-backdrop').remove()">Cancel</button>
+        <button type="submit" class="btn btn-success">
+          <span class="spinner" style="display:none;" id="mapping-save-spinner"></span>
+          Save &amp; regenerate
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var root = document.querySelector('.drawer-backdrop');
+    if (!root) return;
+    var select = root.querySelector('#ttype-select-{{ col.id }}');
+    if (!select) return;
+    function apply() {
+      var ttype = select.value;
+      root.querySelectorAll('[data-ttype]').forEach(function (el) {
+        el.style.display = el.getAttribute('data-ttype') === ttype ? '' : 'none';
+      });
+    }
+    select.addEventListener('change', apply);
+    apply();
+  })();
+</script>

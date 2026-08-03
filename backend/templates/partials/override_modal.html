@@ -1,0 +1,45 @@
+<div class="override-backdrop" onclick="if (event.target === this) this.remove()">
+  <div class="override-modal">
+    <div class="drawer-header">
+      <h3>Override cell</h3>
+      <button type="button" class="btn btn-sm" onclick="this.closest('.override-backdrop').remove()">Close</button>
+    </div>
+
+    <form
+      hx-post="/results/{{ run_id }}/overrides"
+      hx-target="#csv-view"
+      hx-swap="outerHTML"
+    >
+      <input type="hidden" name="target_table" value="{{ target_table }}">
+      <input type="hidden" name="column" value="{{ column }}">
+      <input type="hidden" name="row_key" value="{{ row_key }}">
+
+      <p class="muted" style="margin-top:0;">
+        Overrides are saved against the mapping spec and survive re-runs. They are
+        applied on top of the generated output and marked in the review.
+      </p>
+
+      <div class="form-group">
+        <label>Column</label>
+        <input type="text" value="{{ column }}" disabled>
+      </div>
+      <div class="form-group">
+        <label>Row key</label>
+        <input type="text" value="{{ row_key }}" disabled>
+      </div>
+      <div class="form-group">
+        <label>Override value</label>
+        <input type="text" name="value" required autofocus>
+      </div>
+      <div class="form-group">
+        <label>Reason <span class="muted">(required, audited)</span></label>
+        <textarea name="reason" style="min-height:70px;" required placeholder="e.g. Source file Q2 has a known typo in customer_id; corrected after reconciliation with ERP extract."></textarea>
+      </div>
+
+      <div class="drawer-footer">
+        <button type="button" class="btn btn-sm" onclick="this.closest('.override-backdrop').remove()">Cancel</button>
+        <button type="submit" class="btn btn-success">Save override</button>
+      </div>
+    </form>
+  </div>
+</div>

@@ -74,6 +74,17 @@ from repositories.executions import (
 from sqlmodel import select
 
 
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-serializable copy of a value for audit-log payloads."""
+    if isinstance(value, (uuid.UUID, Path)):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def get_or_create_client(
     session: Any,
     existing_client_id: uuid.UUID | None,
@@ -587,13 +598,19 @@ def refine_mapping(
 def apply_refinements(
     spec_id: uuid.UUID,
     changes: list[dict[str, Any]],
+    user: Any | None = None,
 ) -> dict[str, Any]:
-    """Apply approved changes to mapping columns and regenerate artifacts."""
+    """Apply approved changes to mapping columns and regenerate artifacts.
+
+    Every applied change is appended to the audit log (when a user is given),
+    so chat-driven applies and direct mapping edits share one audited path.
+    """
     from codegen import generate_artifact_set
-    from db_ops import get_session
+    from db_ops import get_session, write_audit_log
     from mapping_specs import load_mapping_spec
     from models import MappingColumn
 
+    applied: list[tuple[uuid.UUID, str, Any, Any]] = []
     with get_session() as session:
         for change in changes:
             column_id = change.get("column_id")
@@ -604,8 +621,25 @@ def apply_refinements(
             column = session.get(MappingColumn, uuid.UUID(str(column_id)))
             if column is None or column.mapping_spec_id != spec_id:
                 continue
+            old_value = getattr(column, field, None)
             setattr(column, field, new_value)
             session.add(column)
+            applied.append((column.id, field, old_value, new_value))
+        for column_id, field, old_value, new_value in applied:
+            write_audit_log(
+                session,
+                "mapping_column_edited",
+                "MappingColumn",
+                column_id,
+                getattr(user, "id", None),
+                getattr(user, "email", None),
+                {
+                    "spec_id": str(spec_id),
+                    "field": field,
+                    "old_value": _json_safe(old_value),
+                    "new_value": _json_safe(new_value),
+                },
+            )
         session.commit()
 
     output_folder = get_artifact_store().folder(spec_id)
@@ -654,14 +688,177 @@ def refine_from_results(
     return proposals
 
 
+def get_column_provenance(
+    spec_id: uuid.UUID,
+    target_column: str,
+) -> dict[str, Any] | None:
+    """Return the mapping rule behind a generated output column."""
+    from mapping_specs import load_mapping_spec
+
+    spec = load_mapping_spec(spec_id)
+    for column in spec.get("columns", []):
+        if column.get("target_column") == target_column:
+            return dict(column)
+    return None
+
+
+def get_merged_results(
+    run_id: uuid.UUID,
+) -> dict[str, Any] | None:
+    """Return results CSV overlaid with any spec-keyed manual overrides."""
+    import io as _io
+
+    from db_ops import get_session, list_result_overrides
+    from mapping_specs import load_mapping_spec
+
+    paths = get_result_review(run_id)
+    csv_content = paths["results_csv"]
+    if csv_content is None:
+        return None
+    spec_id = paths["run"].mapping_spec_id
+    spec = load_mapping_spec(spec_id)
+    tables = {c.get("target_table") for c in spec.get("columns", [])}
+    target_table = next(iter(tables), None) or "results"
+
+    df = pl.read_csv(_io.BytesIO(csv_content))
+    with get_session() as session:
+        overrides = list_result_overrides(session, spec_id)
+
+    row_key_col = df.columns[0] if df.columns else ""
+    overridden: dict[tuple[str, str], bool] = {}
+    override_map: dict[tuple[str, str], dict[str, Any]] = {}
+    for o in overrides:
+        override_map[(o.row_key, o.target_column)] = {
+            "id": str(o.id),
+            "target_column": o.target_column,
+            "row_key": o.row_key,
+            "value": o.value,
+            "reason": o.reason,
+            "created_by": o.created_by or "",
+        }
+    merged_rows: list[dict[str, Any]] = []
+    if row_key_col:
+        for row in df.iter_rows(named=True):
+            key = str(row.get(row_key_col, ""))
+            merged = dict(row)
+            for o in overrides:
+                if o.row_key == key and o.target_column in merged:
+                    merged[o.target_column] = o.value
+                    overridden[(key, o.target_column)] = True
+            merged_rows.append(merged)
+    else:
+        merged_rows = [dict(row) for row in df.iter_rows(named=True)]
+
+    return {
+        "target_table": target_table,
+        "row_key_column": row_key_col,
+        "merged_rows": merged_rows,
+        "overridden": overridden,
+        "overrides": list(override_map.values()),
+        "override_count": len(override_map),
+    }
+
+
+def overwrite_pipeline_code(
+    spec_id: uuid.UUID,
+    content: str,
+    user: Any | None = None,
+) -> dict[str, Any]:
+    """Overwrite the generated pipeline.py and append an audit event."""
+    from db_ops import get_session, write_audit_log
+
+    store = get_artifact_store()
+    try:
+        store.read_artifact(spec_id, "pipeline.py")
+    except FileNotFoundError:
+        raise ValueError("pipeline.py not found") from None
+    store.write_artifact(spec_id, "pipeline.py", content.encode("utf-8"))
+    with get_session() as session:
+        write_audit_log(
+            session,
+            "pipeline_py_edited",
+            "GeneratedPipeline",
+            spec_id,
+            getattr(user, "id", None),
+            getattr(user, "email", None),
+            {"folder_id": str(spec_id), "bytes": len(content)},
+        )
+    return {"folder_id": str(spec_id), "bytes": len(content)}
+
+
+def create_result_override_record(
+    run_id: uuid.UUID,
+    *,
+    target_table: str,
+    target_column: str,
+    row_key: str,
+    value: str,
+    reason: str,
+    created_by: str | None = None,
+) -> None:
+    """Create a manual results override keyed to the run's mapping spec."""
+    from db_ops import create_result_override, get_session
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise ValueError("Execution run not found")
+        create_result_override(
+            session,
+            spec_id=run.mapping_spec_id,
+            run_id=run_id,
+            target_table=target_table,
+            target_column=target_column,
+            row_key=row_key,
+            value=value,
+            reason=reason,
+            created_by=created_by,
+        )
+
+
+def delete_result_override_record(run_id: uuid.UUID, override_id: uuid.UUID) -> None:
+    """Delete a manual results override scoped to the run's mapping spec."""
+    from db_ops import delete_result_override, get_session
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise ValueError("Execution run not found")
+        delete_result_override(session, override_id, run.mapping_spec_id)
+
+
+def reset_pipeline_code(
+    spec_id: uuid.UUID,
+    user: Any | None = None,
+) -> str:
+    """Regenerate pipeline.py from the mapping contract and append an audit event."""
+    from db_ops import get_session, write_audit_log
+
+    store = get_artifact_store()
+    folder = store.folder(spec_id)
+    generate_artifact_set(spec_id, folder)
+    content = store.read_artifact(spec_id, "pipeline.py").decode("utf-8")
+    with get_session() as session:
+        write_audit_log(
+            session,
+            "pipeline_py_reset",
+            "GeneratedPipeline",
+            spec_id,
+            getattr(user, "id", None),
+            getattr(user, "email", None),
+            {"folder_id": str(spec_id)},
+        )
+    return content
+
+
 def apply_refinements_and_reexecute(
     run_id: uuid.UUID,
     changes: list[dict[str, Any]],
+    user: Any | None = None,
 ) -> dict[str, Any]:
-    """Apply approved changes, regenerate artifacts, and re-execute."""
-    from codegen import generate_artifact_set
+    """Apply approved changes through the canonical audited path and re-execute."""
     from db_ops import get_session
-    from models import ExecutionRun, MappingColumn
+    from models import ExecutionRun
 
     with get_session() as session:
         run = session.get(ExecutionRun, run_id)
@@ -669,20 +866,7 @@ def apply_refinements_and_reexecute(
             raise ValueError(f"Execution run not found: {run_id}")
         spec_id = run.mapping_spec_id
 
-        for change in changes:
-            column_id = change.get("column_id")
-            field = change.get("field")
-            new_value = change.get("new_value")
-            if not column_id or not field:
-                continue
-            column = session.get(MappingColumn, uuid.UUID(str(column_id)))
-            if column is None or column.mapping_spec_id != spec_id:
-                continue
-            setattr(column, field, new_value)
-            session.add(column)
-        session.commit()
-
+    apply_refinements(spec_id, changes, user)
     output_folder = get_artifact_store().folder(spec_id)
-    generate_artifact_set(spec_id, output_folder)
     result = execute_approved_mapping(spec_id, output_folder=output_folder)
     return result
