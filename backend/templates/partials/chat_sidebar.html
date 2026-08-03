@@ -1,7 +1,26 @@
-<div class="chat-sidebar" id="chat-sidebar-{{ sidebar_id }}">
+<button
+  type="button"
+  class="btn btn-sm llm-toggle"
+  id="llm-toggle-{{ sidebar_id }}"
+  onclick="toggleChatSidebar('{{ sidebar_id }}')"
+  aria-expanded="false"
+>LLM feedback</button>
+
+<div class="chat-sidebar" id="chat-sidebar-{{ sidebar_id }}" hidden>
   <div class="chat-header">
-    <strong>Feedback</strong>
-    <span class="muted" style="font-size:0.8rem;">Describe what to fix</span>
+    <div class="chat-header-row">
+      <div>
+        <strong>Feedback</strong>
+        <span class="muted" style="font-size:0.8rem;">Describe what to fix</span>
+      </div>
+      <button
+        type="button"
+        class="btn btn-sm"
+        onclick="toggleChatSidebar('{{ sidebar_id }}')"
+        aria-label="Hide LLM feedback"
+        title="Hide"
+      >&times;</button>
+    </div>
   </div>
   <div class="chat-messages" id="chat-messages-{{ sidebar_id }}">
     <div class="chat-placeholder">
@@ -25,3 +44,21 @@
     </form>
   </div>
 </div>
+
+<script>
+  function toggleChatSidebar(id) {
+    var panel = document.getElementById('chat-sidebar-' + id);
+    var toggle = document.getElementById('llm-toggle-' + id);
+    var sidebar = panel && panel.closest('.layout-sidebar');
+    if (!panel) return;
+    if (panel.hidden) {
+      panel.hidden = false;
+      if (sidebar) sidebar.classList.remove('collapsed');
+      if (toggle) toggle.setAttribute('aria-expanded', 'true');
+    } else {
+      panel.hidden = true;
+      if (sidebar) sidebar.classList.add('collapsed');
+      if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    }
+  }
+</script>

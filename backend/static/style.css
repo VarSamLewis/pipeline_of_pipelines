@@ -409,6 +409,10 @@ tr:hover { background: var(--hover-bg); }
   top: 1rem;
 }
 
+.layout-sidebar.collapsed {
+  width: auto;
+}
+
 @media (max-width: 1024px) {
   .layout-with-sidebar {
     flex-direction: column;
@@ -432,6 +436,21 @@ tr:hover { background: var(--hover-bg); }
   flex-direction: column;
   height: calc(100vh - 8rem);
   overflow: hidden;
+}
+
+.chat-sidebar[hidden] {
+  display: none;
+}
+
+.llm-toggle {
+  margin-bottom: 0.5rem;
+}
+
+.chat-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .chat-header {
