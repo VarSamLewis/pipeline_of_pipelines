@@ -130,9 +130,11 @@ def test_full_propose_approve_execute_flow(
     assert mapping_response.status_code == 200
     mapping_artifact = mapping_response.json()
     assert mapping_artifact["id"] == spec_id
-    assert {
-        column["target_column"] for column in mapping_artifact["columns"]
-    } == {"record_id", "full_name", "score"}
+    assert {column["target_column"] for column in mapping_artifact["columns"]} == {
+        "record_id",
+        "full_name",
+        "score",
+    }
 
     pipeline_response = client.get(f"/output-folders/{spec_id}/pipeline.py")
     assert pipeline_response.status_code == 200

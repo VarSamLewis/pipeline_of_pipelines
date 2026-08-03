@@ -131,10 +131,7 @@ def test_build_polars_from_mapping_source_csv() -> None:
 def test_discover_csv_dialect_encoding_and_profile() -> None:
     """CSV discovery should preserve parser decisions and profile its columns."""
     csv_bytes = (
-        "Customer export\r\n"
-        "id;name;note\r\n"
-        '1;André;"uses; delimiter"\r\n'
-        "2;Zoë;\r\n"
+        'Customer export\r\nid;name;note\r\n1;André;"uses; delimiter"\r\n2;Zoë;\r\n'
     ).encode("cp1252")
 
     catalog = discover_source_tables(

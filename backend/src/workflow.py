@@ -195,9 +195,7 @@ def ingest_and_propose(
     object_store = get_object_store()
 
     with get_session() as session:
-        client = get_or_create_client(
-            session, existing_client_id, new_client_name
-        )
+        client = get_or_create_client(session, existing_client_id, new_client_name)
         batch = create_ingestion_batch(
             session,
             client_id=client.id,
@@ -369,9 +367,7 @@ def execute_approved_mapping(
         "target_environment": target_environment,
         "csv_paths": {name: str(path) for name, path in csv_paths.items()},
         "results_csv": (
-            str(folder / "results.csv")
-            if (folder / "results.csv").exists()
-            else None
+            str(folder / "results.csv") if (folder / "results.csv").exists() else None
         ),
         "validation_results": test_results,
         "quality_profiles": {
@@ -419,11 +415,10 @@ def retry_pipeline_and_execute(
         mapping_spec = load_mapping_spec(spec_id)
         target_schema = load_target_schema_from_spec(mapping_spec)
 
-        raw_files = [
-            session.get(RawFile, rid)
-            for rid in spec.source_raw_file_ids
+        raw_file_records = [
+            session.get(RawFile, rid) for rid in spec.source_raw_file_ids
         ]
-        raw_files = [rf for rf in raw_files if rf is not None]
+        raw_files: list[RawFile] = [rf for rf in raw_file_records if rf is not None]
 
         source_catalogs: list[dict[str, Any]] = []
         for raw_file in raw_files:
@@ -449,12 +444,14 @@ def retry_pipeline_and_execute(
             top_k_per_query=5,
             max_total=40,
         )
-        business_rules = session.exec(
-            select(BusinessRule).where(
-                BusinessRule.client_id == spec.client_id,
-                BusinessRule.status == "approved",
-            )
-        ).all()
+        business_rules = list(
+            session.exec(
+                select(BusinessRule).where(
+                    BusinessRule.client_id == spec.client_id,
+                    BusinessRule.status == "approved",
+                )
+            ).all()
+        )
 
     mapping_json = json.dumps(mapping_spec.get("columns", []), indent=2, default=str)
     messages = build_codegen_retry_prompt(
@@ -590,6 +587,7 @@ def refine_mapping(
 ) -> list[dict[str, Any]]:
     """Propose column-level refinements based on user feedback."""
     from feedback import propose_refinements, store_feedback
+
     proposals = propose_refinements(spec_id, feedback)
     store_feedback(feedback, spec_id)
     return proposals

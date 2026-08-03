@@ -75,9 +75,9 @@ def _build_refinement_prompt(
         f"Target schema:\n{target_schema.model_dump_json(indent=2)}\n\n"
         f"{validation_section}"
         f"User feedback:\n{feedback}\n\n"
-        "Return JSON: {\"proposals\": [{\"target_column\": ..., "
-        "\"field\": ..., \"old_value\": ..., \"new_value\": ..., "
-        "\"reason\": ...}]}"
+        'Return JSON: {"proposals": [{"target_column": ..., '
+        '"field": ..., "old_value": ..., "new_value": ..., '
+        '"reason": ...}]}'
     )
     return [prompt, {"role": "user", "content": user_content}]
 
@@ -118,15 +118,17 @@ def propose_refinements(
         if existing is None:
             continue
 
-        proposals.append({
-            "column_id": existing.get("id"),
-            "target_table": existing.get("target_table"),
-            "target_column": target_column,
-            "field": field,
-            "old_value": old_value or existing.get(field),
-            "new_value": new_value,
-            "reason": reason,
-        })
+        proposals.append(
+            {
+                "column_id": existing.get("id"),
+                "target_table": existing.get("target_table"),
+                "target_column": target_column,
+                "field": field,
+                "old_value": old_value or existing.get(field),
+                "new_value": new_value,
+                "reason": reason,
+            }
+        )
 
     return proposals
 
@@ -152,13 +154,12 @@ def store_feedback(
             "timestamp": datetime.now(UTC).isoformat(),
         }
         from dependencies import get_artifact_store
+
         store = get_artifact_store()
         feedback_dir = store.folder(spec_id) / "feedback"
         feedback_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
-        (feedback_dir / f"{ts}.json").write_text(
-            json.dumps(feedback_record, indent=2)
-        )
+        (feedback_dir / f"{ts}.json").write_text(json.dumps(feedback_record, indent=2))
 
         embedding = get_embedding(feedback_text)
         create_extracted_evidence(

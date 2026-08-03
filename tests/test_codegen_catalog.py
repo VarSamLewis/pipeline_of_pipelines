@@ -53,10 +53,7 @@ def test_generated_pipeline_honours_csv_catalog_settings(tmp_path: Path) -> None
     source_dir.mkdir()
     source_path = source_dir / "clients.csv"
     contents = (
-        "Client export\r\n"
-        "id;name;note\r\n"
-        '1;André;"uses; delimiter"\r\n'
-        "2;Zoë;\r\n"
+        'Client export\r\nid;name;note\r\n1;André;"uses; delimiter"\r\n2;Zoë;\r\n'
     ).encode("cp1252")
     source_path.write_bytes(contents)
     catalog = discover_source_tables(
@@ -153,9 +150,7 @@ def test_generated_pipeline_disambiguates_identical_sheet_names(
     )
     mapping = {
         "target_schema_json": schema.model_dump(mode="json"),
-        "source_catalogs": [
-            catalog.model_dump(mode="json") for catalog in catalogs
-        ],
+        "source_catalogs": [catalog.model_dump(mode="json") for catalog in catalogs],
         "columns": [
             {
                 "target_table": "records",
@@ -176,4 +171,3 @@ def test_generated_pipeline_disambiguates_identical_sheet_names(
 
     result = pl.read_csv(output_dir / "records.csv")
     assert result.to_dicts() == [{"selected_value": "chosen"}]
-

@@ -14,9 +14,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-DEFAULT_DATABASE_URL = (
-    "postgresql+psycopg://postgres:postgres@localhost:5432/pipeline"
-)
+DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/pipeline"
 
 
 def _as_bool(value: str | None, *, default: bool = False) -> bool:
@@ -90,9 +88,7 @@ class Settings:
             openai_api_key=values.get("OPENAI_API_KEY"),
             openai_base_url=values.get("OPENAI_BASE_URL"),
             mapping_model=values.get("MAPPING_MODEL", "gpt-4o-mini"),
-            embedding_model=values.get(
-                "EMBEDDING_MODEL", "text-embedding-3-small"
-            ),
+            embedding_model=values.get("EMBEDDING_MODEL", "text-embedding-3-small"),
             workos_client_id=values.get("WORKOS_CLIENT_ID", ""),
             workos_api_key=values.get("WORKOS_API_KEY", ""),
             workos_redirect_uri=values.get(
@@ -110,6 +106,7 @@ class Settings:
             session_max_age_seconds=int(values.get("SESSION_MAX_AGE", "86400")),
             auth_bypass_local=_as_bool(values.get("AUTH_BYPASS_LOCAL")),
         )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

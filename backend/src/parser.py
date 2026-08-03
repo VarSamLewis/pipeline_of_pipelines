@@ -263,9 +263,7 @@ def _discover_csv(
     widths = Counter(len(row) for row in non_blank)
     width = widths.most_common(1)[0][0]
     ragged = [
-        index + 1
-        for index, row in enumerate(parsed_rows)
-        if row and len(row) != width
+        index + 1 for index, row in enumerate(parsed_rows) if row and len(row) != width
     ]
     table_warnings: list[ParseWarning] = []
     if ragged:
@@ -284,11 +282,7 @@ def _discover_csv(
     ]
     header_index = max(range(candidate_count), key=scores.__getitem__)
     headers = padded_rows[header_index]
-    rows = [
-        row
-        for row in padded_rows[header_index + 1 :]
-        if row != headers
-    ]
+    rows = [row for row in padded_rows[header_index + 1 :] if row != headers]
     if header_index:
         table_warnings.append(
             ParseWarning(
@@ -296,9 +290,7 @@ def _discover_csv(
                 message=f"Detected {header_index} preamble/title row(s).",
             )
         )
-    repeated_headers = sum(
-        row == headers for row in padded_rows[header_index + 1 :]
-    )
+    repeated_headers = sum(row == headers for row in padded_rows[header_index + 1 :])
     if repeated_headers:
         table_warnings.append(
             ParseWarning(
@@ -449,8 +441,7 @@ def _discover_xlsx(
                 data_rows = [
                     row
                     for row in region_rows[header_offset + 1 :]
-                    if any(value not in (None, "") for value in row)
-                    and row != headers
+                    if any(value not in (None, "") for value in row) and row != headers
                 ]
                 min_row = start + header_offset + 1
                 max_row = end + 1

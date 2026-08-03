@@ -95,6 +95,7 @@ from workflow import (
 
 app = APIRouter()
 
+
 @app.get("/login")
 def login_page(request: Request) -> RedirectResponse:
     """Redirect to the upload page or WorkOS AuthKit login."""
@@ -261,9 +262,9 @@ def list_clients_endpoint(
     from sqlmodel import select
 
     with get_session() as session:
-        statement = select(Client).order_by(
-            cast(Any, Client.created_at).desc()
-        ).limit(limit)
+        statement = (
+            select(Client).order_by(cast(Any, Client.created_at).desc()).limit(limit)
+        )
         clients = session.exec(statement).all()
         return [
             {
@@ -554,9 +555,7 @@ def upload_target_schema(
 
         return {
             "client_code": client_code,
-            "schema_path": (
-                f"target-schemas/{client_code}/target_schema.json"
-            ),
+            "schema_path": (f"target-schemas/{client_code}/target_schema.json"),
             "schema": schema.model_dump(mode="json"),
         }
 
@@ -1168,9 +1167,9 @@ def query_audit_log(
             statement = statement.where(ALModel.entity_id == entity_id)
         if event_type:
             statement = statement.where(ALModel.event_type == event_type)
-        statement = statement.order_by(
-            cast(Any, ALModel.recorded_at).desc()
-        ).limit(limit)
+        statement = statement.order_by(cast(Any, ALModel.recorded_at).desc()).limit(
+            limit
+        )
         logs = session.exec(statement).all()
         return [
             {

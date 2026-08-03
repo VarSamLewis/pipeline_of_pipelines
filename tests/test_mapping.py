@@ -387,9 +387,7 @@ def test_validate_mapping_columns_rejects_cross_table_column_id() -> None:
 
     results = validate_mapping_columns([mapping], target_schema, catalogs)
 
-    assert any(
-        "does not belong" in error for error in results[0]["validation_errors"]
-    )
+    assert any("does not belong" in error for error in results[0]["validation_errors"])
 
 
 def test_check_target_schema_coverage_reports_missing_columns() -> None:
@@ -571,9 +569,7 @@ def test_validate_lookup_accepts_valid_key() -> None:
         }
     ]
 
-    results = validate_mapping_columns(
-        [mapping], target_schema, catalogs
-    )
+    results = validate_mapping_columns([mapping], target_schema, catalogs)
 
     assert results[0]["validation_errors"] == []
 
@@ -624,11 +620,7 @@ def test_validate_aggregation_group_key_not_found() -> None:
         }
     ]
 
-    results = validate_mapping_columns(
-        [mapping], target_schema, catalogs
-    )
+    results = validate_mapping_columns([mapping], target_schema, catalogs)
 
     errors = results[0]["validation_errors"]
-    assert any(
-        "aggregation_group_key" in e and "wrong_key" in e for e in errors
-    )
+    assert any("aggregation_group_key" in e and "wrong_key" in e for e in errors)

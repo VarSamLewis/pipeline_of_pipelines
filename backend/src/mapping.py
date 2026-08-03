@@ -214,9 +214,7 @@ def resolve_composite_keys(
                 continue
             table_entry = _resolve_table_key(table_key, tbl_index)
             if table_entry is None:
-                errors.append(
-                    f"{field_name} {table_key!r} is not in the catalog"
-                )
+                errors.append(f"{field_name} {table_key!r} is not in the catalog")
                 continue
             setattr(mapping, field_name, table_entry.get("source_table_id", ""))
 
@@ -681,19 +679,15 @@ def propose_mapping_spec(
     resolution_errors = resolve_composite_keys(proposed, source_catalogs)
     if resolution_errors:
         raise ValueError(
-            "LLM mapping failed source resolution: "
-            + "; ".join(resolution_errors)
+            "LLM mapping failed source resolution: " + "; ".join(resolution_errors)
         )
     validation = validate_mapping_columns(proposed, target_schema, source_catalogs)
     validation_errors = [
-        error
-        for result in validation
-        for error in result["validation_errors"]
+        error for result in validation for error in result["validation_errors"]
     ]
     if validation_errors:
         raise ValueError(
-            "LLM mapping failed validation: "
-            + "; ".join(validation_errors)
+            "LLM mapping failed validation: " + "; ".join(validation_errors)
         )
 
     delete_mapping_columns(session, mapping_spec_id)
@@ -793,9 +787,7 @@ def validate_mapping_columns(
                     f"{ref.source_column_id!r} does not match the catalog"
                 )
         if mapping.transformation_type == "lookup" and mapping.lookup_source_table:
-            lookup_tbl = catalog_by_table_id.get(
-                mapping.lookup_source_table
-            )
+            lookup_tbl = catalog_by_table_id.get(mapping.lookup_source_table)
             if lookup_tbl is None:
                 errors.append(
                     f"lookup_source_table "
@@ -806,9 +798,7 @@ def validate_mapping_columns(
             mapping.transformation_type == "aggregation"
             and mapping.aggregation_source_table
         ):
-            agg_tbl = catalog_by_table_id.get(
-                mapping.aggregation_source_table
-            )
+            agg_tbl = catalog_by_table_id.get(mapping.aggregation_source_table)
             if agg_tbl is None:
                 errors.append(
                     f"aggregation_source_table "
@@ -822,8 +812,7 @@ def validate_mapping_columns(
                 }
                 if (
                     mapping.aggregation_group_key
-                    and mapping.aggregation_group_key
-                    not in tbl_col_names
+                    and mapping.aggregation_group_key not in tbl_col_names
                 ):
                     errors.append(
                         f"aggregation_group_key "

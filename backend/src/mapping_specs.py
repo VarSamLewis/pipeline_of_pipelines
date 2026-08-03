@@ -28,9 +28,7 @@ def _column_to_dict(column: MappingColumn) -> dict[str, Any]:
         "target_column": column.target_column,
         "source_columns": column.source_columns_json,
         "transformation_logic": column.transformation_logic,
-        "polars_expression": _normalize_polars_expression(
-            column.polars_expression
-        ),
+        "polars_expression": _normalize_polars_expression(column.polars_expression),
         "transformation_type": column.transformation_type,
         "aggregation_source_table": column.aggregation_source_table,
         "aggregation_expression": _normalize_polars_expression(
@@ -40,14 +38,10 @@ def _column_to_dict(column: MappingColumn) -> dict[str, Any]:
         "lookup_source_table": column.lookup_source_table,
         "lookup_key": column.lookup_key,
         "lookup_value": column.lookup_value,
-        "filter_expression": _normalize_polars_expression(
-            column.filter_expression
-        ),
+        "filter_expression": _normalize_polars_expression(column.filter_expression),
         "tests": column.tests,
         "evidence_ids": [str(value) for value in column.evidence_ids],
-        "business_rule_ids": [
-            str(value) for value in column.business_rule_ids
-        ],
+        "business_rule_ids": [str(value) for value in column.business_rule_ids],
         "sort_order": column.sort_order,
     }
 
@@ -83,16 +77,18 @@ def _normalize_catalog(
 
     normalized_columns: list[dict[str, Any]] = []
     for col in profile_json.get("columns", []):
-        normalized_columns.append({
-            "source_column_id": col.get("column", ""),
-            "original_name": col.get("column", ""),
-            "normalized_name": col.get("column", ""),
-            "inferred_type": col.get("dtype", "String"),
-            "null_count": col.get("null_count", 0),
-            "null_rate": 0.0,
-            "cardinality": col.get("unique_count", 0),
-            "candidate_key_score": 0.0,
-        })
+        normalized_columns.append(
+            {
+                "source_column_id": col.get("column", ""),
+                "original_name": col.get("column", ""),
+                "normalized_name": col.get("column", ""),
+                "inferred_type": col.get("dtype", "String"),
+                "null_count": col.get("null_count", 0),
+                "null_rate": 0.0,
+                "cardinality": col.get("unique_count", 0),
+                "candidate_key_score": 0.0,
+            }
+        )
 
     table = {
         "source_table_id": source_table,
@@ -150,9 +146,7 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
             "client_id": str(spec.client_id),
             "version": spec.version,
             "status": spec.status.value,
-            "source_raw_file_ids": [
-                str(value) for value in spec.source_raw_file_ids
-            ],
+            "source_raw_file_ids": [str(value) for value in spec.source_raw_file_ids],
             "target_schema_json": spec.target_schema_json,
             "source_catalogs": source_catalogs,
             "description": spec.description,

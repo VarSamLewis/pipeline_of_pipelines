@@ -33,8 +33,7 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title="Pipeline of Pipelines",
         description=(
-            "Auditable data-transformation platform for heterogeneous client "
-            "files."
+            "Auditable data-transformation platform for heterogeneous client files."
         ),
         version="0.1.0",
         lifespan=lifespan,
