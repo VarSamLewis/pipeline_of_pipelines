@@ -19,6 +19,7 @@ from file_ops import (
     build_storage_key,
     compute_sha256,
     detect_file_type,
+    mime_type_for,
 )
 from models import (
     AuditLog,
@@ -220,27 +221,8 @@ def ingest_client_folder(
     for file_path in files:
         file_bytes = file_path.read_bytes()
         sha256 = compute_sha256(file_bytes)
-        mime_type = "application/octet-stream"
         file_type = detect_file_type(file_path.name, file_bytes)
-        if file_type == "csv":
-            mime_type = "text/csv"
-        elif file_type == "xlsx":
-            mime_type = (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        elif file_type == "pdf":
-            mime_type = "application/pdf"
-        elif file_type == "eml":
-            mime_type = "message/rfc822"
-        elif file_type == "txt":
-            mime_type = "text/plain"
-        elif file_type == "md":
-            mime_type = "text/markdown"
-        elif file_type == "docx":
-            mime_type = (
-                "application/vnd.openxmlformats-officedocument."
-                "wordprocessingml.document"
-            )
+        mime_type = mime_type_for(file_type)
 
         storage_key = build_storage_key(
             client.code, str(batch.id), file_path.name, sha256
@@ -260,14 +242,9 @@ def ingest_client_folder(
         raw_file_ids.append(raw_file.id)
 
         try:
-            _parse_raw_file(session, raw_file, file_bytes, file_type)
-            update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
+            parse_and_record_raw_file(session, raw_file, file_bytes, file_type)
             parsed_count += 1
-        except Exception as exc:
-            update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-            raw_file.meta = {"error": str(exc)}
-            session.add(raw_file)
-            session.commit()
+        except Exception:
             failed_count += 1
 
     return FolderIngestionResult(
@@ -325,6 +302,35 @@ def _parse_raw_file(
             chunk_index=chunk.get("chunk_index"),
             metadata=chunk.get("metadata") or {},
         )
+
+
+def parse_and_record_raw_file(
+    session: Session,
+    raw_file: RawFile,
+    file_bytes: bytes,
+    file_type: str,
+) -> None:
+    """Parse a raw file and record the outcome on the file record.
+
+    On success the file is marked PARSED. On failure the file is marked
+    FAILED with a structured parse_error in its metadata, and the original
+    exception is re-raised so the caller decides whether to continue.
+    """
+    try:
+        _parse_raw_file(session, raw_file, file_bytes, file_type)
+        update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
+    except Exception as exc:
+        update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
+        raw_file.meta = {
+            **raw_file.meta,
+            "parse_error": {
+                "code": "parse_failed",
+                "message": str(exc),
+            },
+        }
+        session.add(raw_file)
+        session.commit()
+        raise
 
 
 # ---------------------------------------------------------------------------

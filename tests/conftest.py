@@ -50,7 +50,30 @@ def setup_test_database() -> None:
     """Create tables once for the test suite when Postgres is available."""
     if POSTGRES_AVAILABLE:
         create_tables()
+        _seed_bypass_user()
     yield
+
+
+def _seed_bypass_user() -> None:
+    """Persist the synthetic local-dev user so audit-log foreign keys resolve."""
+    import uuid as _uuid
+
+    from db_ops import get_session
+    from models import User, UserRole
+
+    user_id = _uuid.UUID("00000000-0000-0000-0000-000000000000")
+    with get_session() as session:
+        if session.get(User, user_id) is None:
+            session.add(
+                User(
+                    id=user_id,
+                    workos_user_id="local-dev",
+                    email="local-dev@example.com",
+                    name="Local Developer",
+                    role=UserRole.ADMIN,
+                )
+            )
+            session.commit()
 
 
 @pytest.fixture
@@ -63,7 +86,11 @@ def mock_openai(monkeypatch: pytest.MonkeyPatch) -> None:
         """Return a deterministic 1536-dimension zero vector."""
         return [0.0] * 1536
 
-    def fake_call_llm(messages: list[dict[str, str]], **kwargs: object) -> dict:
+    def fake_call_llm(
+        messages: list[dict[str, str]],
+        *args: object,
+        **kwargs: object,
+    ) -> dict:
         """Return a deterministic mapping proposal for the simple test schema."""
         prompt = messages[-1]["content"]
         table_ids = re.findall(r'"source_table_id": "([^"]+)"', prompt)
@@ -121,8 +148,67 @@ def mock_openai(monkeypatch: pytest.MonkeyPatch) -> None:
             ]
         }
 
+    def fake_call_codegen_llm(
+        messages: list[dict[str, str]],
+        *args: object,
+        **kwargs: object,
+    ) -> str:
+        """Return a deterministic pipeline script for the simple test schema."""
+        return _FAKE_PIPELINE_SCRIPT
+
     monkeypatch.setattr(db_ops, "get_embedding", fake_embedding)
     monkeypatch.setattr(mapping, "call_mapping_llm", fake_call_llm)
+    monkeypatch.setattr(mapping, "call_codegen_llm", fake_call_codegen_llm)
+
+
+_FAKE_PIPELINE_SCRIPT = '''\
+"""Auto-generated test pipeline. Uses mapping.json for source resolution."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+
+null = None
+Int64 = pl.Int64
+Float64 = pl.Float64
+String = pl.String
+Date = pl.Date
+Datetime = pl.Datetime
+Boolean = pl.Boolean
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source-folder", required=True, type=Path)
+    parser.add_argument("--output-folder", default=".", type=Path)
+    args = parser.parse_args()
+
+    df: pl.DataFrame | None = None
+    for p in sorted(args.source_folder.iterdir()):
+        if p.is_file() and p.suffix == ".csv":
+            df = pl.read_csv(p, infer_schema_length=1000)
+            break
+
+    if df is None:
+        return
+
+    df = df.select([
+        pl.col("id").cast(pl.Int64).alias("record_id"),
+        pl.col("name").alias("full_name"),
+        pl.col("score").alias("score"),
+    ])
+
+    args.output_folder.mkdir(parents=True, exist_ok=True)
+    df.write_csv(args.output_folder / "records.csv")
+
+
+if __name__ == "__main__":
+    main()
+'''
 
 
 @pytest.fixture

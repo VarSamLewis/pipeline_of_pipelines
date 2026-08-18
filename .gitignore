@@ -25,6 +25,7 @@ data/execution-logs/
 data/object-store/
 data/output-folders/
 data/target-schema/
+data/target-schemas/
 # Virtual environments
 .env
 .venv

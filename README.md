@@ -228,6 +228,7 @@ Key environment variables (full list in `backend/src/config.py`):
 | `OPENAI_API_KEY` | — | Required for embeddings and mapping proposals |
 | `OPENAI_BASE_URL` | — | OpenAI-compatible base URL |
 | `MAPPING_MODEL` | `gpt-4o-mini` | Chat model for mapping proposals |
+| `CODEGEN_MODEL` | `gpt-4o-mini` | Chat model for pipeline code generation |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
 | `AUTH_BYPASS_LOCAL` | unset | When `true`, bypass WorkOS and use a synthetic admin |
 | `SESSION_SECRET_KEY` | random | Session cookie signing key (set in production) |

@@ -389,17 +389,22 @@ def build_mapping_prompt(
     return [prompt, {"role": "user", "content": user_content}]
 
 
-def build_codegen_retry_prompt(
+def build_codegen_prompt(
     target_schema: TargetSchema,
     source_catalogs: list[dict[str, Any]],
     evidence_items: list[ExtractedEvidence],
     business_rules: list[BusinessRule],
     raw_file_summary: list[dict[str, Any]],
     mapping_json: str,
-    failed_code: str,
-    error_message: str,
+    base_code: str,
+    error_message: str | None = None,
 ) -> list[dict[str, str]]:
-    """Build a prompt asking the LLM to fix generated pipeline code."""
+    """Build a prompt for LLM codegen of pipeline.py.
+
+    When *error_message* is ``None``, *base_code* is a deterministic draft to
+    fix and complete.  When *error_message* is provided, *base_code* is a
+    failing pipeline that needs correction.
+    """
     evidence_entries = [
         f"Evidence ID {e.id}:\n{e.content[:800]}" for e in evidence_items
     ]
@@ -409,17 +414,43 @@ def build_codegen_retry_prompt(
     col_index = _build_catalog_index(source_catalogs)
     source_index_text = "\n".join(f"- {key}" for key in sorted(col_index))
 
-    prompt = {
-        "role": "system",
-        "content": (
+    if error_message is not None:
+        system_content = (
             "You are a Polars-pipeline code generator. Given a target schema, "
             "source catalog, approved mappings, evidence, business rules, a "
             "failing pipeline.py, and the runtime error, produce a corrected "
             "standalone Polars pipeline.py that fixes the error while preserving "
             "the approved mappings. Output ONLY valid Python code, no markdown "
             "wrappers or explanation."
-        ),
-    }
+        )
+        code_block = f"Failed pipeline.py:\n```python\n{base_code}\n```\n\n"
+        error_block = f"Runtime error:\n{error_message}\n\n"
+        instructions = (
+            "Return ONLY corrected Python code that implements the same "
+            "approved mappings. The script must read source files from "
+            "--source-folder and write results to --output-folder as CSV. "
+            "Use Polars API. Fix the error shown above."
+        )
+    else:
+        system_content = (
+            "You are a Polars-pipeline code generator. Given a target schema, "
+            "source catalog, approved mappings, evidence, business rules, and "
+            "a deterministic draft pipeline, produce a correct standalone "
+            "Polars pipeline.py. The draft's harness (CLI args, source loading, "
+            "hash verification, dtype enforcement, CSV writing) is correct — "
+            "preserve it. Fix and complete the transformation logic so it "
+            "faithfully implements every mapping column, including "
+            "transformation_logic prose (lookups, expressions). Output ONLY "
+            "valid Python code, no markdown wrappers or explanation."
+        )
+        code_block = f"Draft pipeline.py:\n```python\n{base_code}\n```\n\n"
+        error_block = ""
+        instructions = (
+            "Return ONLY Python code that implements the approved mappings. "
+            "The script must read source files from --source-folder and write "
+            "results to --output-folder as CSV. Use Polars API."
+        )
+
     user_content = (
         f"Target schema:\n{target_schema.model_dump_json(indent=2)}\n\n"
         f"Source files:\n{json.dumps(raw_file_summary, indent=2)}\n\n"
@@ -431,14 +462,11 @@ def build_codegen_retry_prompt(
         f"{mapping_json}\n\n"
         f"Evidence from vector database:\n{evidence_text}\n\n"
         f"Business rules:\n{rules_text}\n\n"
-        f"Failed pipeline.py:\n```python\n{failed_code}\n```\n\n"
-        f"Runtime error:\n{error_message}\n\n"
-        "Return ONLY corrected Python code that implements the same "
-        "approved mappings. The script must read source files from "
-        "--source-folder and write results to --output-folder as CSV. "
-        "Use Polars API. Fix the error shown above."
+        f"{code_block}"
+        f"{error_block}"
+        f"{instructions}"
     )
-    return [prompt, {"role": "user", "content": user_content}]
+    return [{"role": "system", "content": system_content}, {"role": "user", "content": user_content}]
 
 
 def call_codegen_llm(

@@ -11,6 +11,7 @@ All outputs are shaped by the supplied TargetSchema.
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
+from config import get_settings
 from db_ops import create_generated_artifact, get_raw_file_by_id
 from file_ops import ObjectStore
 from mapping_specs import load_mapping_spec, load_target_schema_from_spec
@@ -212,6 +214,150 @@ def concat(*args: Any) -> pl.Expr:
         pl.lit(x) if not isinstance(x, pl.Expr) else x for x in args
     ])
 """
+
+# ---------------------------------------------------------------------------
+# LLM codegen
+# ---------------------------------------------------------------------------
+
+
+def _gather_codegen_context(spec_id: uuid.UUID) -> dict[str, Any]:
+    """Gather catalogs, evidence, rules, and file summaries for codegen."""
+    from db_ops import get_session, get_spreadsheet_profile, search_evidence_by_text
+    from mapping import _gather_targeted_evidence
+    from models import BusinessRule, RawFile
+    from sqlmodel import select
+
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise ValueError(f"Mapping spec not found: {spec_id}")
+
+        mapping_spec = load_mapping_spec(spec_id)
+        target_schema = load_target_schema_from_spec(mapping_spec)
+
+        raw_file_records = [
+            session.get(RawFile, rid) for rid in spec.source_raw_file_ids
+        ]
+        raw_files: list[RawFile] = [rf for rf in raw_file_records if rf is not None]
+
+        source_catalogs: list[dict[str, Any]] = []
+        for raw_file in raw_files:
+            profile = get_spreadsheet_profile(session, raw_file.id)
+            if profile:
+                source_catalogs.append(profile.profile_json)
+
+        raw_file_summary = [
+            {
+                "filename": rf.original_filename,
+                "mime_type": rf.mime_type,
+                "raw_file_id": str(rf.id),
+            }
+            for rf in raw_files
+        ]
+
+        evidence_items = _gather_targeted_evidence(
+            session,
+            spec.client_id,
+            target_schema,
+            source_catalogs,
+            search_evidence_by_text=search_evidence_by_text,
+            top_k_per_query=5,
+            max_total=40,
+        )
+        business_rules = list(
+            session.exec(
+                select(BusinessRule).where(
+                    BusinessRule.client_id == spec.client_id,
+                    BusinessRule.status == "approved",
+                )
+            ).all()
+        )
+
+    return {
+        "source_catalogs": source_catalogs,
+        "evidence_items": evidence_items,
+        "business_rules": business_rules,
+        "raw_file_summary": raw_file_summary,
+        "mapping_spec": mapping_spec,
+        "target_schema": target_schema,
+    }
+
+
+def _extract_python_code(text: str) -> str:
+    """Strip markdown fences and leading/trailing whitespace from LLM output."""
+    code = text.strip()
+    if code.startswith("```python"):
+        code = code[len("```python") :]
+    elif code.startswith("```"):
+        code = code[3:]
+    if code.endswith("```"):
+        code = code[:-3]
+    return code.strip()
+
+
+def _validate_generated_code(code: str) -> None:
+    """Validate generated pipeline code structure.
+
+    Raises ``RuntimeError`` if the code is invalid.
+    """
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        raise RuntimeError(f"LLM returned invalid Python: {exc}") from exc
+    if "--source-folder" not in code:
+        raise RuntimeError("Generated pipeline does not handle --source-folder")
+    if "--output-folder" not in code:
+        raise RuntimeError("Generated pipeline does not handle --output-folder")
+
+
+def _codegen_with_context(
+    spec_id: uuid.UUID,
+    base_code: str,
+    error_message: str | None = None,
+) -> str:
+    """Generate pipeline.py via LLM using mapping context + a base code template."""
+    from mapping import build_codegen_prompt, call_codegen_llm
+
+    context = _gather_codegen_context(spec_id)
+    mapping_json = json.dumps(
+        context["mapping_spec"].get("columns", []), indent=2, default=str
+    )
+    messages = build_codegen_prompt(
+        context["target_schema"],
+        context["source_catalogs"],
+        context["evidence_items"],
+        context["business_rules"],
+        context["raw_file_summary"],
+        mapping_json,
+        base_code,
+        error_message=error_message,
+    )
+    settings = get_settings()
+    code = call_codegen_llm(
+        messages,
+        model=settings.codegen_model,
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+    )
+    code = _extract_python_code(code)
+    _validate_generated_code(code)
+    return code
+
+
+def generate_pipeline_code(
+    mapping_spec: dict[str, Any],
+    target_schema: TargetSchema,
+    spec_id: uuid.UUID | None = None,
+) -> str:
+    """Generate pipeline code via LLM, using the deterministic draft as template.
+
+    When *spec_id* is ``None`` the deterministic draft is returned directly.
+    """
+    draft = generate_polars_script(mapping_spec, target_schema)
+    if spec_id is not None:
+        return _codegen_with_context(spec_id, draft)
+    return draft
+
 
 # ---------------------------------------------------------------------------
 # Artifact generation
@@ -472,10 +618,12 @@ from openpyxl.utils import range_boundaries
 def generate_polars_pipeline_script(
     mapping_spec: dict[str, Any],
     target_schema: TargetSchema,
+    *,
+    spec_id: uuid.UUID | None = None,
 ) -> GeneratedPipelineScript:
     """Generate a standalone single-file Polars pipeline script."""
     target_tables = sorted({c["target_table"] for c in mapping_spec["columns"]})
-    content = generate_polars_script(mapping_spec, target_schema)
+    content = generate_pipeline_code(mapping_spec, target_schema, spec_id)
     return GeneratedPipelineScript(
         file_path=Path("pipeline.py"),
         content=content,
@@ -509,7 +657,9 @@ def generate_artifact_set(
     artifacts: list[GeneratedArtifact] = []
     with get_session() as session:
         # single-file Polars pipeline
-        pipeline = generate_polars_pipeline_script(mapping_spec, target_schema)
+        pipeline = generate_polars_pipeline_script(
+            mapping_spec, target_schema, spec_id=spec_id
+        )
         pipeline_path = output_folder / "pipeline.py"
         pipeline_path.write_text(pipeline.content)
         artifacts.append(
@@ -565,7 +715,9 @@ def generate_output_folder(
     mapping_path.write_text(json.dumps(mapping_file.content, indent=2, default=str))
 
     # Write pipeline.py
-    pipeline = generate_polars_pipeline_script(mapping_spec, target_schema)
+    pipeline = generate_polars_pipeline_script(
+        mapping_spec, target_schema, spec_id=spec_id
+    )
     pipeline_path = output_folder / "pipeline.py"
     pipeline_path.write_text(pipeline.content)
 
@@ -641,6 +793,7 @@ def execute_generated_pipeline(
                 str(output_folder),
             ],
             capture_output=True,
+            timeout=300,
         )
         if result.returncode != 0:
             stderr = result.stderr.decode(errors="replace")

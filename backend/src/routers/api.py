@@ -46,8 +46,6 @@ from db_ops import (
     approve_business_rule,
     create_business_rule,
     create_mapping_spec,
-    create_raw_file,
-    get_mapping_spec,
     get_raw_file_by_id,
     get_session,
     get_spreadsheet_profile,
@@ -68,11 +66,6 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
-from file_ops import (
-    build_storage_key,
-    compute_sha256,
-    detect_file_type,
-)
 from models import PipelineOutputFolder, TargetSchema
 from repositories.clients import (
     create_client,
@@ -88,9 +81,13 @@ from workflow import (
     generate_artifacts,
     get_mapping_review,
     get_result_review,
+    overwrite_pipeline_code,
+    parse_raw_file,
     propose_mapping,
     reject_mapping,
     reject_result,
+    store_raw_file_upload,
+    update_mapping_column,
 )
 
 app = APIRouter()
@@ -399,49 +396,18 @@ def upload_raw_file(
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Upload a raw file into immutable object storage and register metadata."""
-    with get_session() as session:
-        client = get_client_by_code(session, client_code)
-        if client is None:
-            raise HTTPException(status_code=404, detail="Client not found")
-        batch = get_ingestion_batch(session, batch_id)
-        if batch is None or batch.client_id != client.id:
-            raise HTTPException(status_code=404, detail="Batch not found")
-
-        contents = file.file.read()
-        sha256 = compute_sha256(contents)
-        mime_type = file.content_type or "application/octet-stream"
-        file_type = detect_file_type(file.filename or "unknown", contents)
-        if file_type == "csv":
-            mime_type = "text/csv"
-        elif file_type == "xlsx":
-            mime_type = (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-        storage_key = build_storage_key(
-            client.code, str(batch.id), file.filename or "unknown", sha256
-        )
-        object_store = get_object_store()
-        object_store.put(storage_key, contents)
-
-        raw_file = create_raw_file(
-            session=session,
-            client_id=client.id,
-            ingestion_batch_id=batch.id,
-            original_filename=file.filename or "unknown",
-            storage_key=storage_key,
-            sha256=sha256,
-            size_bytes=len(contents),
-            mime_type=mime_type,
-            metadata=json.loads(metadata),
-        )
-        return {
-            "id": str(raw_file.id),
-            "original_filename": raw_file.original_filename,
-            "storage_key": raw_file.storage_key,
-            "sha256": raw_file.sha256,
-            "status": raw_file.status.value,
-        }
+    parsed_metadata = json.loads(metadata)
+    try:
+        raw_file = store_raw_file_upload(client_code, batch_id, file, parsed_metadata)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "id": str(raw_file.id),
+        "original_filename": raw_file.original_filename,
+        "storage_key": raw_file.storage_key,
+        "sha256": raw_file.sha256,
+        "status": raw_file.status.value,
+    }
 
 
 @app.get("/raw-files/{raw_file_id}")
@@ -466,39 +432,17 @@ def get_raw_file(
 
 
 @app.post("/raw-files/{raw_file_id}/parse")
-def parse_raw_file(
+def parse_raw_file_endpoint(
     raw_file_id: uuid.UUID,
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Parse a raw file into structured facts, profiles, and evidence."""
-    from db_ops import _parse_raw_file, update_raw_file_status
-    from models import FileStatus
-
-    with get_session() as session:
-        raw_file = get_raw_file_by_id(session, raw_file_id)
-        if raw_file is None:
-            raise HTTPException(status_code=404, detail="Raw file not found")
-
-        object_store = get_object_store()
-        file_bytes = object_store.get(raw_file.storage_key)
-        file_type = detect_file_type(raw_file.original_filename, file_bytes)
-
-        try:
-            _parse_raw_file(session, raw_file, file_bytes, file_type)
-            update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
-        except Exception as exc:
-            update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-            raw_file.meta = {"error": str(exc)}
-            session.add(raw_file)
-            session.commit()
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        profile = get_spreadsheet_profile(session, raw_file.id)
-        return {
-            "raw_file_id": str(raw_file.id),
-            "status": raw_file.status.value,
-            "profile": profile.profile_json if profile else None,
-        }
+    try:
+        return parse_raw_file(raw_file_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/clients/{client_code}/ingest-folder")
@@ -868,35 +812,27 @@ def update_mapping_column_endpoint(
     user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
     """Update a single mapping column (reviewer+)."""
-    from models import MappingColumn
-
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise HTTPException(status_code=404, detail="Mapping spec not found")
-        column = session.get(MappingColumn, column_id)
-        if column is None or column.mapping_spec_id != spec_id:
-            raise HTTPException(status_code=404, detail="Mapping column not found")
-
-        if "transformation_logic" in payload:
-            column.transformation_logic = payload["transformation_logic"]
-        if "polars_expression" in payload:
-            column.polars_expression = payload["polars_expression"]
-        if "source_columns" in payload:
-            column.source_columns_json = payload["source_columns"]
-        if "tests" in payload:
-            column.tests = payload["tests"]
-        session.add(column)
-        session.commit()
-        session.refresh(column)
-        return {
-            "id": str(column.id),
-            "target_table": column.target_table,
-            "target_column": column.target_column,
-            "transformation_logic": column.transformation_logic,
-            "polars_expression": column.polars_expression,
-            "tests": column.tests,
-        }
+    fields: dict[str, Any] = {}
+    if "transformation_logic" in payload:
+        fields["transformation_logic"] = payload["transformation_logic"]
+    if "polars_expression" in payload:
+        fields["polars_expression"] = payload["polars_expression"]
+    if "source_columns" in payload:
+        fields["source_columns_json"] = payload["source_columns"]
+    if "tests" in payload:
+        fields["tests"] = payload["tests"]
+    try:
+        column = update_mapping_column(spec_id, column_id, fields, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "id": str(column.id),
+        "target_table": column.target_table,
+        "target_column": column.target_column,
+        "transformation_logic": column.transformation_logic,
+        "polars_expression": column.polars_expression,
+        "tests": column.tests,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -968,27 +904,10 @@ def update_generated_pipeline_py(
     contract for the edited file. The mapping.json and audit log remain
     unchanged; the edited script is used on the next execution.
     """
-    store = get_artifact_store()
     try:
-        store.read_artifact(folder_id, "pipeline.py")
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail="pipeline.py not found",
-        ) from None
-    content = payload.get("content", "")
-    store.write_artifact(folder_id, "pipeline.py", content.encode("utf-8"))
-    with get_session() as session:
-        write_audit_log(
-            session,
-            "pipeline_py_edited",
-            "GeneratedPipeline",
-            folder_id,
-            user.id,
-            user.email,
-            {"folder_id": str(folder_id)},
-        )
-    return {"folder_id": str(folder_id), "bytes": len(content)}
+        return overwrite_pipeline_code(folder_id, payload.get("content", ""), user)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/output-folders/{folder_id}/mapping.json")

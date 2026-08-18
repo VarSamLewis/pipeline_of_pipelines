@@ -39,6 +39,7 @@ class Settings:
     openai_api_key: str | None
     openai_base_url: str | None
     mapping_model: str
+    codegen_model: str
     embedding_model: str
     workos_client_id: str
     workos_api_key: str
@@ -88,6 +89,7 @@ class Settings:
             openai_api_key=values.get("OPENAI_API_KEY"),
             openai_base_url=values.get("OPENAI_BASE_URL"),
             mapping_model=values.get("MAPPING_MODEL", "gpt-4o-mini"),
+            codegen_model=values.get("CODEGEN_MODEL", "gpt-4o-mini"),
             embedding_model=values.get("EMBEDDING_MODEL", "text-embedding-3-small"),
             workos_client_id=values.get("WORKOS_CLIENT_ID", ""),
             workos_api_key=values.get("WORKOS_API_KEY", ""),

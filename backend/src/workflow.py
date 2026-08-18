@@ -17,15 +17,15 @@ import polars as pl
 from codegen import generate_artifact_set, generate_output_folder
 from config import get_settings
 from db_ops import (
-    _parse_raw_file,
     approve_mapping_spec,
     create_mapping_spec,
     create_raw_file,
     get_mapping_spec,
     get_raw_file_by_id,
     get_session,
+    get_spreadsheet_profile,
+    parse_and_record_raw_file,
     update_mapping_spec_status,
-    update_raw_file_status,
 )
 from dependencies import get_artifact_store, get_object_store
 from file_ops import (
@@ -33,19 +33,17 @@ from file_ops import (
     build_storage_key,
     compute_sha256,
     detect_file_type,
+    mime_type_for,
 )
 from mapping import (
-    _gather_targeted_evidence,
-    build_codegen_retry_prompt,
-    call_codegen_llm,
     propose_mapping_spec,
 )
 from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import (
     Client,
     ExecutionRun,
-    FileStatus,
     GeneratedArtifact,
+    MappingColumn,
     MappingSpec,
     MappingSpecStatus,
     PipelineOutputFolder,
@@ -64,6 +62,7 @@ from repositories.clients import (
     create_ingestion_batch,
     get_client_by_code,
     get_client_by_id,
+    get_ingestion_batch,
 )
 from repositories.executions import (
     approve_result as approve_result_record,
@@ -140,22 +139,21 @@ def _store_raw_file(
     batch_id: uuid.UUID,
     upload: Any,
     object_store: ObjectStore,
-) -> uuid.UUID:
+    metadata: dict[str, Any] | None = None,
+) -> RawFile:
     """Store one uploaded file in object storage and register a RawFile record."""
     filename = upload.filename or "unknown"
     contents = upload.file.read()
     sha256 = compute_sha256(contents)
     file_type = detect_file_type(filename, contents)
-    mime_type = upload.content_type or "application/octet-stream"
-    if file_type == "csv":
-        mime_type = "text/csv"
-    elif file_type == "xlsx":
-        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    mime_type = mime_type_for(
+        file_type, upload.content_type or "application/octet-stream"
+    )
 
     storage_key = build_storage_key(client.code, str(batch_id), filename, sha256)
     object_store.put(storage_key, contents)
 
-    raw_file = create_raw_file(
+    return create_raw_file(
         session=session,
         client_id=client.id,
         ingestion_batch_id=batch_id,
@@ -164,9 +162,56 @@ def _store_raw_file(
         sha256=sha256,
         size_bytes=len(contents),
         mime_type=mime_type,
-        metadata={},
+        metadata=metadata,
     )
-    return raw_file.id
+
+
+def store_raw_file_upload(
+    client_code: str,
+    batch_id: uuid.UUID,
+    upload: Any,
+    metadata: dict[str, Any] | None = None,
+) -> RawFile:
+    """Store one uploaded file for an existing client batch.
+
+    Raises:
+        ValueError: If the client or batch does not exist.
+    """
+    with get_session() as session:
+        client = get_client_by_code(session, client_code)
+        if client is None:
+            raise ValueError("Client not found")
+        batch = get_ingestion_batch(session, batch_id)
+        if batch is None or batch.client_id != client.id:
+            raise ValueError("Batch not found")
+        return _store_raw_file(
+            session, client, batch.id, upload, get_object_store(), metadata
+        )
+
+
+def parse_raw_file(raw_file_id: uuid.UUID) -> dict[str, Any]:
+    """Parse a raw file into profiles and evidence, recording the outcome.
+
+    Raises:
+        ValueError: If the raw file does not exist.
+        RuntimeError: If parsing fails (after the failure is recorded).
+    """
+    with get_session() as session:
+        raw_file = get_raw_file_by_id(session, raw_file_id)
+        if raw_file is None:
+            raise ValueError("Raw file not found")
+        data = get_object_store().get(raw_file.storage_key)
+        file_type = detect_file_type(raw_file.original_filename, data)
+        try:
+            parse_and_record_raw_file(session, raw_file, data, file_type)
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
+        profile = get_spreadsheet_profile(session, raw_file.id)
+        return {
+            "raw_file_id": str(raw_file.id),
+            "status": raw_file.status.value,
+            "profile": profile.profile_json if profile else None,
+        }
 
 
 def ingest_and_propose(
@@ -206,10 +251,8 @@ def ingest_and_propose(
 
         raw_file_ids: list[uuid.UUID] = []
         for upload in source_uploads:
-            raw_file_id = _store_raw_file(
-                session, client, batch.id, upload, object_store
-            )
-            raw_file_ids.append(raw_file_id)
+            raw_file = _store_raw_file(session, client, batch.id, upload, object_store)
+            raw_file_ids.append(raw_file.id)
 
         target_schema = _save_target_schema(client.code, target_schema_bytes)
 
@@ -223,25 +266,15 @@ def ingest_and_propose(
 
         # Parse source files to extract evidence and profiles.
         for raw_file_id in raw_file_ids:
-            raw_file = get_raw_file_by_id(session, raw_file_id)
-            if raw_file is None:
+            stored_file = get_raw_file_by_id(session, raw_file_id)
+            if stored_file is None:
                 continue
-            file_type = detect_file_type(raw_file.original_filename)
-            data = object_store.get(raw_file.storage_key)
+            data = object_store.get(stored_file.storage_key)
+            file_type = detect_file_type(stored_file.original_filename, data)
             try:
-                _parse_raw_file(session, raw_file, data, file_type)
-                update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
-            except Exception as exc:
-                update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-                raw_file.meta = {
-                    **raw_file.meta,
-                    "parse_error": {
-                        "code": "parse_failed",
-                        "message": str(exc),
-                    },
-                }
-                session.add(raw_file)
-                session.commit()
+                parse_and_record_raw_file(session, stored_file, data, file_type)
+            except Exception:
+                continue
 
         propose_mapping_spec(
             session,
@@ -398,8 +431,7 @@ def retry_pipeline_and_execute(
     error_message: str,
 ) -> uuid.UUID:
     """Retry code generation with the failed pipeline + error, then re-execute."""
-    from db_ops import get_spreadsheet_profile, search_evidence_by_text
-    from models import BusinessRule, RawFile
+    from codegen import _codegen_with_context
 
     folder = get_artifact_store().folder(spec_id)
     pipeline_path = folder / "pipeline.py"
@@ -407,72 +439,7 @@ def retry_pipeline_and_execute(
         raise RuntimeError("pipeline.py not found in output folder")
     failed_code = pipeline_path.read_text()
 
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise ValueError("Mapping spec not found")
-
-        mapping_spec = load_mapping_spec(spec_id)
-        target_schema = load_target_schema_from_spec(mapping_spec)
-
-        raw_file_records = [
-            session.get(RawFile, rid) for rid in spec.source_raw_file_ids
-        ]
-        raw_files: list[RawFile] = [rf for rf in raw_file_records if rf is not None]
-
-        source_catalogs: list[dict[str, Any]] = []
-        for raw_file in raw_files:
-            profile = get_spreadsheet_profile(session, raw_file.id)
-            if profile:
-                source_catalogs.append(profile.profile_json)
-
-        raw_file_summary = [
-            {
-                "filename": rf.original_filename,
-                "mime_type": rf.mime_type,
-                "raw_file_id": str(rf.id),
-            }
-            for rf in raw_files
-        ]
-
-        evidence_items = _gather_targeted_evidence(
-            session,
-            spec.client_id,
-            target_schema,
-            source_catalogs,
-            search_evidence_by_text=search_evidence_by_text,
-            top_k_per_query=5,
-            max_total=40,
-        )
-        business_rules = list(
-            session.exec(
-                select(BusinessRule).where(
-                    BusinessRule.client_id == spec.client_id,
-                    BusinessRule.status == "approved",
-                )
-            ).all()
-        )
-
-    mapping_json = json.dumps(mapping_spec.get("columns", []), indent=2, default=str)
-    messages = build_codegen_retry_prompt(
-        target_schema,
-        source_catalogs,
-        evidence_items,
-        business_rules,
-        raw_file_summary,
-        mapping_json,
-        failed_code,
-        error_message,
-    )
-
-    settings = get_settings()
-    corrected_code = call_codegen_llm(
-        messages,
-        model="gpt-4o-mini",
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
-    )
-
+    corrected_code = _codegen_with_context(spec_id, failed_code, error_message)
     pipeline_path.write_text(corrected_code)
 
     result = execute_approved_mapping(spec_id, output_folder=folder)
@@ -606,7 +573,6 @@ def apply_refinements(
     from codegen import generate_artifact_set
     from db_ops import get_session, write_audit_log
     from mapping_specs import load_mapping_spec
-    from models import MappingColumn
 
     applied: list[tuple[uuid.UUID, str, Any, Any]] = []
     with get_session() as session:
@@ -643,6 +609,38 @@ def apply_refinements(
     output_folder = get_artifact_store().folder(spec_id)
     generate_artifact_set(spec_id, output_folder)
     return load_mapping_spec(spec_id)
+
+
+def update_mapping_column(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    fields: dict[str, Any],
+    user: Any | None = None,
+) -> MappingColumn:
+    """Update one mapping column through the canonical audited refine path.
+
+    Raises:
+        ValueError: If the spec or column does not exist.
+    """
+    with get_session() as session:
+        if get_mapping_spec(session, spec_id) is None:
+            raise ValueError("Mapping spec not found")
+        column = session.get(MappingColumn, column_id)
+        if column is None or column.mapping_spec_id != spec_id:
+            raise ValueError("Mapping column not found")
+
+    changes = [
+        {"column_id": str(column_id), "field": field, "new_value": value}
+        for field, value in fields.items()
+    ]
+    apply_refinements(spec_id, changes, user)
+
+    with get_session() as session:
+        column = session.get(MappingColumn, column_id)
+        if column is None:
+            raise ValueError("Mapping column not found")
+        session.refresh(column)
+        return column
 
 
 def refine_from_results(

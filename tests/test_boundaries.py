@@ -194,7 +194,7 @@ def test_http_routes_do_not_import_stage_orchestration_internals() -> None:
             node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
         }
         assert imported_modules.isdisjoint(
-            {"codegen", "mapping", "mapping_specs", "parser", "pipeline"}
+            {"codegen", "file_ops", "mapping", "mapping_specs", "parser", "pipeline"}
         )
 
 

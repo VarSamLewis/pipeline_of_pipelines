@@ -51,6 +51,22 @@ def detect_file_type(filename: str, file_bytes: bytes | None = None) -> str:
     return "unknown"
 
 
+_MIME_TYPES: dict[str, str] = {
+    "csv": "text/csv",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+    "eml": "message/rfc822",
+    "txt": "text/plain",
+    "md": "text/markdown",
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+}
+
+
+def mime_type_for(file_type: str, default: str = "application/octet-stream") -> str:
+    """Return the canonical MIME type for a detected file type."""
+    return _MIME_TYPES.get(file_type, default)
+
+
 def load_target_schema(path: str | Path) -> TargetSchema:
     """Load a supplied target schema from a JSON file."""
     path = Path(path)

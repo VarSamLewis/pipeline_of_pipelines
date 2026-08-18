@@ -61,9 +61,11 @@ responses; all real work lives in workflow services.
 - **`feedback.py`** — chat-driven refinement: proposes column-level diffs from
   user feedback (optionally with failed-validation context), and stores each
   feedback message as durable evidence (`user_feedback` chunk).
-- **`codegen.py`** — deterministic generation of `pipeline.py` (a standalone,
-  self-contained Polars script) and `mapping.json`, plus subprocess execution
-  and dtype enforcement.
+- **`codegen.py`** — LLM-assisted generation of `pipeline.py` (a standalone,
+  self-contained Polars script) and `mapping.json`. A deterministic draft is
+  produced first, then an LLM rewrites/fixes the transformation logic while
+  preserving the harness. Also handles subprocess execution, dtype enforcement,
+  and retry codegen with error context.
 - **`pipeline.py`** — output-side: builds/executes validation tests, computes
   quality profiles, and records `ExecutionRun`, `ValidationResult`,
   `StagingTable`, `StagingColumn` metadata. Note the module-level distinction:
@@ -173,6 +175,7 @@ data/
 ## Configuration knobs
 
 See `config.py`. Notable env vars: `DATABASE_URL`, `OPENAI_API_KEY`,
-`OPENAI_BASE_URL`, `MAPPING_MODEL` (default `gpt-4o-mini`), `EMBEDDING_MODEL`
+`OPENAI_BASE_URL`, `MAPPING_MODEL` (default `gpt-4o-mini`), `CODEGEN_MODEL`
+(default `gpt-4o-mini`), `EMBEDDING_MODEL`
 (default `text-embedding-3-small`), `AUTH_BYPASS_LOCAL`, `SESSION_SECRET_KEY`,
 `SESSION_MAX_AGE`, plus WorkOS vars.
