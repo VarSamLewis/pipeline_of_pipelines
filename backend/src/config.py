@@ -41,12 +41,18 @@ class Settings:
     mapping_model: str
     codegen_model: str
     embedding_model: str
-    workos_client_id: str
-    workos_api_key: str
-    workos_redirect_uri: str
-    workos_authkit_domain: str
+    azure_openai_endpoint: str | None
+    azure_openai_api_key: str | None
+    azure_openai_api_version: str
+    entra_tenant_id: str
+    entra_client_id: str
+    entra_client_secret: str
+    entra_redirect_uri: str
+    azure_storage_account_url: str | None
+    azure_storage_connection_string: str | None
     session_secret_key: str
     session_max_age_seconds: int
+    session_cookie_secure: bool
     auth_bypass_local: bool
 
     @classmethod
@@ -91,21 +97,29 @@ class Settings:
             mapping_model=values.get("MAPPING_MODEL", "gpt-4o-mini"),
             codegen_model=values.get("CODEGEN_MODEL", "gpt-4o-mini"),
             embedding_model=values.get("EMBEDDING_MODEL", "text-embedding-3-small"),
-            workos_client_id=values.get("WORKOS_CLIENT_ID", ""),
-            workos_api_key=values.get("WORKOS_API_KEY", ""),
-            workos_redirect_uri=values.get(
-                "WORKOS_REDIRECT_URI",
+            azure_openai_endpoint=values.get("AZURE_OPENAI_ENDPOINT"),
+            azure_openai_api_key=values.get("AZURE_OPENAI_API_KEY"),
+            azure_openai_api_version=values.get(
+                "AZURE_OPENAI_API_VERSION",
+                "2024-10-21",
+            ),
+            entra_tenant_id=values.get("ENTRA_TENANT_ID", ""),
+            entra_client_id=values.get("ENTRA_CLIENT_ID", ""),
+            entra_client_secret=values.get("ENTRA_CLIENT_SECRET", ""),
+            entra_redirect_uri=values.get(
+                "ENTRA_REDIRECT_URI",
                 "http://localhost:8000/auth/callback",
             ),
-            workos_authkit_domain=values.get(
-                "WORKOS_AUTHKIT_DOMAIN",
-                "https://auth.workos.com",
+            azure_storage_account_url=values.get("AZURE_STORAGE_ACCOUNT_URL"),
+            azure_storage_connection_string=values.get(
+                "AZURE_STORAGE_CONNECTION_STRING"
             ),
             session_secret_key=values.get(
                 "SESSION_SECRET_KEY",
                 secrets.token_urlsafe(32),
             ),
             session_max_age_seconds=int(values.get("SESSION_MAX_AGE", "86400")),
+            session_cookie_secure=_as_bool(values.get("SESSION_COOKIE_SECURE")),
             auth_bypass_local=_as_bool(values.get("AUTH_BYPASS_LOCAL")),
         )
 

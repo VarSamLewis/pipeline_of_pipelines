@@ -1,156 +1,179 @@
-resource "azurerm_container_app_environment" "main" {
-  name                = local.aca_env_name
-  location            = var.location
-  resource_group_name = azurerm_resource_group.main.name
-  zone_redundant      = var.environment == "prod"
-
-  infrastructure {
-    subnet_id = azurerm_subnet.container_apps.id
-  }
-
-  tags = var.tags
+locals {
+  # Full connection string with password embedded is stored as a Key Vault
+  # secret so no credential ever appears in state or inline env.
+  database_url = "postgresql+psycopg://${var.database_username}:${urlencode(var.database_password)}@${azurerm_postgresql_flexible_server.main.fqdn}:5432/pipeline?sslmode=require"
 }
 
-# API Container App
-resource "azurerm_container_app" "api" {
-  name                = "${local.resource_name_prefix}-api"
-  location            = var.location
+resource "azurerm_key_vault_secret" "database_url" {
+  name         = "database-url"
+  value        = local.database_url
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "law-${local.resource_prefix}"
   resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  sku                 = "PerGB2018"
+  retention_in_days   = var.environment == "prod" ? 30 : 14
+  tags                = local.tags
+}
+
+resource "azurerm_container_app_environment" "main" {
+  name                       = "cae-${local.resource_prefix}"
+  resource_group_name        = azurerm_resource_group.main.name
+  location                   = azurerm_resource_group.main.location
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  infrastructure_subnet_id   = azurerm_subnet.container_apps.id
+  tags                       = local.tags
+}
+
+resource "azurerm_container_app" "api" {
+  name                         = "ca-${local.resource_prefix}-api"
+  resource_group_name          = azurerm_resource_group.main.name
   container_app_environment_id = azurerm_container_app_environment.main.id
-  managed_identities {
-    system_assigned = false
-    user_assigned   = [azurerm_user_assigned_identity.container_apps.id]
+  tags                         = local.tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  revision_mode = "Single"
+
+  # Secrets at root level, pulled from Key Vault via the system-assigned
+  # identity (no explicit identity attribute needed for system-assigned).
+  secret {
+    name                = "entra-client-secret"
+    key_vault_secret_id = azurerm_key_vault_secret.entra_client_secret.id
+  }
+
+  secret {
+    name                = "azure-openai-api-key"
+    key_vault_secret_id = azurerm_key_vault_secret.openai_api_key.id
+  }
+
+  secret {
+    name                = "session-secret"
+    key_vault_secret_id = azurerm_key_vault_secret.session_secret.id
+  }
+
+  secret {
+    name                = "database-url"
+    key_vault_secret_id = azurerm_key_vault_secret.database_url.id
+  }
+
+  secret {
+    name                = "azure-storage-connection-string"
+    key_vault_secret_id = azurerm_key_vault_secret.storage_connection_string.id
   }
 
   template {
     container {
       name   = "api"
-      image  = "${azurerm_container_registry.main.login_server}/pipeline-api:latest"
-      cpu    = 0.5
-      memory = "1Gi"
+      image  = "${azurerm_container_registry.main.login_server}/pipeline-api:${var.container_image_tag}"
+      cpu    = 1
+      memory = "2Gi"
 
-      env = [
-        { name = "DATABASE_URL", value = azurerm_key_vault_secret.database_url.value },
-        { name = "SESSION_SECRET_KEY", value = azurerm_key_vault_secret.session_secret.value },
-        { name = "ENTRA_CLIENT_ID", value = azurerm_key_vault_secret.entra_client_id.value },
-        { name = "ENTRA_CLIENT_SECRET", value = azurerm_key_vault_secret.entra_client_secret.value },
-        { name = "ENTRA_TENANT_ID", value = azurerm_key_vault_secret.entra_tenant_id.value },
-        { name = "AZURE_OPENAI_ENDPOINT", value = azurerm_key_vault_secret.azure_openai_endpoint.value },
-        { name = "AZURE_OPENAI_KEY", value = azurerm_key_vault_secret.azure_openai_key.value },
-        { name = "STORAGE_ACCOUNT_URL", value = azurerm_key_vault_secret.storage_account_url.value },
-        { name = "OPENAI_API_KEY", value = azurerm_key_vault_secret.azure_openai_key.value },
-        { name = "OPENAI_BASE_URL", value = "${azurerm_key_vault_secret.azure_openai_endpoint.value}openai/deployments/${var.openai_deployment_name}" },
-        { name = "HTTPS_ONLY", value = "true" },
-        { name = "ENVIRONMENT", value = var.environment },
-      ]
+      env {
+        name  = "ENTRA_TENANT_ID"
+        value = var.entra_tenant_id
+      }
+
+      env {
+        name  = "ENTRA_REDIRECT_URI"
+        value = "https://${azurerm_container_app.api.latest_revision_fqdn}/auth/callback"
+      }
+
+      env {
+        name  = "ENTRA_CLIENT_ID"
+        value = azuread_application.app.client_id
+      }
+
+      env {
+        name  = "AZURE_OPENAI_ENDPOINT"
+        value = "https://${azurerm_cognitive_account.openai.custom_subdomain_name}.openai.azure.com"
+      }
+
+      env {
+        name  = "AZURE_OPENAI_API_VERSION"
+        value = var.openai_api_version
+      }
+
+      env {
+        name  = "MAPPING_MODEL"
+        value = var.openai_chat_model
+      }
+
+      env {
+        name  = "CODEGEN_MODEL"
+        value = var.openai_chat_model
+      }
+
+      env {
+        name  = "EMBEDDING_MODEL"
+        value = var.openai_embedding_model
+      }
+
+      env {
+        name  = "SESSION_COOKIE_SECURE"
+        value = "true"
+      }
+
+      env {
+        name        = "ENTRA_CLIENT_SECRET"
+        secret_name = "entra-client-secret"
+      }
+
+      env {
+        name        = "AZURE_OPENAI_API_KEY"
+        secret_name = "azure-openai-api-key"
+      }
+
+      env {
+        name        = "SESSION_SECRET_KEY"
+        secret_name = "session-secret"
+      }
+
+      env {
+        name        = "DATABASE_URL"
+        secret_name = "database-url"
+      }
+
+      env {
+        name        = "AZURE_STORAGE_CONNECTION_STRING"
+        secret_name = "azure-storage-connection-string"
+      }
 
       liveness_probe {
-        http_get {
-          path = "/health"
-          port = 8000
-        }
-        initial_delay_seconds = 30
-        period_seconds        = 10
+        port          = 8000
+        transport     = "HTTP"
+        path          = "/health"
+        initial_delay = 10
       }
 
       readiness_probe {
-        http_get {
-          path = "/health"
-          port = 8000
-        }
-        initial_delay_seconds = 5
-        period_seconds        = 5
-      }
-    }
-
-    scale {
-      min_replicas = var.environment == "prod" ? 1 : 0
-      max_replicas = 10
-
-      rule {
-        name = "http-rule"
-        http {
-          metadata = {
-            concurrent_requests = "50"
-          }
-        }
+        port          = 8000
+        transport     = "HTTP"
+        path          = "/health"
+        initial_delay = 5
       }
     }
   }
 
   ingress {
-    external_enabled = true
     target_port      = 8000
+    external_enabled = true
     transport        = "auto"
-    allow_insecure   = false
 
     traffic_weight {
       latest_revision = true
-      weight          = 100
+      percentage      = 100
     }
   }
 
-  tags = var.tags
-}
-
-# Pipeline Job Container App
-resource "azurerm_container_app" "pipeline_job" {
-  name                = "${local.resource_name_prefix}-pipeline-job"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.main.name
-  container_app_environment_id = azurerm_container_app_environment.main.id
-  managed_identities {
-    system_assigned = false
-    user_assigned   = [azurerm_user_assigned_identity.container_apps.id]
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
   }
-
-  configuration {
-    trigger_type = "Event"
-    event_trigger {
-      trigger_name = "http"
-      event_type   = "http"
-    }
-  }
-
-  template {
-    container {
-      name  = "pipeline-worker"
-      image = "${azurerm_container_registry.main.login_server}/pipeline-worker:latest"
-      cpu   = 1.0
-      memory = "2Gi"
-
-      env = [
-        { name = "DATABASE_URL", value = azurerm_key_vault_secret.database_url.value },
-        { name = "AZURE_OPENAI_ENDPOINT", value = azurerm_key_vault_secret.azure_openai_endpoint.value },
-        { name = "AZURE_OPENAI_KEY", value = azurerm_key_vault_secret.azure_openai_key.value },
-        { name = "STORAGE_ACCOUNT_URL", value = azurerm_key_vault_secret.storage_account_url.value },
-        { name = "OPENAI_API_KEY", value = azurerm_key_vault_secret.azure_openai_key.value },
-        { name = "OPENAI_BASE_URL", value = "${azurerm_key_vault_secret.azure_openai_endpoint.value}openai/deployments/${var.openai_deployment_name}" },
-        { name = "ENVIRONMENT", value = var.environment },
-      ]
-    }
-
-    scale {
-      min_replicas = 0
-      max_replicas = 20
-
-      rule {
-        name = "http-rule"
-        http {
-          metadata = {
-            concurrent_requests = "1"
-          }
-        }
-      }
-    }
-  }
-
-  tags = var.tags
-}
-
-# API health endpoint route
-resource "azurerm_container_app_revision" "api_latest" {
-  container_app_name = azurerm_container_app.api.name
-  resource_group_name = azurerm_resource_group.main.name
-  revision_suffix = "latest"
 }

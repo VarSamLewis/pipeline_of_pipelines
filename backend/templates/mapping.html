@@ -116,11 +116,7 @@
                 </span>
               </td>
               <td class="col-expr">
-                {% if col.polars_expression %}
-                <code class="expr-code">{{ col.polars_expression }}</code>
-                {% elif col.filter_expression %}
-                <code class="expr-code">{{ col.filter_expression }}</code>
-                {% elif col.transformation_logic %}
+                {% if col.transformation_logic %}
                 <span class="muted">{{ col.transformation_logic }}</span>
                 {% else %}
                 <span class="muted">—</span>

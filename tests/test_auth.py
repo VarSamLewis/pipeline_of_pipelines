@@ -1,7 +1,7 @@
-"""Unit tests for the WorkOS-backed auth layer.
+"""Unit tests for the Entra ID-backed auth layer.
 
-These tests exercise role hierarchy, local bypass mode, and the WorkOS user
-metadata mapping without making network calls to WorkOS.
+These tests exercise role extraction from ID-token claims, role hierarchy,
+and local bypass mode without making network calls to Microsoft Entra ID.
 """
 
 from __future__ import annotations
@@ -20,16 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend" / "src"))
 
-from auth_service import _extract_role_from_workos_user, get_current_user, require_role
+from auth_service import _extract_role_from_claims, get_current_user, require_role
 from fastapi import HTTPException
 from models import UserRole
-
-
-class FakeWorkOSUser:
-    """Minimal stand-in for a WorkOS user object."""
-
-    def __init__(self, metadata: dict[str, str] | None = None) -> None:
-        self.metadata = metadata
 
 
 class FakeRequest:
@@ -41,18 +34,22 @@ class FakeRequest:
 
 
 def test_extract_role_defaults_to_creator() -> None:
-    """Missing or invalid metadata role defaults to creator."""
-    user = FakeWorkOSUser(metadata={})
-    assert _extract_role_from_workos_user(user) == UserRole.CREATOR
+    """Missing or invalid app roles default to creator."""
+    assert _extract_role_from_claims({"oid": "abc"}) == UserRole.CREATOR
+    assert (
+        _extract_role_from_claims({"oid": "abc", "roles": ["superuser"]})
+        == UserRole.CREATOR
+    )
 
-    user_invalid = FakeWorkOSUser(metadata={"role": "superuser"})
-    assert _extract_role_from_workos_user(user_invalid) == UserRole.CREATOR
 
-
-def test_extract_role_reads_metadata() -> None:
-    """A valid role in WorkOS metadata is parsed correctly."""
-    user = FakeWorkOSUser(metadata={"role": "admin"})
-    assert _extract_role_from_workos_user(user) == UserRole.ADMIN
+def test_extract_role_picks_highest_app_role() -> None:
+    """The highest-priority present app role is selected."""
+    assert (
+        _extract_role_from_claims({"roles": ["creator", "reviewer"]})
+        == UserRole.REVIEWER
+    )
+    assert _extract_role_from_claims({"roles": ["creator", "admin"]}) == UserRole.ADMIN
+    assert _extract_role_from_claims({"roles": ["approver"]}) == UserRole.APPROVER
 
 
 def test_local_bypass_returns_admin_user() -> None:
@@ -70,7 +67,7 @@ def test_require_role_allows_equal_or_higher_role() -> None:
 
     admin_user = User(
         id=uuid.uuid4(),
-        workos_user_id="admin-1",
+        external_user_id="admin-1",
         email="admin@example.com",
         role=UserRole.ADMIN,
     )
@@ -84,7 +81,7 @@ def test_require_role_rejects_insufficient_role() -> None:
 
     creator_user = User(
         id=uuid.uuid4(),
-        workos_user_id="creator-1",
+        external_user_id="creator-1",
         email="creator@example.com",
         role=UserRole.CREATOR,
     )

@@ -67,7 +67,7 @@ def _seed_bypass_user() -> None:
             session.add(
                 User(
                     id=user_id,
-                    workos_user_id="local-dev",
+                    external_user_id="local-dev",
                     email="local-dev@example.com",
                     name="Local Developer",
                     role=UserRole.ADMIN,

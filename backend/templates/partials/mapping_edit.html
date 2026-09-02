@@ -49,11 +49,6 @@
         <p class="muted" style="font-size:0.85rem;margin-top:0.25rem;">Leave empty for expression/lookup/aggregation to use the fields below.</p>
       </div>
 
-      <div class="form-group" data-ttype="expression">
-        <label>Polars expression</label>
-        <textarea name="polars_expression" placeholder="e.g. (pl.col('a').cast(pl.Float64) * pl.col('b')).round(2)">{{ col.polars_expression or "" }}</textarea>
-      </div>
-
       <div class="form-group" data-ttype="lookup">
         <label>Lookup source table <span class="muted">(filename::sheet)</span></label>
         <input type="text" name="lookup_source" value="{{ col.lookup_source_table or "" }}">
@@ -76,15 +71,6 @@
           <label>Group key column</label>
           <input type="text" name="aggregation_group_key" value="{{ col.aggregation_group_key or "" }}">
         </div>
-        <div class="form-group">
-          <label>Aggregation expression</label>
-          <textarea name="aggregation_expression" placeholder="e.g. (pl.col('qty') * pl.col('unit_price')).sum()">{{ col.aggregation_expression or "" }}</textarea>
-        </div>
-      </div>
-
-      <div class="form-group" data-ttype="filter">
-        <label>Filter expression</label>
-        <textarea name="filter_expression" placeholder="e.g. pl.col('status') == 'active'">{{ col.filter_expression or "" }}</textarea>
       </div>
 
       <div class="form-group">
@@ -93,7 +79,7 @@
       </div>
 
       <div class="form-group">
-        <label>LLM rationale / transformation logic</label>
+        <label>Transformation logic <span class="muted">(plain English — describe the transformation precisely)</span></label>
         <textarea name="rationale">{{ col.transformation_logic or "" }}</textarea>
       </div>
 

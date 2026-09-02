@@ -4,7 +4,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.116"
+      version = "~> 4.0"
     }
     azuread = {
       source  = "hashicorp/azuread"
@@ -22,15 +22,15 @@ terraform {
 }
 
 provider "azurerm" {
+  subscription_id = var.subscription_id
+  tenant_id       = var.tenant_id
   features {
-    resource_group {
-      prevent_deletion_if_contains_resources = false
+    key_vault {
+      purge_soft_delete_on_destroy    = false
+      recover_soft_deleted_key_vaults = true
     }
   }
 }
 
-provider "azuread" {
-  # Uses AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_CLIENT_SECRET or CLI auth
-}
-
+provider "azuread" {}
 provider "random" {}

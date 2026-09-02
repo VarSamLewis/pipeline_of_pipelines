@@ -16,7 +16,7 @@ import hashlib
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO, cast
 
 from models import TargetSchema
 
@@ -146,6 +146,70 @@ class LocalObjectStore(ObjectStore):
 
     def open(self, key: str) -> BinaryIO:
         return self._path(key).open("rb")
+
+
+class AzureBlobObjectStore(ObjectStore):
+    """Object-store implementation backed by an Azure Blob Storage container.
+
+    Uses ``DefaultAzureCredential`` (e.g. a Container App user-assigned managed
+    identity) by default; pass a connection string for local development.
+    """
+
+    def __init__(
+        self,
+        account_url: str,
+        container_name: str = "raw-files",
+        credential: Any | None = None,
+        connection_string: str | None = None,
+    ) -> None:
+        from azure.identity import DefaultAzureCredential
+        from azure.storage.blob import BlobServiceClient
+
+        if connection_string:
+            self._service = BlobServiceClient.from_connection_string(connection_string)
+        else:
+            self._service = BlobServiceClient(
+                account_url=account_url,
+                credential=credential or DefaultAzureCredential(),
+            )
+        self.container_name = container_name
+        self._container_client = self._service.get_container_client(container_name)
+        if not self._container_client.exists():
+            self._container_client.create_container()
+
+    def _client(self, key: str) -> Any:
+        return self._container_client.get_blob_client(key)
+
+    def put(self, key: str, data: bytes) -> str:
+        self._client(key).upload_blob(data, overwrite=True)
+        return key
+
+    def get(self, key: str) -> bytes:
+        blob = self._client(key)
+        if not blob.exists():
+            raise FileNotFoundError(key)
+        return cast(bytes, blob.download_blob().readall())
+
+    def exists(self, key: str) -> bool:
+        return cast(bool, self._client(key).exists())
+
+    def delete(self, key: str) -> None:
+        blob = self._client(key)
+        if blob.exists():
+            blob.delete_blob()
+
+    def open(self, key: str) -> Any:
+        blob = self._client(key)
+        if not blob.exists():
+            raise FileNotFoundError(key)
+        return blob.download_blob()
+
+    def list(self, prefix: str | None = None) -> list[str]:
+        """List blob names under the given prefix (defaults to all)."""
+        return [
+            blob_obj.name
+            for blob_obj in self._container_client.list_blobs(name_starts_with=prefix)
+        ]
 
 
 def build_storage_key(

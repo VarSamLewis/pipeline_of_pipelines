@@ -1,34 +1,12 @@
-resource "azurerm_user_assigned_identity" "container_apps" {
-  name                = "${local.resource_name_prefix}-uami"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.main.name
-  tags                = var.tags
-}
+# The Container App uses a system-assigned managed identity. Storage uses a
+# connection string and OpenAI uses an API key (both from Key Vault), so no
+# role assignments are needed for those. The only role grant is for pulling
+# images from ACR.
 
-resource "azurerm_role_assignment" "container_apps_storage" {
-  scope                = azurerm_storage_account.main.id
-  role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = azurerm_user_assigned_identity.container_apps.principal_id
-  principal_type       = "ServicePrincipal"
-}
+resource "azurerm_role_assignment" "acr_pull" {
+  scope                = azurerm_container_registry.main.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_container_app.api.identity[0].principal_id
 
-resource "azurerm_role_assignment" "container_apps_keyvault" {
-  scope                = azurerm_key_vault.main.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_user_assigned_identity.container_apps.principal_id
-  principal_type       = "ServicePrincipal"
-}
-
-resource "azurerm_role_assignment" "container_apps_postgres" {
-  scope                = azurerm_postgresql_flexible_server.main.id
-  role_definition_name = "PostgreSQL Flexible Server Contributor"
-  principal_id         = azurerm_user_assigned_identity.container_apps.principal_id
-  principal_type       = "ServicePrincipal"
-}
-
-resource "azurerm_role_assignment" "container_apps_cognitive" {
-  scope                = azurerm_cognitive_account.openai.id
-  role_definition_name = "Cognitive Services User"
-  principal_id         = azurerm_user_assigned_identity.container_apps.principal_id
-  principal_type       = "ServicePrincipal"
+  depends_on = [azurerm_container_app.api]
 }

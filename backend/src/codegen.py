@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -222,7 +223,12 @@ def concat(*args: Any) -> pl.Expr:
 
 def _gather_codegen_context(spec_id: uuid.UUID) -> dict[str, Any]:
     """Gather catalogs, evidence, rules, and file summaries for codegen."""
-    from db_ops import get_session, get_spreadsheet_profile, search_evidence_by_text
+    from db_ops import (
+        get_mapping_spec,
+        get_session,
+        get_spreadsheet_profile,
+        search_evidence_by_text,
+    )
     from mapping import _gather_targeted_evidence
     from models import BusinessRule, RawFile
     from sqlmodel import select
@@ -310,17 +316,80 @@ def _validate_generated_code(code: str) -> None:
         raise RuntimeError("Generated pipeline does not handle --output-folder")
 
 
+_EXPRESSION_FIELDS = (  # noqa: E501
+    "polars_expression",
+    "filter_expression",
+    "aggregation_expression",
+)
+
+
+def _projection_for_codegen(col: dict[str, Any]) -> dict[str, Any]:
+    """Project a mapping column for the codegen prompt.
+
+    Mappings are prose-first: Polars expression fields are stripped so the
+    model works from plain-English ``transformation_logic`` plus structured
+    parameters. For legacy specs where the prose is empty but an expression
+    was stored, the expression is inlined as read-only reference text.
+    """
+    projected = {
+        key: value for key, value in col.items() if key not in _EXPRESSION_FIELDS
+    }
+    if not (col.get("transformation_logic") or "").strip():
+        legacy = next(
+            (col.get(field) for field in _EXPRESSION_FIELDS if col.get(field)),
+            None,
+        )
+        if legacy:
+            projected["legacy_polars_reference"] = (
+                f"Legacy implementation for reference only — reimplement from "
+                f"this intent: {legacy}"
+            )
+    return projected
+
+
+def _normalize_generated_pipeline(code: str) -> str:
+    """Apply deterministic fixes to LLM-generated pipeline code.
+
+    Mirrors the safe subset of ``_normalize_polars_expression`` at whole-file
+    level. Most importantly, bare string literals passed to ``.then()`` /
+    ``.otherwise()`` are wrapped in ``pl.lit()`` — Polars would otherwise
+    interpret them as column names.
+    """
+    # LLMs often use pandas/string-style title casing or strip names.
+    code = code.replace(".str.title()", ".str.to_titlecase()")
+    code = code.replace(".str.strip()", ".str.strip_chars()")
+    # Bare string literals in then()/otherwise() are column references in
+    # Polars; wrap them as literals. Already-wrapped calls don't match.
+    code = re.sub(
+        r"\.then\((['\"])([^'\"]*)\1\)",
+        r".then(pl.lit(\1\2\1))",
+        code,
+    )
+    code = re.sub(
+        r"\.otherwise\((['\"])([^'\"]*)\1\)",
+        r".otherwise(pl.lit(\1\2\1))",
+        code,
+    )
+    return code
+
+
 def _codegen_with_context(
     spec_id: uuid.UUID,
     base_code: str,
     error_message: str | None = None,
+    focus_column: str | None = None,
 ) -> str:
     """Generate pipeline.py via LLM using mapping context + a base code template."""
     from mapping import build_codegen_prompt, call_codegen_llm
 
     context = _gather_codegen_context(spec_id)
+    columns = context["mapping_spec"].get("columns", [])
+    if focus_column is not None:
+        columns = [
+            col for col in columns if col.get("target_column") == focus_column
+        ] or context["mapping_spec"].get("columns", [])
     mapping_json = json.dumps(
-        context["mapping_spec"].get("columns", []), indent=2, default=str
+        [_projection_for_codegen(col) for col in columns], indent=2, default=str
     )
     messages = build_codegen_prompt(
         context["target_schema"],
@@ -331,6 +400,7 @@ def _codegen_with_context(
         mapping_json,
         base_code,
         error_message=error_message,
+        focus_column=focus_column,
     )
     settings = get_settings()
     code = call_codegen_llm(
@@ -340,6 +410,7 @@ def _codegen_with_context(
         base_url=settings.openai_base_url,
     )
     code = _extract_python_code(code)
+    code = _normalize_generated_pipeline(code)
     _validate_generated_code(code)
     return code
 
@@ -364,14 +435,34 @@ def generate_pipeline_code(
 # ---------------------------------------------------------------------------
 
 
+def _transformation_comment(col: dict[str, Any]) -> str:
+    """Build the English intent comment embedded above a placeholder block."""
+    target_column = col["target_column"]
+    logic = (col.get("transformation_logic") or "").strip()
+    lines = [f"# TARGET COLUMN: {target_column}"]
+    if logic:
+        lines.append(f"# Transformation: {logic}")
+    return "\n".join(lines) + "\n"
+
+
 def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
-    """Generate Python code for a single mapping column's transformation."""
+    """Generate Python code for a single mapping column's transformation.
+
+    Mappings are prose-first: expression/filter/aggregation logic is plain
+    English in ``transformation_logic``, so the deterministic draft emits a
+    syntactically valid placeholder plus the English intent comment. The LLM
+    codegen pass replaces placeholders with real implementations. Lookups are
+    fully structured and generated deterministically.
+    """
     target_column = col["target_column"]
     ttype = col.get("transformation_type", "expression")
 
     if ttype == "filter":
-        expr = col.get("filter_expression", "")
-        return f"df = df.filter({expr})\n"
+        return (
+            _transformation_comment(col)
+            + "# Transformation type: filter\n"
+            + "# PLACEHOLDER: implement this filter\n"
+        )
 
     if ttype == "lookup":
         lookup_table = col.get("lookup_source_table", "")
@@ -399,44 +490,42 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
     if ttype == "aggregation":
         agg_table = col.get("aggregation_source_table", "")
         agg_key = col.get("aggregation_group_key", "")
-        agg_expr = col.get("aggregation_expression", "")
         base_key = (
             col["source_columns"][0]["source_column"]
             if col.get("source_columns")
             else agg_key
         )
-        return textwrap.dedent(f"""\
-            _agg_df = source_dfs[{agg_table!r}]
-            _grouped = _agg_df.group_by({agg_key!r}).agg(
-                ({agg_expr}).alias({target_column!r})
-            )
-            df = df.join(
-                _grouped,
-                left_on={base_key!r},
-                right_on={agg_key!r},
-                how="left",
-            )
-        """)
+        lines = [
+            _transformation_comment(col).rstrip("\n"),
+            f"# Transformation type: aggregation from {agg_table!r} "
+            f"grouped by {agg_key!r}",
+            "# PLACEHOLDER: implement this aggregation",
+            f"_agg_df = source_dfs[{agg_table!r}]",
+            f"_grouped = _agg_df.group_by({agg_key!r}).agg(",
+            f"    pl.col({base_key!r}).alias({base_key!r}),",
+            ")",
+            "df = df.join(",
+            "    _grouped,",
+            f"    left_on={base_key!r},",
+            f"    right_on={agg_key!r},",
+            '    how="left",',
+            f").rename({{{base_key!r}: {target_column!r}}})",
+        ]
+        return "\n".join(lines) + "\n"
 
     # Default: expression
     source_columns = col.get("source_columns", [])
-    expression = col.get("polars_expression")
-    if expression:
-        from mapping import _normalize_polars_expression
-
-        expression = _normalize_polars_expression(expression)
 
     if not source_columns:
         return f"df = df.with_columns(pl.lit(None).alias({target_column!r}))\n"
 
     first_source = source_columns[0]["source_column"]
 
-    if expression:
-        return (
-            f"df = df.with_columns(\n    ({expression}).alias({target_column!r})\n)\n"
-        )
-
-    return f"df = df.with_columns(pl.col({first_source!r}).alias({target_column!r}))\n"
+    return (
+        _transformation_comment(col) + f"df = df.with_columns("
+        f"pl.col({first_source!r}).alias({target_column!r}))"
+        f"  # PLACEHOLDER: implement the transformation above\n"
+    )
 
 
 def generate_polars_script(
@@ -721,13 +810,8 @@ def generate_output_folder(
     pipeline_path = output_folder / "pipeline.py"
     pipeline_path.write_text(pipeline.content)
 
-    # Execute pipeline to produce results.csv
-    execute_generated_pipeline(
-        pipeline_path,
-        output_folder,
-        object_store,
-        spec_id,
-    )
+    # Execute pipeline to produce results.csv, repairing automatically on failure.
+    _execute_with_repair(pipeline_path, output_folder, object_store, spec_id)
 
     # Keep the generated artifacts plus one CSV per target table.
     allowed = {"pipeline.py", "mapping.json"}
@@ -752,6 +836,69 @@ def generate_output_folder(
         results_csv_path=results_csv_path,
         generated_at=datetime.now(UTC),
     )
+
+
+_MAX_PIPELINE_REPAIRS = 2
+
+
+def _extract_focus_column(code: str, error_message: str) -> str | None:
+    """Best-effort extraction of the target column behind a pipeline failure.
+
+    Walks up from the failing traceback line to the nearest ``# TARGET
+    COLUMN`` comment emitted by the draft; falls back to an ``alias(...)``
+    call near the failure.
+    """
+    matches = re.findall(r'File "[^"]*pipeline\.py", line (\d+)', error_message)
+    if not matches:
+        return None
+    lines = code.splitlines()
+    if not lines:
+        return None
+    line_no = min(int(matches[-1]), len(lines))
+    for idx in range(line_no - 1, max(-1, line_no - 41), -1):
+        match = re.search(r"#\s*TARGET COLUMN:\s*(.+)", lines[idx])
+        if match:
+            return match.group(1).strip()
+    window = "\n".join(lines[max(0, line_no - 6) : min(len(lines), line_no + 5)])
+    match = re.search(r"\.alias\(\s*['\"]([^'\"]+)['\"]", window)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _execute_with_repair(
+    pipeline_py_path: Path,
+    output_folder: Path,
+    object_store: ObjectStore,
+    spec_id: uuid.UUID,
+) -> dict[str, Path]:
+    """Execute the generated pipeline, regenerating it automatically on failure.
+
+    Up to ``_MAX_PIPELINE_REPAIRS`` LLM repairs are attempted with the runtime
+    error fed back, focused on the failing column when it can be identified.
+    The last execution error is re-raised once repairs are exhausted.
+    """
+    last_error: RuntimeError | None = None
+    for attempt in range(_MAX_PIPELINE_REPAIRS + 1):
+        try:
+            return execute_generated_pipeline(
+                pipeline_py_path, output_folder, object_store, spec_id
+            )
+        except RuntimeError as exc:
+            last_error = exc
+        if attempt >= _MAX_PIPELINE_REPAIRS:
+            break
+        failed_code = pipeline_py_path.read_text()
+        focus_column = _extract_focus_column(failed_code, str(last_error))
+        corrected = _codegen_with_context(
+            spec_id,
+            failed_code,
+            error_message=str(last_error),
+            focus_column=focus_column,
+        )
+        pipeline_py_path.write_text(corrected)
+    assert last_error is not None
+    raise last_error
 
 
 def execute_generated_pipeline(

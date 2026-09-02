@@ -31,12 +31,12 @@ def _build_refinement_prompt(
                 "target_table": c["target_table"],
                 "target_column": c["target_column"],
                 "transformation_type": c.get("transformation_type"),
-                "polars_expression": c.get("polars_expression"),
-                "filter_expression": c.get("filter_expression"),
+                "transformation_logic": c.get("transformation_logic"),
                 "lookup_source_table": c.get("lookup_source_table"),
+                "lookup_key": c.get("lookup_key"),
                 "lookup_value": c.get("lookup_value"),
                 "aggregation_source_table": c.get("aggregation_source_table"),
-                "aggregation_expression": c.get("aggregation_expression"),
+                "aggregation_group_key": c.get("aggregation_group_key"),
             }
             for c in mapping_spec["columns"]
         ],
@@ -60,14 +60,16 @@ def _build_refinement_prompt(
             "changes to improve the mappings. "
             "Return valid JSON with a 'proposals' array. Each proposal has: "
             "target_column (string), field (string: the field to change, e.g. "
-            "'polars_expression', 'filter_expression', 'lookup_value'), "
+            "'transformation_logic', 'lookup_value'), "
             "old_value (string or null), new_value (string), "
             "reason (string explaining the change). "
             "Only propose changes that directly address the user's feedback. "
             "Do not modify unrelated columns. "
-            "Use the same Polars expression conventions as the existing mappings. "
-            "Available globals: pl, col, when, coalesce, lit, concat_str, concat, "
-            "null, Int64, Float64, String, Date, Datetime, Boolean."
+            "transformation_logic must be clear, unambiguous plain English that "
+            "a developer can implement directly without guessing: name the exact "
+            "source columns, quote literal values exactly, and spell out every "
+            "categorical value mapping. Do not write Polars, Python, SQL, or "
+            "pseudocode in transformation_logic."
         ),
     }
     user_content = (
@@ -109,7 +111,7 @@ def propose_refinements(
 
     for p in raw_proposals:
         target_column = p.get("target_column", "")
-        field = p.get("field", "polars_expression")
+        field = p.get("field", "transformation_logic")
         old_value = p.get("old_value")
         new_value = p.get("new_value")
         reason = p.get("reason", "")

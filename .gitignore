@@ -75,3 +75,9 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Terraform
+infra/.terraform/
+infra/terraform.tfvars
+infra/*.tfstate
+infra/*.tfstate.*

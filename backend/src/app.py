@@ -10,7 +10,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from auth_service import SESSION_MAX_AGE_SECONDS, SESSION_SECRET_KEY
+from auth_service import (
+    SESSION_COOKIE_SECURE,
+    SESSION_MAX_AGE_SECONDS,
+    SESSION_SECRET_KEY,
+)
 from config import get_settings
 from db_ops import create_tables, get_engine
 from fastapi import FastAPI
@@ -44,7 +48,7 @@ def create_app() -> FastAPI:
         session_cookie="session",
         max_age=SESSION_MAX_AGE_SECONDS,
         same_site="lax",
-        https_only=False,
+        https_only=SESSION_COOKIE_SECURE,
         path="/",
     )
     application.mount(

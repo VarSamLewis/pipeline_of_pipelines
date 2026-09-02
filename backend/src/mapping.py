@@ -336,42 +336,34 @@ def build_mapping_prompt(
         '"filename::sheet", "source_column": "column_name"}], '
         '"transformation_logic": '
         '"...", "transformation_type": "expression", '
-        '"polars_expression": "col(\'source_col\').cast(pl.Int64)", '
         '"tests": ["not_null", "unique"], '
         '"evidence_ids": ["..."], "business_rule_ids": ["..."]}]}. '
         "tests must be an array of plain strings, not objects. "
-        "For per-row expressions use transformation_type=expression with valid "
-        "Polars syntax. Available globals: pl, col, when, concat, coalesce, null, "
-        "Int64, Float64, String, Date, Datetime, Boolean. "
-        "Use `when(condition).then(value).otherwise(value)` for conditional logic; "
-        "`when` is a global alias for pl.when. Wrap string literals in .then() and "
-        ".otherwise() with pl.lit(). "
-        "For string concatenation use `concat(col('a'), '-', col('b'))` or "
-        "`col('a') + '-' + col('b')`. "
-        "For dates use col('dt').str.to_date('%Y-%m-%d', strict=False). For multiple "
-        "date formats use coalesce: "
-        "`coalesce(col('dt').str.to_date('%d/%m/%Y', strict=False), "
-        "col('dt').str.to_date('%Y-%m-%d', strict=False), "
-        "col('dt').str.to_date('%d-%b-%Y', strict=False))`. "
-        "For title case use col('x').str.to_titlecase(). "
-        "For uppercase use col('x').str.to_uppercase(). "
-        "For lowercase use col('x').str.to_lowercase(). "
-        "All polars string methods use str.to_* naming (to_uppercase, "
-        "to_lowercase, to_titlecase), never Python's .upper(), .lower() "
-        "or .title(). "
-        "For code lookup/replace use col('x').str.strip_chars().replace("
-        "{'A': 'Alpha', 'B': 'Beta'}). "
-        "str.contains is case sensitive; use inline regex flag (?i) for "
-        "case-insensitive matching, e.g. col('unit').str.contains(r'(?i)kg'). "
-        "For filters use transformation_type=filter and provide filter_expression, "
-        'e.g. "filter_expression": '
-        "\"~col('order_id').cast(str).str.starts_with('9999')\". "
+        "transformation_logic must be clear, unambiguous plain English that a "
+        "developer can implement directly without guessing. Do NOT write "
+        "Polars, Python, SQL, or pseudocode in transformation_logic. Follow "
+        "these rules: "
+        "(1) Name the exact source columns you reference. "
+        "(2) Quote literal output values exactly as they must appear, "
+        "e.g. write 'Other' with quotes, not Other. "
+        "(3) For categorical normalisation, list every source value to "
+        "target value pair explicitly, matching the allowed_values in the "
+        "target schema exactly (match case). "
+        "(4) State date formats explicitly when evidence shows them "
+        "(e.g. 'dates are DD/MM/YYYY'). "
+        "(5) Describe arithmetic precisely (e.g. 'weight divided by 1000 "
+        "when weight_unit contains kg, otherwise unchanged'). "
+        "For per-row derivations use transformation_type=expression. "
+        "For filters use transformation_type=filter and describe in plain "
+        "English which rows to keep or exclude, e.g. 'exclude rows whose "
+        "order_id starts with 9999'. "
         "For aggregations use transformation_type=aggregation with "
-        "aggregation_source_table, aggregation_group_key, and "
-        "aggregation_expression. aggregation_source_table must be a table "
+        "aggregation_source_table and aggregation_group_key; describe the "
+        "measure in plain English inside transformation_logic, e.g. 'sum of "
+        "quantity multiplied by unit_price for each cust_id'. "
+        "aggregation_source_table must be a table "
         'composite key, e.g. "aggregation_source_table": "data.csv::Orders", '
-        '"aggregation_group_key": "cust_id", '
-        "\"aggregation_expression\": \"(col('qty') * col('unit_price')).sum()\". "
+        '"aggregation_group_key": "cust_id". '
         "For cross-table lookups use transformation_type=lookup with "
         "lookup_source_table, lookup_key, and lookup_value. lookup_source_table "
         "must be a table composite key, e.g. "
@@ -383,8 +375,7 @@ def build_mapping_prompt(
         "For lookups the source_columns should reference the column in the "
         "base/source table that contains the join key, not the lookup table column. "
         "Normalise categorical values to the exact allowed_values in the target "
-        "schema (match case). Use `null` for missing values in expressions. "
-        "Do not invent undefined functions; do not use str.strip() or bare when()."
+        "schema (match case)."
     )
     return [prompt, {"role": "user", "content": user_content}]
 
@@ -398,12 +389,14 @@ def build_codegen_prompt(
     mapping_json: str,
     base_code: str,
     error_message: str | None = None,
+    focus_column: str | None = None,
 ) -> list[dict[str, str]]:
     """Build a prompt for LLM codegen of pipeline.py.
 
     When *error_message* is ``None``, *base_code* is a deterministic draft to
     fix and complete.  When *error_message* is provided, *base_code* is a
-    failing pipeline that needs correction.
+    failing pipeline that needs correction.  When *focus_column* is set, the
+    repair should prioritise that target column.
     """
     evidence_entries = [
         f"Evidence ID {e.id}:\n{e.content[:800]}" for e in evidence_items
@@ -414,6 +407,24 @@ def build_codegen_prompt(
     col_index = _build_catalog_index(source_catalogs)
     source_index_text = "\n".join(f"- {key}" for key in sorted(col_index))
 
+    polars_rules = (
+        "Polars rules (mandatory): "
+        "Bare strings inside expression context are COLUMN references, not "
+        "literals — always wrap literal values in pl.lit(), e.g. "
+        "pl.when(pl.col('x').is_null()).then(pl.lit('Other')).otherwise("
+        "pl.col('x')). "
+        "All string methods use str.to_* naming: str.to_uppercase(), "
+        "str.to_lowercase(), str.to_titlecase(), str.strip_chars(); never "
+        "Python's .upper()/.lower()/.title()/pandas .str.strip(). "
+        "str.contains is case sensitive; use the inline regex flag for "
+        "case-insensitive matching, e.g. pl.col('unit').str.contains("
+        "r'(?i)kg'). "
+        "Parse dates with pl.col('dt').str.to_date('%Y-%m-%d', strict=False); "
+        "combine multiple formats with pl.coalesce(...). "
+        "Do not invent functions; available globals include pl, col, when, "
+        "coalesce, lit, concat_str."
+    )
+
     if error_message is not None:
         system_content = (
             "You are a Polars-pipeline code generator. Given a target schema, "
@@ -421,10 +432,16 @@ def build_codegen_prompt(
             "failing pipeline.py, and the runtime error, produce a corrected "
             "standalone Polars pipeline.py that fixes the error while preserving "
             "the approved mappings. Output ONLY valid Python code, no markdown "
-            "wrappers or explanation."
+            f"wrappers or explanation. {polars_rules}"
         )
         code_block = f"Failed pipeline.py:\n```python\n{base_code}\n```\n\n"
         error_block = f"Runtime error:\n{error_message}\n\n"
+        focus_block = (
+            f"Focus column: {focus_column}. Prioritise fixing the logic that "
+            f"produces this target column.\n\n"
+            if focus_column
+            else ""
+        )
         instructions = (
             "Return ONLY corrected Python code that implements the same "
             "approved mappings. The script must read source files from "
@@ -438,17 +455,22 @@ def build_codegen_prompt(
             "a deterministic draft pipeline, produce a correct standalone "
             "Polars pipeline.py. The draft's harness (CLI args, source loading, "
             "hash verification, dtype enforcement, CSV writing) is correct — "
-            "preserve it. Fix and complete the transformation logic so it "
-            "faithfully implements every mapping column, including "
-            "transformation_logic prose (lookups, expressions). Output ONLY "
-            "valid Python code, no markdown wrappers or explanation."
+            "preserve it. The draft contains PLACEHOLDER blocks, each preceded "
+            "by a '# TARGET COLUMN' comment carrying the plain-English "
+            "transformation intent; replace every placeholder with a faithful "
+            "implementation of its transformation_logic prose (lookups, "
+            "expressions, filters, aggregations). Output ONLY valid Python "
+            f"code, no markdown wrappers or explanation. {polars_rules}"
         )
         code_block = f"Draft pipeline.py:\n```python\n{base_code}\n```\n\n"
         error_block = ""
+        focus_block = ""
         instructions = (
             "Return ONLY Python code that implements the approved mappings. "
             "The script must read source files from --source-folder and write "
-            "results to --output-folder as CSV. Use Polars API."
+            "results to --output-folder as CSV. Use Polars API. Implement "
+            "every '# TARGET COLUMN' placeholder from its English "
+            "transformation description; do not drop or reorder columns."
         )
 
     user_content = (
@@ -464,9 +486,13 @@ def build_codegen_prompt(
         f"Business rules:\n{rules_text}\n\n"
         f"{code_block}"
         f"{error_block}"
+        f"{focus_block}"
         f"{instructions}"
     )
-    return [{"role": "system", "content": system_content}, {"role": "user", "content": user_content}]
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content},
+    ]
 
 
 def call_codegen_llm(
@@ -477,14 +503,16 @@ def call_codegen_llm(
 ) -> str:
     """Call an OpenAI-compatible chat completion to get corrected code."""
     settings = get_settings()
-    api_key = api_key or settings.openai_api_key
-    base_url = base_url or settings.openai_base_url
-    if not api_key:
+    if (
+        not api_key
+        and not settings.openai_api_key
+        and not settings.azure_openai_api_key
+    ):
         raise RuntimeError("OPENAI_API_KEY is not set")
 
-    from openai import OpenAI
+    from llm_client import build_client
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = build_client(api_key=api_key or settings.openai_api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model,
         messages=cast(Any, messages),
@@ -493,7 +521,7 @@ def call_codegen_llm(
     content = response.choices[0].message.content
     if content is None:
         raise RuntimeError("LLM returned empty content")
-    return content
+    return cast(str, content)
 
 
 def call_mapping_llm(
@@ -505,14 +533,16 @@ def call_mapping_llm(
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible chat completion endpoint to propose mappings."""
     settings = get_settings()
-    api_key = api_key or settings.openai_api_key
-    base_url = base_url or settings.openai_base_url
-    if not api_key:
+    if (
+        not api_key
+        and not settings.openai_api_key
+        and not settings.azure_openai_api_key
+    ):
         raise RuntimeError("OPENAI_API_KEY is not set and no api_key was provided")
 
-    from openai import OpenAI
+    from llm_client import build_client
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = build_client(api_key=api_key or settings.openai_api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model,
         messages=cast(Any, messages),
@@ -605,17 +635,12 @@ def parse_llm_mapping_response(
                 target_column=raw["target_column"],
                 source_columns=source_columns,
                 transformation_logic=raw.get("transformation_logic", ""),
-                polars_expression=_normalize_polars_expression(
-                    raw.get("polars_expression")
-                ),
                 transformation_type=raw.get("transformation_type", "expression"),
                 aggregation_source_table=raw.get("aggregation_source_table"),
-                aggregation_expression=raw.get("aggregation_expression"),
                 aggregation_group_key=raw.get("aggregation_group_key"),
                 lookup_source_table=raw.get("lookup_source_table"),
                 lookup_key=raw.get("lookup_key"),
                 lookup_value=raw.get("lookup_value"),
-                filter_expression=raw.get("filter_expression"),
                 tests=tests,
                 evidence_ids=[uuid.UUID(x) for x in raw.get("evidence_ids", [])],
                 business_rule_ids=[

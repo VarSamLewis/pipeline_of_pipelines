@@ -47,6 +47,7 @@ from models import (
     MappingSpec,
     MappingSpecStatus,
     PipelineOutputFolder,
+    RawFile,
     TargetSchema,
     ValidationResult,
 )
@@ -431,7 +432,7 @@ def retry_pipeline_and_execute(
     error_message: str,
 ) -> uuid.UUID:
     """Retry code generation with the failed pipeline + error, then re-execute."""
-    from codegen import _codegen_with_context
+    from codegen import _codegen_with_context, _extract_focus_column
 
     folder = get_artifact_store().folder(spec_id)
     pipeline_path = folder / "pipeline.py"
@@ -439,7 +440,13 @@ def retry_pipeline_and_execute(
         raise RuntimeError("pipeline.py not found in output folder")
     failed_code = pipeline_path.read_text()
 
-    corrected_code = _codegen_with_context(spec_id, failed_code, error_message)
+    focus_column = _extract_focus_column(failed_code, error_message)
+    corrected_code = _codegen_with_context(
+        spec_id,
+        failed_code,
+        error_message,
+        focus_column=focus_column,
+    )
     pipeline_path.write_text(corrected_code)
 
     result = execute_approved_mapping(spec_id, output_folder=folder)

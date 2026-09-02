@@ -64,20 +64,21 @@ def get_embedding(
     model: str | None = None,
 ) -> list[float]:
     """Generate an embedding vector for a text chunk using OpenAI."""
-    api_key = api_key or OPENAI_API_KEY
-    if not api_key:
+    from llm_client import build_client
+
+    if not api_key and not OPENAI_API_KEY and not _settings.azure_openai_api_key:
         raise RuntimeError(
             "OPENAI_API_KEY is not set. Embeddings are required for the knowledge base."
         )
-
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key, base_url=base_url or OPENAI_BASE_URL)
+    client = build_client(
+        api_key=api_key or OPENAI_API_KEY,
+        base_url=base_url or OPENAI_BASE_URL,
+    )
     response = client.embeddings.create(
         model=model or _settings.embedding_model,
         input=content,
     )
-    return response.data[0].embedding
+    return cast(list[float], response.data[0].embedding)
 
 
 _engine: Engine | None = None

@@ -1,3 +1,13 @@
+variable "subscription_id" {
+  description = "Azure subscription ID"
+  type        = string
+}
+
+variable "tenant_id" {
+  description = "Azure AD (Entra ID) tenant ID"
+  type        = string
+}
+
 variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
@@ -8,137 +18,123 @@ variable "environment" {
 }
 
 variable "location" {
-  description = "Azure region for resources"
+  description = "Azure region"
   type        = string
   default     = "eastus"
 }
 
+variable "owner" {
+  description = "Owner tag"
+  type        = string
+  default     = "pipeline-team"
+}
+
 variable "project_name" {
-  description = "Project name prefix for resources"
+  description = "Project name prefix"
   type        = string
   default     = "pop"
 }
 
-variable "postgres_admin_username" {
-  description = "PostgreSQL admin username"
+variable "container_image_tag" {
+  description = "Image tag for the API container in ACR"
+  type        = string
+  default     = "latest"
+}
+
+variable "app_public_url" {
+  description = "Public FQDN (no scheme) for the deployed app; used for the Entra ID redirect URI. Leave empty for dev (uses localhost) and set after first apply when the Container App FQDN is known."
+  type        = string
+  default     = ""
+}
+
+# --- PostgreSQL Flexible Server ---
+
+variable "database_username" {
+  description = "PostgreSQL Flexible Server administrator username"
   type        = string
   default     = "popadmin"
 }
 
-variable "postgres_admin_password" {
-  description = "PostgreSQL admin password"
+variable "database_password" {
+  description = "PostgreSQL Flexible Server administrator password. Stored in Key Vault, never in state env."
   type        = string
   sensitive   = true
 }
 
-variable "entra_id_tenant_id" {
-  description = "Entra ID tenant ID for App Registration"
+variable "database_sku" {
+  description = "PostgreSQL Flexible Server SKU"
   type        = string
+  default     = "B_Standard_B1ms"
 }
 
-variable "entra_id_client_id" {
-  description = "Existing Entra ID App Registration client ID (optional, creates new if empty)"
+variable "database_version" {
+  description = "PostgreSQL Flexible Server major version"
   type        = string
-  default     = ""
+  default     = "16"
 }
 
-variable "entra_id_client_secret" {
-  description = "Existing Entra ID App Registration client secret (optional)"
+variable "database_storage_mb" {
+  description = "PostgreSQL Flexible Server storage in MB"
+  type        = number
+  default     = 32768
+}
+
+# --- OpenAI ---
+
+variable "azure_openai_api_key" {
+  description = "Azure OpenAI API key. Stored in Key Vault, never in state env."
   type        = string
   sensitive   = true
-  default     = ""
 }
 
-variable "session_secret_key" {
-  description = "Session secret key for FastAPI (generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\")"
-  type        = string
-  sensitive   = true
-}
-
-variable "openai_deployment_name" {
-  description = "Azure OpenAI deployment name for chat completions"
+variable "openai_chat_model" {
+  description = "Deployment/model name for chat completions"
   type        = string
   default     = "gpt-4o-mini"
 }
 
-variable "embedding_deployment_name" {
-  description = "Azure OpenAI deployment name for embeddings"
+variable "openai_embedding_model" {
+  description = "Deployment/model name for embeddings"
   type        = string
   default     = "text-embedding-3-small"
 }
 
-variable "container_app_cpu" {
-  description = "CPU cores for Container App (consumption)"
-  type        = number
-  default     = 0.25
-}
-
-variable "container_app_memory" {
-  description = "Memory in GB for Container App (consumption)"
-  type        = number
-  default     = 0.5
-}
-
-variable "pipeline_job_cpu" {
-  description = "CPU cores for Pipeline Job"
-  type        = number
-  default     = 0.5
-}
-
-variable "pipeline_job_memory" {
-  description = "Memory in GB for Pipeline Job"
-  type        = number
-  default     = 1.0
-}
-
-variable "acr_sku" {
-  description = "ACR SKU (Basic, Standard, Premium)"
+variable "openai_api_version" {
+  description = "Azure OpenAI API version"
   type        = string
-  default     = "Basic"
+  default     = "2024-10-21"
 }
 
-variable "postgres_sku" {
-  description = "PostgreSQL Flexible Server SKU"
+# --- Session ---
+
+variable "session_secret_key" {
+  description = "FastAPI session secret. Stored in Key Vault, never in state env."
   type        = string
-  default     = "Standard_D2s_v3"
+  sensitive   = true
 }
 
-variable "postgres_storage_gb" {
-  description = "PostgreSQL storage in GB"
-  type        = number
-  default     = 32
-}
+# --- Entra ID ---
 
-variable "log_analytics_retention" {
-  description = "Log Analytics retention in days"
-  type        = number
-  default     = 30
-}
-
-variable "vnet_address_space" {
-  description = "VNet address space CIDR"
+variable "entra_client_id" {
+  description = "Client ID of the Entra ID app registration"
   type        = string
-  default     = "10.0.0.0/16"
 }
 
-variable "container_apps_subnet_cidr" {
-  description = "Container Apps subnet CIDR"
+variable "entra_client_secret" {
+  description = "Client secret of the Entra ID app registration. Stored in Key Vault, never in state env."
   type        = string
-  default     = "10.0.1.0/23"
+  sensitive   = true
 }
 
-variable "data_subnet_cidr" {
-  description = "Data subnet CIDR (PostgreSQL, Storage, Key Vault)"
+variable "entra_tenant_id" {
+  description = "Entra ID tenant ID for the app (used for OIDC authority)"
   type        = string
-  default     = "10.0.2.0/24"
 }
+
+# --- Tags ---
 
 variable "tags" {
-  description = "Common tags for all resources"
+  description = "Additional tags for all resources"
   type        = map(string)
-  default     = {
-    project     = "pipeline-of-pipelines"
-    managed_by  = "terraform"
-    environment = var.environment
-  }
+  default     = {}
 }

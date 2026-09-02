@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Lightweight pre-commit hook for the Pipeline of Pipelines repo.
+#
+# Run directly (./pre-commit) or install as the git hook:
+#   ln -sf "$PWD/pre-commit" .git/hooks/pre-commit
+#
+# Requires `uv` on PATH and, for the infra check, `terraform`.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+FAILED=0
+
+run() {
+  local name=$1
+  shift
+  echo "==> $name"
+  if ! "$@"; then
+    echo "!! $name failed"
+    FAILED=1
+  fi
+}
+
+run "ruff check"     uv run ruff check backend/src/ tests/
+run "ruff format"    uv run ruff format --check backend/src/ tests/
+run "mypy"           uv run mypy backend/src/
+
+if command -v terraform >/dev/null 2>&1; then
+  (cd infra && run "terraform fmt" terraform fmt -check -recursive)
+else
+  echo "!! terraform not found; skipping infra fmt check"
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+  echo "Pre-commit checks failed"
+  exit 1
+fi
+
+echo "All pre-commit checks passed"

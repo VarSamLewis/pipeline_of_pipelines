@@ -23,7 +23,9 @@ dependencies = [
     "pyyaml>=6.0.2",
     "python-multipart>=0.0.17",
     "fpdf2>=2.8.0",
-    "workos>=5.0.0",
+    "msal>=1.29.0",
+    "azure-identity>=1.18.0",
+    "azure-storage-blob>=12.23.0",
     "jinja2>=3.1.0",
     "itsdangerous>=2.2.0",
 ]
@@ -43,16 +45,20 @@ packages = ["repositories", "routers"]
 py-modules = [
     "app",
     "artifact_store",
+    "auth_service",
     "codegen",
     "config",
     "db_ops",
     "dependencies",
+    "feedback",
     "file_ops",
+    "llm_client",
     "mapping",
     "mapping_specs",
     "models",
     "parser",
     "pipeline",
+    "ui",
 ]
 
 [tool.ruff]

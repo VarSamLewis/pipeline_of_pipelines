@@ -63,7 +63,7 @@ class ExecutionStatus(str, enum.Enum):
 
 
 class UserRole(str, enum.Enum):
-    """Authorization roles enforced by the WorkOS-backed auth layer."""
+    """Authorization roles enforced by the Entra ID-backed auth layer."""
 
     CREATOR = "creator"
     REVIEWER = "reviewer"
@@ -610,14 +610,15 @@ class StagingColumn(SQLModel, table=True):
 
 
 class User(SQLModel, table=True):
-    """Platform user provisioned from WorkOS AuthKit.
+    """Platform user provisioned from Microsoft Entra ID.
 
-    WorkOS remains the source of truth for identity and role metadata. The local
-    record caches the latest role for fast permission checks and audit lineage.
+    Entra ID remains the source of truth for identity and role (app roles) data.
+    The local record caches the latest role for fast permission checks and audit
+    lineage.
     """
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
-    workos_user_id: str = SQLField(unique=True, index=True)
+    external_user_id: str = SQLField(unique=True, index=True)
     email: str = SQLField(index=True)
     name: str | None = SQLField(default=None)
     role: UserRole = SQLField(default=UserRole.CREATOR)

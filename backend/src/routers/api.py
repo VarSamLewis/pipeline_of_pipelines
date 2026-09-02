@@ -28,19 +28,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import json
-import secrets
 import uuid
 from pathlib import Path
 from typing import Any, cast
 
 from auth_service import (
     AUTH_BYPASS_LOCAL,
+    authenticate_with_entra,
     clear_session,
     create_session,
-    get_authkit_url,
+    get_entra_authorize_url,
     require_auth,
     require_role,
-    update_user_role,
 )
 from db_ops import (
     approve_business_rule,
@@ -93,9 +92,15 @@ from workflow import (
 app = APIRouter()
 
 
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Liveness probe for the container platform."""
+    return {"status": "ok"}
+
+
 @app.get("/login")
 def login_page(request: Request) -> RedirectResponse:
-    """Redirect to the upload page or WorkOS AuthKit login."""
+    """Redirect to the upload page or Entra ID login."""
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
     return RedirectResponse(url="/auth/login")
@@ -113,37 +118,38 @@ def root(request: Request) -> RedirectResponse:
 
 
 # ---------------------------------------------------------------------------
-# WorkOS AuthKit routes
+# Entra ID OIDC routes
 # ---------------------------------------------------------------------------
 
 
 @app.get("/auth/login")
 def login(request: Request) -> RedirectResponse:
-    """Redirect the browser to WorkOS AuthKit for authentication."""
+    """Redirect the browser to Microsoft Entra ID for authentication."""
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
-    state = secrets.token_urlsafe(32)
-    request.session["auth_state"] = state
-    url = get_authkit_url(state)
+    url = get_entra_authorize_url(request)
     return RedirectResponse(url=url)
 
 
 @app.get("/auth/callback")
 def auth_callback(
     request: Request,
-    code: str,
+    code: str = "",
+    error: str | None = None,
+    error_description: str | None = None,
     state: str | None = None,
 ) -> RedirectResponse:
-    """Handle the WorkOS AuthKit callback and establish a session."""
+    """Handle the Entra ID OIDC callback and establish a session."""
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
 
-    stored_state = request.session.pop("auth_state", None)
-    if state is None or stored_state is None or state != stored_state:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    if error:
+        raise HTTPException(status_code=401, detail=error_description or error)
 
     try:
-        user, _created = __import__("auth_service").authenticate_with_workos(code)
+        user, _created = authenticate_with_entra(request, request.query_params)
+    except HTTPException:
+        raise
     except Exception as exc:
         msg = f"Authentication failed: {exc}"
         raise HTTPException(status_code=401, detail=msg) from exc
@@ -196,22 +202,6 @@ def list_users(
             }
             for u in users
         ]
-
-
-@app.post("/admin/users/{user_id}/role")
-def set_user_role(
-    user_id: uuid.UUID,
-    payload: dict[str, Any],
-    user: Any = Depends(require_role("admin")),
-) -> dict[str, Any]:
-    """Update a user's role in WorkOS and locally (admin only)."""
-    updated = update_user_role(user_id, payload["role"])
-    return {
-        "id": str(updated.id),
-        "email": updated.email,
-        "name": updated.name,
-        "role": updated.role.value,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -815,8 +805,6 @@ def update_mapping_column_endpoint(
     fields: dict[str, Any] = {}
     if "transformation_logic" in payload:
         fields["transformation_logic"] = payload["transformation_logic"]
-    if "polars_expression" in payload:
-        fields["polars_expression"] = payload["polars_expression"]
     if "source_columns" in payload:
         fields["source_columns_json"] = payload["source_columns"]
     if "tests" in payload:
@@ -830,7 +818,6 @@ def update_mapping_column_endpoint(
         "target_table": column.target_table,
         "target_column": column.target_column,
         "transformation_logic": column.transformation_logic,
-        "polars_expression": column.polars_expression,
         "tests": column.tests,
     }
 
