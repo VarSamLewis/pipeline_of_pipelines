@@ -6,18 +6,19 @@ resource "azurerm_virtual_network" "main" {
   tags                = local.tags
 }
 
-# --- Container Apps integration subnet ---
+# --- App Service regional VNet integration subnet ---
+# App Service requires this subnet to be empty (no route tables / NSGs).
 
-resource "azurerm_subnet" "container_apps" {
-  name                 = "snet-${local.resource_prefix}-aca"
+resource "azurerm_subnet" "app_service" {
+  name                 = "snet-${local.resource_prefix}-web"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = ["10.0.1.0/24"]
 
   delegation {
-    name = "container-apps"
+    name = "app-service"
     service_delegation {
-      name    = "Microsoft.App/environments"
+      name    = "Microsoft.Web/serverFarms"
       actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
   }

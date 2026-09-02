@@ -11,7 +11,7 @@ resource "azurerm_key_vault" "main" {
   tags = local.tags
 }
 
-# --- Secrets (referenced by the Container App via Key Vault secret references) ---
+# --- Secrets (referenced by the App Service via Key Vault references) ---
 
 resource "azurerm_key_vault_secret" "database_password" {
   name         = "database-password"
@@ -44,13 +44,13 @@ resource "azurerm_key_vault_secret" "storage_connection_string" {
   key_vault_id = azurerm_key_vault.main.id
 }
 
-# Allow the container app's system-assigned identity to read secrets at runtime.
-resource "azurerm_key_vault_access_policy" "container_app" {
+# Allow the App Service's system-assigned identity to read secrets at runtime.
+resource "azurerm_key_vault_access_policy" "app_service" {
   key_vault_id = azurerm_key_vault.main.id
   tenant_id    = var.tenant_id
-  object_id    = azurerm_container_app.api.identity[0].principal_id
+  object_id    = azurerm_linux_web_app.main.identity[0].principal_id
 
   secret_permissions = ["Get", "List"]
 
-  depends_on = [azurerm_container_app.api]
+  depends_on = [azurerm_linux_web_app.main]
 }

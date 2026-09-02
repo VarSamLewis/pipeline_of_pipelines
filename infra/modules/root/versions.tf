@@ -15,10 +15,6 @@ terraform {
       version = "~> 3.6"
     }
   }
-
-  backend "local" {
-    path = "terraform.tfstate"
-  }
 }
 
 provider "azurerm" {
@@ -31,6 +27,3 @@ provider "azurerm" {
     }
   }
 }
-
-provider "azuread" {}
-provider "random" {}

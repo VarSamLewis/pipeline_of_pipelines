@@ -42,9 +42,17 @@ variable "container_image_tag" {
 }
 
 variable "app_public_url" {
-  description = "Public FQDN (no scheme) for the deployed app; used for the Entra ID redirect URI. Leave empty for dev (uses localhost) and set after first apply when the Container App FQDN is known."
+  description = "Public FQDN (no scheme) for the deployed app; used for the Entra ID redirect URI. Leave empty for dev (uses localhost) and set after first apply when the App Service hostname is known."
   type        = string
   default     = ""
+}
+
+# --- App Service ---
+
+variable "app_service_sku" {
+  description = "App Service Plan SKU (Linux). S1 = 1 vCPU / 3.5 GiB."
+  type        = string
+  default     = "S1"
 }
 
 # --- PostgreSQL Flexible Server ---
@@ -114,11 +122,6 @@ variable "session_secret_key" {
 }
 
 # --- Entra ID ---
-
-variable "entra_client_id" {
-  description = "Client ID of the Entra ID app registration"
-  type        = string
-}
 
 variable "entra_client_secret" {
   description = "Client secret of the Entra ID app registration. Stored in Key Vault, never in state env."

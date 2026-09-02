@@ -3,14 +3,14 @@ output "resource_group_name" {
   value       = azurerm_resource_group.main.name
 }
 
-output "container_app_url" {
-  description = "Public URL of the API container app"
-  value       = "https://${azurerm_container_app.api.latest_revision_fqdn}"
+output "app_service_url" {
+  description = "Public URL of the API App Service"
+  value       = "https://${azurerm_linux_web_app.main.default_hostname}"
 }
 
-output "container_app_fqdn" {
-  description = "Container app latest revision FQDN"
-  value       = azurerm_container_app.api.latest_revision_fqdn
+output "app_service_default_hostname" {
+  description = "App Service default hostname"
+  value       = azurerm_linux_web_app.main.default_hostname
 }
 
 output "acr_login_server" {

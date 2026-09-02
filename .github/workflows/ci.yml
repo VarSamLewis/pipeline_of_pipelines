@@ -55,8 +55,10 @@ jobs:
       - name: Terraform fmt
         run: terraform fmt -check -recursive
 
-      - name: Terraform init
+      - name: Terraform init (dev env, no backend)
+        working-directory: infra/environments/dev
         run: terraform init -input=false -backend=false
 
-      - name: Terraform validate
+      - name: Terraform validate (dev env)
+        working-directory: infra/environments/dev
         run: terraform validate

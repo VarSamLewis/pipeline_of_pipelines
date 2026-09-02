@@ -1,6 +1,8 @@
 # Azure Migration
 
-Goal: scale the platform to roughly **2,000 users** on Azure Container Apps.
+Goal: scale the platform to roughly **2,000 users** on Azure. The app is
+hosted as a **single always-on FastAPI container** on Azure App Service
+(Linux, Standard S1). See `infra/` for the Terraform-managed infrastructure.
 
 This document is an ordered migration process, not a redesign. It assumes the
 [architecture](architecture.md) is correct and focuses on the execution model,
@@ -71,10 +73,12 @@ is unsafe until the store is shared.
    SQLAlchemy and subprocess work stay synchronous and are wrapped in
    `asyncio.to_thread` when heavy. **No `asyncio.run` in server code.**
    FastAPI `async def` endpoints must never call blocking code directly.
-3. **Execution offloaded to a unit of compute per run.** Pipeline execution is
-   removed from the API replica entirely. Each run maps to one isolated
-   execution — **Container Apps Jobs** (event-driven) is the recommended
-   target; **Durable Functions** is the alternative (see decisions log).
+3. **Execution offloaded to a unit of compute per run (deferred v2).** Pipeline
+   execution is eventually removed from the API replica. Each run maps to one
+   isolated execution — **Azure Container Apps Jobs** (event-driven) is the
+   recommended target; **Durable Functions** is the alternative (see decisions
+   log). The initial Azure deployment keeps execution in-process on the App
+   Service (single always-on container).
 4. **Object store becomes Azure Blob.** Inputs, generated artifacts, and output
    CSVs all move through Blob behind the existing `ObjectStore`/`ArtifactStore`
    seam, so no workflow or route code changes.
@@ -82,34 +86,31 @@ is unsafe until the store is shared.
 ## 4. Target Azure architecture
 
 ```
-                  ┌──────────────────── Azure Container Apps ────────────────────┐
- users ─HTMX/JSON─▶ API replicas (FastAPI, async endpoints)                      │
-                  │   - HTTP-concurrency scale rule                              │
-                  │   - publishes jobs, polls ExecutionRun.status                │
+                  ┌──────────────────── Azure App Service ─────────────────────┐
+ users ─HTMX/JSON─▶ API replica (FastAPI, async endpoints)                     │
+                  │   - Linux container pulled from ACR (managed identity)      │
+                  │   - private VNet integration to PostgreSQL                  │
+                  │   - v1 hosts execution in-process; queue/jobs deferred (v2) │
                   └───────────────┬──────────────────────────────┬───────────────┘
-                                  │ publish                      │ read/write
+                                  │                              │ read/write
                                   ▼                              ▼
-                    Azure Queue Storage ────▶ Container Apps Jobs  Azure Blob Storage
-                    (job messages: spec_id,  (event-driven; one    (raw files,
-                     run_id, artifact refs)   instance per run:     schemas, artifacts,
-                                              pull inputs, run      results, logs)
-                                              pipeline.py, push
-                                              outputs, record)
-                                              │
-                                              ▼
-                                    Azure Database for PostgreSQL Flexible Server
-                                    (pgvector enabled, index the embedding column)
+                     Azure Blob Storage                    Azure Database for PostgreSQL
+                     (raw files, schemas,                 Flexible Server (pgvector,
+                      artifacts, results, logs)            private networking)
 ```
 
-- **API**: Container Apps app, 1-3 replicas, HTTP-concurrency scaling.
-- **Execution**: event-driven Container Apps Jobs; the job image is small
-  (`python` + `polars` + `openpyxl` + the executor code) because the generated
-  `pipeline.py` is standalone — it imports only stdlib, `polars`, and
-  `openpyxl` (`codegen.py` imports block) and reads `mapping.json` plus
-  `--source-folder`/`--output-folder`.
-- **Queue**: Azure Queue Storage (Service Bus if ordering/dead-lettering
+- **API**: Azure App Service (Linux, `azurerm_linux_web_app`), a single
+  always-on container on a Standard S1 plan, pulling the image from ACR via a
+  system-assigned identity (see `infra/app_service.tf`, `infra/identity.tf`).
+- **Execution**: in v1 this runs in-process on the App Service. A dedicated
+  event-driven compute unit (Azure Container Apps Jobs or a queue worker) is
+  the deferred v2 path described below; it was intentionally not shipped as
+  part of the initial Azure deployment.
+- **Queue**: (deferred, v2) Azure Queue Storage (Service Bus if
+  ordering/dead-lettering
   matters).
-- **Database**: Azure Database for PostgreSQL Flexible Server with `pgvector`.
+- **Database**: Azure Database for PostgreSQL Flexible Server with `pgvector`
+  (private networking by default, `infra/networking.tf`, `infra/postgres.tf`).
 - **Storage**: Azure Blob Storage behind the object-store seam.
 - **Static**: Azure CDN/Front Door or Blob static-site hosting.
 - **Secrets**: Azure Key Vault (DB connection string, OpenAI key, WorkOS keys,
@@ -218,16 +219,17 @@ outputs; failed runs surface the pipeline stderr.
 Provision and configure the target environment (resource list; full IaC out of
 scope for this doc).
 
-- Resources: Container Apps environment (app + jobs), Azure Queue Storage,
+- Resources: App Service Plan + Linux web app (from ACR via managed identity),
   Azure Database for PostgreSQL Flexible Server (pgvector), Azure Blob Storage
-  account, Key Vault, Application Insights, optional CDN/Front Door.
+  account, Key Vault, Application Insights, plus (v2) Azure Queue Storage and
+  Container Apps Jobs or a queue worker for durable execution.
 - Config: disable `AUTH_BYPASS_LOCAL`; move secrets to Key Vault; set
   `DATABASE_URL`, OpenAI keys, and storage connection strings via env.
 - Database: raise SQLAlchemy `pool_size`/`max_overflow` (or add PgBouncer for
   many replicas); index the `pgvector` embedding column.
 - Static assets: serve from Blob/CDN instead of the app.
-- Ingress: check/raise the Container Apps request-body limit to fit large
-  uploads; stream uploads to Blob instead of reading into memory.
+- Ingress: check the App Service request-body limit fits large uploads; stream
+  uploads to Blob instead of reading into memory.
 - Scaling rules: HTTP-concurrency for the API app; queue-based for jobs
   (with concurrency cap per run of the polars image).
 
@@ -269,10 +271,12 @@ Decisions:
 - **Async before queue**: the async LLM layer is independent of durability and
   pays off immediately, so it ships first. The `asyncio.to_thread` execution
   stopgap from Phase 1 is explicitly throwaway, replaced by Phase 3 queueing.
-- **Container Apps Jobs over Durable Functions**: each run is a long CPU-bound
-  polars script; a job instance per queue event has no runtime limit and no
-  "subprocess inside a Functions host" awkwardness. Durable Functions remains
-  viable if a turnkey orchestrator/retry story is preferred.
+- **Container Apps Jobs over Durable Functions (v2 execution target)**: each
+  run is a long CPU-bound polars script; a job instance per queue event has no
+  runtime limit and no "subprocess inside a Functions host" awkwardness.
+  Durable Functions remains viable if a turnkey orchestrator/retry story is
+  preferred. Not shipped in v1 — v1 runs execution in-process on the App
+  Service.
 - **Sync SQLAlchemy in async endpoints**: accepted for now (fast queries);
   an async-SQLAlchemy migration is out of scope and flagged in
   [opportunities](opportunities.md).

@@ -78,6 +78,9 @@ logs/
 
 # Terraform
 infra/.terraform/
-infra/terraform.tfvars
 infra/*.tfstate
 infra/*.tfstate.*
+infra/environments/*/terraform.tfstate
+infra/environments/*/terraform.tfstate.*
+infra/environments/*/.terraform/
+infra/environments/*/secrets.tfvars
