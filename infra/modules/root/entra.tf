@@ -74,6 +74,37 @@ resource "azuread_service_principal" "app" {
   client_id = azuread_application.app.client_id
 }
 
+# Flat list of (role, group_object_id) pairs for for_each. Keys are unique per
+# (role, group) so multiple groups can share a role.
+locals {
+  role_assignments = {
+    for pair in flatten([
+      for role, group_ids in var.role_group_object_ids : [
+        for group_id in group_ids : {
+          role     = role
+          group_id = group_id
+        }
+      ]
+    ]) :
+    "${pair.role}:${pair.group_id}" => {
+      app_role_id         = azuread_application.app.app_role_ids[pair.role]
+      principal_object_id = pair.group_id
+    }
+  }
+}
+
+# Bind Entra groups to the app roles. Which users are in each group is managed
+# in the Entra portal, so Terraform only encodes the role -> group mapping.
+resource "azuread_app_role_assignment" "role" {
+  for_each = local.role_assignments
+
+  app_role_id         = each.value.app_role_id
+  principal_object_id = each.value.principal_object_id
+  resource_object_id  = azuread_service_principal.app.object_id
+
+  depends_on = [azuread_service_principal.app]
+}
+
 # Client ID + secret are surfaced back to the app via Key Vault.
 resource "azurerm_key_vault_secret" "entra_client_id" {
   name         = "entra-client-id"

@@ -102,9 +102,8 @@ variable "entra_tenant_id" {
   type = string
 }
 
-variable "entra_client_secret" {
-  type      = string
-  sensitive = true
+variable "role_group_object_ids" {
+  type = map(list(string))
 }
 
 variable "container_image_tag" {
@@ -141,10 +140,10 @@ module "pop" {
   openai_embedding_model = var.openai_embedding_model
   openai_api_version     = var.openai_api_version
 
-  session_secret_key  = var.session_secret_key
-  entra_tenant_id     = var.entra_tenant_id
-  entra_client_secret = var.entra_client_secret
-  container_image_tag = var.container_image_tag
-  app_public_url      = var.app_public_url
-  app_service_sku     = var.app_service_sku
+  session_secret_key    = var.session_secret_key
+  entra_tenant_id       = var.entra_tenant_id
+  role_group_object_ids = var.role_group_object_ids
+  container_image_tag   = var.container_image_tag
+  app_public_url        = var.app_public_url
+  app_service_sku       = var.app_service_sku
 }

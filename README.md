@@ -9,7 +9,8 @@ full column-level lineage. Every step is **human-gated**.
 
 Documentation: [Architecture](docs/architecture.md) ·
 [Opportunities for improvement](docs/opportunities.md) ·
-[Azure migration](docs/azure_migration.md)
+[Azure migration](docs/azure_migration.md) ·
+[Azure setup guide](docs/azure_setup_guide.md)
 
 ## Features
 
@@ -30,9 +31,10 @@ Documentation: [Architecture](docs/architecture.md) ·
 - PostgreSQL 16+ with `pgvector`
 - Polars for target transformations
 - OpenAI embeddings + OpenAI-compatible chat LLM for mapping proposals
-- WorkOS AuthKit for authentication and role-based authorization
+- Microsoft Entra ID (OAuth) for authentication and role-based authorization
 - HTMX + Jinja2 for the UI
-- Local filesystem object store first (MinIO/S3/Azure later)
+- Local filesystem object store for dev; Azure Blob Storage in the hosted
+  (App Service) deployment (`infra/`)
 
 ## Project layout
 
@@ -59,7 +61,7 @@ backend/
     artifact_store.py     Durable artifact storage boundary + local adapter
     file_ops.py           Object-store abstraction, file-type detection, hashing
     models.py             Pydantic schemas + SQLModel tables + enums
-    auth_service.py       WorkOS AuthKit, sessions, role checks, local bypass
+    auth_service.py       Microsoft Entra ID OAuth, sessions, role checks, local bypass
     templates/            Jinja2 pages + HTMX partials
     static/               Static assets
   tests/                  pytest unit and integration tests
@@ -100,7 +102,7 @@ automatically when Postgres is unreachable.
 ## Running the server
 
 An OpenAI API key is required for embeddings and mapping proposals. For local
-development, auth is bypassed so you can use the UI without WorkOS:
+development, auth is bypassed so you can use the UI without Entra ID:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -218,6 +220,25 @@ make typecheck   # uv run mypy backend/src/
 make test        # uv run pytest
 ```
 
+## Hosting (Azure deployment)
+
+The app is self-hosted on Azure, provisioned entirely with Terraform in
+[`infra/`](infra/): a single FastAPI container on **Azure App Service**
+(Linux), pulling from Azure Container Registry, with a **private** PostgreSQL
+Flexible Server, Azure Blob Storage, Azure OpenAI, Key Vault, and Microsoft
+Entra ID auth.
+
+```bash
+cd infra/environments/dev
+terraform init -input=false -backend-config=backend.hcl
+terraform plan  -var-file=params.tfvars -var-file=secrets.tfvars
+terraform apply -var-file=params.tfvars -var-file=secrets.tfvars
+```
+
+See the **[Azure setup guide](docs/azure_setup_guide.md)** for the full walkthrough:
+resource layout, per-environment config, Entra roles/groups, secret access,
+troubleshooting, and adding staging/prod.
+
 ## Configuration
 
 Key environment variables (full list in `backend/src/config.py`):
@@ -230,9 +251,9 @@ Key environment variables (full list in `backend/src/config.py`):
 | `MAPPING_MODEL` | `gpt-4o-mini` | Chat model for mapping proposals |
 | `CODEGEN_MODEL` | `gpt-4o-mini` | Chat model for pipeline code generation |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-| `AUTH_BYPASS_LOCAL` | unset | When `true`, bypass WorkOS and use a synthetic admin |
+| `AUTH_BYPASS_LOCAL` | unset | When `true`, bypass Entra ID and use a synthetic admin |
 | `SESSION_SECRET_KEY` | random | Session cookie signing key (set in production) |
-| `WORKOS_CLIENT_ID` / `WORKOS_API_KEY` | — | WorkOS AuthKit credentials (not needed with `AUTH_BYPASS_LOCAL`) |
+| `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` | — | Entra ID OAuth credentials for auth (see [Azure setup guide](docs/azure_setup_guide.md)); not needed with `AUTH_BYPASS_LOCAL` |
 
 There is no heuristic fallback: both ingestion (embeddings) and mapping
 proposals require an LLM API key.

@@ -123,10 +123,10 @@ variable "session_secret_key" {
 
 # --- Entra ID ---
 
-variable "entra_client_secret" {
-  description = "Client secret of the Entra ID app registration. Stored in Key Vault, never in state env."
-  type        = string
-  sensitive   = true
+variable "role_group_object_ids" {
+  description = "Map of app role -> list of Entra group object IDs assigned that role. Membership of those groups (i.e. which users) is managed in Entra, so passwords/credentials never touch Terraform. Leave empty for no assignments."
+  type        = map(list(string))
+  default     = {}
 }
 
 variable "entra_tenant_id" {

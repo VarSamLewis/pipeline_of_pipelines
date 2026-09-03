@@ -30,3 +30,14 @@ database_storage_mb = 32768
 openai_chat_model      = "gpt-4o-mini"
 openai_embedding_model = "text-embedding-3-small"
 openai_api_version     = "2024-10-21"
+
+# Entra groups -> app roles. Which users belong to each group is managed in the
+# Entra portal. Get a group's object ID with:
+#   az ad group show --group "<name>" --query id -o tsv
+# Uncomment and fill in the group GUIDs you want assigned to each role.
+role_group_object_ids = {
+  # admin    = ["<admin-group-object-id>"]
+  # approver = ["<approver-group-object-id>"]
+  # reviewer = ["<reviewer-group-object-id>"]
+  # creator  = ["<creator-group-object-id>"]
+}
