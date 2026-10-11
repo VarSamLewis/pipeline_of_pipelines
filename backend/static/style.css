@@ -183,7 +183,17 @@ tr:hover { background: #f8f9fa; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.htmx-request .spinner { display: inline-block; }
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { display: inline-flex; }
+
+.progress-indicator {
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
 .code-editor {
   width: 100%;

@@ -9,15 +9,18 @@
   <div class="card-header">
     <h2>Output</h2>
     <div>
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1" hx-target="#results-view" hx-indicator="#results-spinner">View CSV</button>
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-spinner">View code</button>
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1" hx-target="#results-view" hx-indicator="#results-progress">View CSV</button>
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-progress">View code</button>
     </div>
   </div>
 
   <div id="results-view" style="margin-top: 1rem;">
     <p class="muted">Select a view above to see the generated CSV or pipeline code.</p>
   </div>
-  <span id="results-spinner" class="spinner" style="display:none;"></span>
+  <span id="results-progress" class="htmx-indicator progress-indicator" aria-live="polite">
+    <span class="spinner" aria-hidden="true"></span>
+    Loading output...
+  </span>
 </div>
 
 <div class="card">

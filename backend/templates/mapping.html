@@ -71,13 +71,16 @@
     hx-post="/mapping/{{ spec_id }}/confirm"
     hx-target="#mapping-result"
     hx-swap="innerHTML"
-    hx-indicator="#mapping-spinner"
+    hx-indicator="#mapping-progress"
     style="display:inline;"
   >
     <button class="btn btn-success" type="submit">
-      <span id="mapping-spinner" class="spinner" style="display:none;"></span>
       Confirm & run pipeline
     </button>
+    <span id="mapping-progress" class="htmx-indicator progress-indicator" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      Generating and running the pipeline...
+    </span>
   </form>
 
   <form

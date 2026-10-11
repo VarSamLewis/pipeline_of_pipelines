@@ -11,7 +11,7 @@
     hx-encoding="multipart/form-data"
     hx-target="#upload-result"
     hx-swap="innerHTML"
-    hx-indicator="#upload-spinner"
+    hx-indicator="#upload-progress"
   >
     <div class="form-group">
       <label for="client_select">Client</label>
@@ -48,9 +48,12 @@
     </div>
 
     <button class="btn btn-primary" type="submit">
-      <span id="upload-spinner" class="spinner" style="display:none;"></span>
       Run mapping
     </button>
+    <div id="upload-progress" class="htmx-indicator progress-indicator" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      Uploading files, profiling sources, and proposing a mapping...
+    </div>
   </form>
   <div id="upload-result" style="margin-top: 1rem;"></div>
 </div>
