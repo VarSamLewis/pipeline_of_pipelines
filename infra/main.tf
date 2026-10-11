@@ -161,6 +161,15 @@ resource "google_project_iam_member" "runtime" {
   member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+data "google_project" "current" {}
+
+resource "google_artifact_registry_repository_iam_member" "cloud_build" {
+  location   = google_artifact_registry_repository.app.location
+  repository = google_artifact_registry_repository.app.name
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
+}
+
 resource "google_storage_bucket_iam_member" "runtime" {
   bucket = google_storage_bucket.artifacts.name
   role   = "roles/storage.objectUser"
