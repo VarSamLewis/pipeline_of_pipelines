@@ -67,3 +67,19 @@ def test_mapping_review_surfaces_catalog_warnings(
         if "Confirm &amp; run pipeline" in response.text
         else "Confirm & run pipeline"
     )
+
+
+def test_mapping_confirmation_displays_execution_errors(monkeypatch) -> None:
+    """Pipeline execution failures are returned to the HTMX target."""
+    import ui
+    from app import app
+
+    def fail(_: uuid.UUID) -> uuid.UUID:
+        raise RuntimeError("Pipeline execution exceeded the configured time limit")
+
+    monkeypatch.setattr(ui, "approve_mapping_and_execute", fail)
+
+    response = TestClient(app).post(f"/mapping/{uuid.uuid4()}/confirm")
+
+    assert response.status_code == 200
+    assert "Pipeline execution exceeded the configured time limit" in response.text

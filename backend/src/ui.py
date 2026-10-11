@@ -98,7 +98,7 @@ def upload_submit(
             source_uploads=valid_source_files,
             target_schema_bytes=target_schema_bytes,
         )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         return templates.TemplateResponse(
             request,
             "partials/error.html",
@@ -165,7 +165,7 @@ def mapping_confirm(
     """Approve the mapping and run codegen + execution."""
     try:
         run_id = approve_mapping_and_execute(spec_id)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         return templates.TemplateResponse(
             request,
             "partials/error.html",
