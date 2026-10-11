@@ -78,6 +78,13 @@ def test_responses_include_browser_security_headers(client: TestClient) -> None:
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
 
+def test_health_check(client: TestClient) -> None:
+    """The liveness endpoint is available without authentication."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_manage_beta_invitation(
     client: TestClient,
     registered_client: dict,

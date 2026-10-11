@@ -106,6 +106,12 @@ from workflow import (
 app = APIRouter()
 
 
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Return the liveness status used by local and Cloud Run probes."""
+    return {"status": "ok"}
+
+
 def require_mapping_spec_access(
     spec_id: uuid.UUID,
     user: Any = Depends(require_auth),
