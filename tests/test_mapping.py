@@ -300,6 +300,37 @@ def test_resolve_composite_keys_resolves_lookup_table() -> None:
     assert mappings[0].lookup_source_table == "lookup-tbl"
 
 
+def test_resolve_composite_keys_reports_available_lookup_tables() -> None:
+    """Missing lookup references identify the catalog tables the LLM may use."""
+    catalogs = [
+        {
+            "tables": [
+                {
+                    "source_table_id": "t1",
+                    "original_filename": "packaging_data.csv",
+                    "display_name": "packaging_data.csv",
+                    "columns": [],
+                }
+            ]
+        }
+    ]
+    mappings = [
+        ProposedMapping(
+            target_table="out",
+            target_column="location",
+            transformation_type="lookup",
+            lookup_source_table="site_locations.csv::site_locations.csv",
+        )
+    ]
+
+    errors = resolve_composite_keys(mappings, catalogs)
+
+    assert errors == [
+        "lookup_source_table 'site_locations.csv::site_locations.csv' is not "
+        "in the catalog; available tables: packaging_data.csv::packaging_data.csv"
+    ]
+
+
 def test_validate_mapping_columns_accepts_catalog_ids() -> None:
     """Catalog-grounded references should resolve by stable IDs."""
     raw_file_id = uuid.uuid4()
@@ -389,9 +420,7 @@ def test_validate_mapping_columns_rejects_cross_table_column_id() -> None:
 
     results = validate_mapping_columns([mapping], target_schema, catalogs)
 
-    assert any(
-        "does not belong" in error for error in results[0]["validation_errors"]
-    )
+    assert any("does not belong" in error for error in results[0]["validation_errors"])
 
 
 def test_check_target_schema_coverage_reports_missing_columns() -> None:
@@ -573,9 +602,7 @@ def test_validate_lookup_key_not_in_lookup_table() -> None:
         }
     ]
 
-    results = validate_mapping_columns(
-        [mapping], target_schema, catalogs
-    )
+    results = validate_mapping_columns([mapping], target_schema, catalogs)
 
     errors = results[0]["validation_errors"]
     assert any("lookup_key" in e and "wrong_column_name" in e for e in errors)
@@ -627,14 +654,10 @@ def test_validate_lookup_value_not_in_lookup_table() -> None:
         }
     ]
 
-    results = validate_mapping_columns(
-        [mapping], target_schema, catalogs
-    )
+    results = validate_mapping_columns([mapping], target_schema, catalogs)
 
     errors = results[0]["validation_errors"]
-    assert any(
-        "lookup_value" in e and "nonexistent_value" in e for e in errors
-    )
+    assert any("lookup_value" in e and "nonexistent_value" in e for e in errors)
 
 
 def test_validate_lookup_accepts_valid_key() -> None:
@@ -683,9 +706,7 @@ def test_validate_lookup_accepts_valid_key() -> None:
         }
     ]
 
-    results = validate_mapping_columns(
-        [mapping], target_schema, catalogs
-    )
+    results = validate_mapping_columns([mapping], target_schema, catalogs)
 
     assert results[0]["validation_errors"] == []
 
@@ -736,11 +757,7 @@ def test_validate_aggregation_group_key_not_found() -> None:
         }
     ]
 
-    results = validate_mapping_columns(
-        [mapping], target_schema, catalogs
-    )
+    results = validate_mapping_columns([mapping], target_schema, catalogs)
 
     errors = results[0]["validation_errors"]
-    assert any(
-        "aggregation_group_key" in e and "wrong_key" in e for e in errors
-    )
+    assert any("aggregation_group_key" in e and "wrong_key" in e for e in errors)

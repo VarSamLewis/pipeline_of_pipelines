@@ -185,7 +185,11 @@ def resolve_composite_keys(
                 continue
             table_entry = _resolve_table_key(table_key, tbl_index)
             if table_entry is None:
-                errors.append(f"{field_name} {table_key!r} is not in the catalog")
+                available_tables = ", ".join(sorted(tbl_index)) or "none"
+                errors.append(
+                    f"{field_name} {table_key!r} is not in the catalog; "
+                    f"available tables: {available_tables}"
+                )
                 continue
             setattr(mapping, field_name, table_entry.get("source_table_id", ""))
 
@@ -339,7 +343,10 @@ def build_mapping_prompt(
         "\"aggregation_expression\": \"(col('qty') * col('unit_price')).sum()\". "
         "For cross-table lookups use transformation_type=lookup with "
         "lookup_source_table, lookup_key, and lookup_value. lookup_source_table "
-        "must be a table composite key, e.g. "
+        "must exactly match one entry in Available source tables. Do not invent "
+        "a lookup table from evidence, target-schema names, or business rules; "
+        "if no listed source table is appropriate, use an expression mapping and "
+        "omit lookup_source_table. Example: "
         '"lookup_source_table": "data.csv::LookupTable", "lookup_key": "prod_sku", '
         '"lookup_value": "prod_name". '
         "For lookups the source_columns should reference the column in the "
