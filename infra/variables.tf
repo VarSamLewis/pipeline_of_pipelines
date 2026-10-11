@@ -81,6 +81,12 @@ variable "clerk_jwt_template" {
   default     = "pipeline-beta"
 }
 
+variable "bootstrap_admin_emails" {
+  description = "Verified Clerk emails allowed to bootstrap platform administration."
+  type        = list(string)
+  default     = []
+}
+
 variable "min_instances" {
   description = "Cloud Run minimum API instances."
   type        = number

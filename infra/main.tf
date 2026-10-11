@@ -274,6 +274,10 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "CLERK_JWT_TEMPLATE"
         value = var.clerk_jwt_template
       }
+      env {
+        name  = "BOOTSTRAP_ADMIN_EMAILS"
+        value = join(",", var.bootstrap_admin_emails)
+      }
 
       dynamic "env" {
         for_each = {

@@ -27,6 +27,7 @@ SESSION_SECRET_KEY = _settings.session_secret_key
 SESSION_MAX_AGE_SECONDS = _settings.session_max_age_seconds
 SESSION_COOKIE_SECURE = _settings.session_cookie_secure
 AUTH_BYPASS_LOCAL = _settings.auth_bypass_local
+BOOTSTRAP_ADMIN_EMAILS = _settings.bootstrap_admin_emails
 _jwks_client: PyJWKClient | None = None
 
 
@@ -90,13 +91,14 @@ def authenticate_clerk_session(token: str) -> Any:
                 BetaInvitation.email == email, BetaInvitation.status == "pending"
             )
         ).all()
-        if not invitations:
+        is_bootstrap_admin = email in BOOTSTRAP_ADMIN_EMAILS
+        if not invitations and not is_bootstrap_admin:
             raise HTTPException(403, "No pending beta invitation")
         user = User(
             external_user_id=external_id,
             email=email,
             name=name,
-            role=UserRole.CREATOR,
+            role=UserRole.ADMIN if is_bootstrap_admin else UserRole.CREATOR,
             last_login_at=now,
         )
         session.add(user)

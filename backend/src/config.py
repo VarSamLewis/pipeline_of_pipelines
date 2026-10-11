@@ -54,6 +54,7 @@ class Settings:
     auth_bypass_local: bool
     pipeline_execution_timeout_seconds: int
     max_upload_size_bytes: int
+    bootstrap_admin_emails: frozenset[str]
     gcs_bucket: str
 
     @classmethod
@@ -77,6 +78,11 @@ class Settings:
         session_secret_key = values.get("SESSION_SECRET_KEY")
         auth_bypass_local = _as_bool(values.get("AUTH_BYPASS_LOCAL"))
         session_cookie_secure = _as_bool(values.get("SESSION_COOKIE_SECURE"))
+        bootstrap_admin_emails = frozenset(
+            email.strip().lower()
+            for email in values.get("BOOTSTRAP_ADMIN_EMAILS", "").split(",")
+            if email.strip()
+        )
         if app_environment == "production":
             if not session_secret_key:
                 raise ValueError("SESSION_SECRET_KEY is required in production")
@@ -84,6 +90,8 @@ class Settings:
                 raise ValueError("AUTH_BYPASS_LOCAL must be false in production")
             if not session_cookie_secure:
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")
+            if not bootstrap_admin_emails:
+                raise ValueError("BOOTSTRAP_ADMIN_EMAILS is required in production")
 
         return cls(
             project_root=root,
@@ -124,6 +132,7 @@ class Settings:
                 values.get("PIPELINE_EXECUTION_TIMEOUT_SECONDS", "120")
             ),
             max_upload_size_bytes=int(values.get("MAX_UPLOAD_SIZE_BYTES", "52428800")),
+            bootstrap_admin_emails=bootstrap_admin_emails,
             gcs_bucket=values.get("GCS_BUCKET", ""),
         )
 

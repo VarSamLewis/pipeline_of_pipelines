@@ -34,6 +34,7 @@ def test_settings_honour_environment_overrides(tmp_path: Path) -> None:
             "SESSION_MAX_AGE": "120",
             "PIPELINE_EXECUTION_TIMEOUT_SECONDS": "45",
             "MAX_UPLOAD_SIZE_BYTES": "1024",
+            "BOOTSTRAP_ADMIN_EMAILS": "Admin@example.com, second@example.com",
             "AUTH_BYPASS_LOCAL": "yes",
         },
         project_root=tmp_path,
@@ -48,6 +49,10 @@ def test_settings_honour_environment_overrides(tmp_path: Path) -> None:
     assert settings.session_max_age_seconds == 120
     assert settings.pipeline_execution_timeout_seconds == 45
     assert settings.max_upload_size_bytes == 1024
+    assert settings.bootstrap_admin_emails == {
+        "admin@example.com",
+        "second@example.com",
+    }
     assert settings.auth_bypass_local is True
 
 
@@ -60,11 +65,13 @@ def test_settings_honour_environment_overrides(tmp_path: Path) -> None:
             "SESSION_SECRET_KEY": "test-secret",
             "AUTH_BYPASS_LOCAL": "true",
             "SESSION_COOKIE_SECURE": "true",
+            "BOOTSTRAP_ADMIN_EMAILS": "admin@example.com",
         },
         {
             "APP_ENVIRONMENT": "production",
             "SESSION_SECRET_KEY": "test-secret",
             "SESSION_COOKIE_SECURE": "false",
+            "BOOTSTRAP_ADMIN_EMAILS": "admin@example.com",
         },
     ],
 )

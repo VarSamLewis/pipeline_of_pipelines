@@ -15,5 +15,6 @@ clerk_audience        = "your-api-audience"
 clerk_jwks_url        = "https://your-clerk-instance.clerk.accounts.dev/.well-known/jwks.json"
 clerk_sign_in_url     = "https://your-clerk-instance.clerk.accounts.dev/sign-in"
 clerk_jwt_template    = "pipeline-beta"
+bootstrap_admin_emails = ["operator@example.com"]
 min_instances       = 0
 max_instances       = 10
