@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.10.9
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+      - run: uv run ruff check backend/src tests scripts
+      - run: uv run mypy backend/src
+      - run: uv run pytest
+      - run: git diff --check
+      - run: docker build --tag pipeline-of-pipelines:ci .
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
