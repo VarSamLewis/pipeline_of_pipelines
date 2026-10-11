@@ -1,184 +1,128 @@
-"""WorkOS AuthKit-backed authentication and authorization.
-
-This module provides:
-- WorkOS client initialization.
-- AuthKit login/callback helpers.
-- Encrypted cookie session management.
-- FastAPI dependencies for authentication and role checks.
-- A local-dev bypass so scripts and tests can run without WorkOS.
-
-Role storage:
-    WorkOS user metadata holds the canonical role under the key ``role``.
-    The local ``User`` table caches that role and is used for fast permission
-    checks and audit lineage. Admins can change a user's role via
-    ``update_user_role``, which writes back to WorkOS metadata and updates the
-    local cache.
-"""
+"""Clerk JWT authentication, local sessions, and authorization dependencies."""
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
+from typing import Any, cast
 
+import jwt
 from config import get_settings
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request
-from workos import WorkOSClient
+from jwt import PyJWKClient
+from sqlmodel import Session, select
 
 load_dotenv()
 
 _settings = get_settings()
-WORKOS_CLIENT_ID = _settings.workos_client_id
-WORKOS_API_KEY = _settings.workos_api_key
-WORKOS_REDIRECT_URI = _settings.workos_redirect_uri
-WORKOS_AUTHKIT_DOMAIN = _settings.workos_authkit_domain
+CLERK_PUBLISHABLE_KEY = _settings.clerk_publishable_key
+CLERK_AUDIENCE = _settings.clerk_audience
+CLERK_ISSUER = _settings.clerk_issuer
+CLERK_JWKS_URL = _settings.clerk_jwks_url
+CLERK_SIGN_IN_URL = _settings.clerk_sign_in_url
+CLERK_JWT_TEMPLATE = _settings.clerk_jwt_template
 SESSION_SECRET_KEY = _settings.session_secret_key
 SESSION_MAX_AGE_SECONDS = _settings.session_max_age_seconds
+SESSION_COOKIE_SECURE = _settings.session_cookie_secure
 AUTH_BYPASS_LOCAL = _settings.auth_bypass_local
-
-# Delay model import until runtime to avoid import cycles with models.py.
-_User: Any | None = None
-_UserRole: Any | None = None
+_jwks_client: PyJWKClient | None = None
 
 
-def _get_models() -> tuple[Any, Any]:
-    """Import and cache SQLModel auth-related classes."""
-    global _User, _UserRole
-    if _User is None or _UserRole is None:
-        from models import User, UserRole
-
-        _User = User
-        _UserRole = UserRole
-    return _User, _UserRole
+def _get_jwks_client() -> PyJWKClient:
+    if not CLERK_JWKS_URL:
+        raise RuntimeError("CLERK_JWKS_URL is not configured")
+    global _jwks_client
+    if _jwks_client is None:
+        _jwks_client = PyJWKClient(CLERK_JWKS_URL, cache_keys=True)
+    return _jwks_client
 
 
-def get_workos_client() -> WorkOSClient:
-    """Return a configured WorkOS client."""
-    if not WORKOS_API_KEY:
-        raise RuntimeError("WORKOS_API_KEY is not configured")
-    return WorkOSClient(api_key=WORKOS_API_KEY, client_id=WORKOS_CLIENT_ID)
-
-
-def get_authkit_url(state: str) -> str:
-    """Build the AuthKit authorization URL for a given state token."""
-    client = get_workos_client()
-    return client.user_management.get_authorization_url(
-        redirect_uri=WORKOS_REDIRECT_URI,
-        state=state,
-    )
-
-
-def _extract_role_from_workos_user(workos_user: Any) -> Any:
-    """Read the role from WorkOS user metadata, defaulting to creator."""
-    _User, UserRole = _get_models()  # noqa: N806
-    metadata = workos_user.metadata or {}
-    role_value = metadata.get("role", UserRole.CREATOR.value)
+def _verified_claims(token: str) -> Mapping[str, Any]:
+    if not CLERK_ISSUER or not CLERK_AUDIENCE:
+        raise RuntimeError("Clerk JWT verification is not configured")
     try:
-        return UserRole(role_value)
-    except ValueError:
-        return UserRole.CREATOR
+        key = _get_jwks_client().get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token,
+            key.key,
+            algorithms=["RS256"],
+            issuer=CLERK_ISSUER,
+            audience=CLERK_AUDIENCE,
+            options={"require": ["sub", "exp", "iat", "nbf"]},
+        )
+    except jwt.PyJWTError as exc:
+        raise HTTPException(401, "Invalid Clerk session token") from exc
 
 
-def authenticate_with_workos(code: str) -> tuple[Any, bool]:
-    """Exchange an AuthKit authorization code for a user.
-
-    Returns:
-        A tuple of (local_user_record, created).
-    """
+def authenticate_clerk_session(token: str) -> Any:
+    """Verify a Clerk JWT and provision only identities with pending invitations."""
     from db_ops import get_session
+    from models import BetaInvitation, ClientMembership, User, UserRole
 
-    User, _UserRole = _get_models()  # noqa: N806
-    client = get_workos_client()
-    auth_response = client.user_management.authenticate_with_code(code=code)
-    workos_user = auth_response.user
+    claims = _verified_claims(token)
+    external_id = claims["sub"]
+    email = claims.get("email") or claims.get("email_address")
+    if not isinstance(external_id, str) or not isinstance(email, str) or not email:
+        raise HTTPException(401, "Clerk token must contain subject and email")
+    if claims.get("email_verified") is False:
+        raise HTTPException(401, "Clerk email is not verified")
+    email = email.strip().lower()
+    name = claims.get("name") if isinstance(claims.get("name"), str) else None
+    now = datetime.now(UTC).replace(tzinfo=None)
 
     with get_session() as session:
-        from sqlmodel import select
-
-        statement = select(User).where(User.workos_user_id == workos_user.id)
-        user = session.exec(statement).first()
-        role = _extract_role_from_workos_user(workos_user)
-
-        now = __import__("datetime").datetime.utcnow()
-        first_name = workos_user.first_name or ""
-        last_name = workos_user.last_name or ""
-        full_name = f"{first_name} {last_name}".strip() or None
-        if user is None:
-            user = User(
-                workos_user_id=workos_user.id,
-                email=workos_user.email,
-                name=workos_user.name or full_name,
-                role=role,
-                last_login_at=now,
-            )
-            session.add(user)
-            created = True
-        else:
-            user.email = workos_user.email
-            user.name = workos_user.name or user.name
-            user.role = role
+        user = session.exec(
+            select(User).where(User.external_user_id == external_id)
+        ).first()
+        if user is not None:
+            user.email = email
+            user.name = name or user.name
             user.last_login_at = now
             session.add(user)
-            created = False
+            session.commit()
+            session.refresh(user)
+            return user
 
-        session.commit()
-        session.refresh(user)
-        return user, created
-
-
-def update_user_role(user_id: uuid.UUID, role_value: str) -> Any:
-    """Update a user's role in WorkOS metadata and sync the local cache.
-
-    Args:
-        user_id: Local UUID of the user to update.
-        role_value: One of creator, reviewer, approver, admin.
-
-    Returns:
-        The updated local User record.
-
-    Raises:
-        ValueError: If the role is invalid or the user is not found.
-        HTTPException: 502 if WorkOS update fails.
-    """
-    from db_ops import get_session
-
-    User, UserRole = _get_models()  # noqa: N806
-    try:
-        role = UserRole(role_value)
-    except ValueError as exc:
-        raise ValueError(f"Invalid role: {role_value}") from exc
-
-    with get_session() as session:
-        user = session.get(User, user_id)
-        if user is None:
-            raise ValueError("User not found")
-
-        client = get_workos_client()
-        try:
-            client.user_management.update_user(
-                id=user.workos_user_id,
-                metadata={"role": role.value},
+        invitations = session.exec(
+            select(BetaInvitation).where(
+                BetaInvitation.email == email, BetaInvitation.status == "pending"
             )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to update WorkOS user metadata: {exc}",
-            ) from exc
-
-        user.role = role
+        ).all()
+        if not invitations:
+            raise HTTPException(403, "No pending beta invitation")
+        user = User(
+            external_user_id=external_id,
+            email=email,
+            name=name,
+            role=UserRole.CREATOR,
+            last_login_at=now,
+        )
         session.add(user)
+        session.flush()
+        for invitation in invitations:
+            session.add(
+                ClientMembership(
+                    user_id=user.id,
+                    client_id=invitation.client_id,
+                    role=invitation.role,
+                )
+            )
+            invitation.status = "accepted"
+            invitation.updated_at = now
+            session.add(invitation)
         session.commit()
         session.refresh(user)
         return user
 
 
 def _synthetic_local_user() -> Any:
-    """Return an in-memory admin user for local development bypass."""
-    User, UserRole = _get_models()  # noqa: N806
+    from models import User, UserRole
+
     return User(
         id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
-        workos_user_id="local-dev",
+        external_user_id="local-dev",
         email="local-dev@example.com",
         name="Local Developer",
         role=UserRole.ADMIN,
@@ -186,73 +130,77 @@ def _synthetic_local_user() -> Any:
 
 
 def get_current_user(request: Request) -> Any | None:
-    """Resolve the current user from the encrypted session cookie."""
     if AUTH_BYPASS_LOCAL:
         return _synthetic_local_user()
-
     user_id = request.session.get("user_id")
     if not user_id:
         return None
-
+    try:
+        parsed_id = uuid.UUID(user_id)
+    except ValueError:
+        return None
     from db_ops import get_session
+    from models import User
 
-    User, _UserRole = _get_models()  # noqa: N806
     with get_session() as session:
-        return session.get(User, uuid.UUID(user_id))
+        return session.get(User, parsed_id)
 
 
 def require_auth(request: Request) -> Any:
-    """Dependency that returns the current user or raises 401/redirects.
-
-    For HTMX requests the response includes ``HX-Redirect`` so the browser
-    navigates to the login page. For regular browser requests it raises a 401
-    that the frontend can intercept, or callers can redirect to ``/login``.
-    """
     user = get_current_user(request)
     if user is None:
-        is_htmx = request.headers.get("HX-Request") == "true"
-        headers = {"HX-Redirect": "/login"} if is_htmx else {}
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required",
-            headers=headers,
+        headers = (
+            {"HX-Redirect": "/login"}
+            if request.headers.get("HX-Request") == "true"
+            else {}
         )
+        raise HTTPException(401, "Authentication required", headers=headers)
     return user
 
 
 def require_role(*allowed_roles: str) -> Callable[[Any], Any]:
-    """Dependency factory that restricts access to the given roles."""
-
     def checker(user: Any = Depends(require_auth)) -> Any:
-        _, UserRole = _get_models()  # noqa: N806
-        role_hierarchy = {
-            UserRole.CREATOR.value: 1,
-            UserRole.REVIEWER.value: 2,
-            UserRole.APPROVER.value: 3,
-            UserRole.ADMIN.value: 4,
-        }
-        user_level = role_hierarchy.get(user.role.value, 0)
-        required_level = max(role_hierarchy.get(r, 0) for r in allowed_roles)
+        from models import UserRole
 
-        if user_level < required_level:
+        levels = {
+            UserRole.CREATOR: 1,
+            UserRole.REVIEWER: 2,
+            UserRole.APPROVER: 3,
+            UserRole.ADMIN: 4,
+        }
+        if levels[user.role] < max(levels[UserRole(role)] for role in allowed_roles):
             raise HTTPException(
-                status_code=403,
-                detail=f"Requires one of roles: {', '.join(allowed_roles)}",
+                403, f"Requires one of roles: {', '.join(allowed_roles)}"
             )
         return user
 
     return checker
 
 
-def create_session(request: Request, user_id: uuid.UUID) -> None:
-    """Persist the user id in the encrypted session cookie.
+def require_client_membership(
+    session: Session,
+    user: Any,
+    client_id: uuid.UUID,
+) -> None:
+    """Raise 403 unless the user has an active membership for the client."""
+    from models import ClientMembership, UserRole
 
-    The Starlette SessionMiddleware serialises ``request.session`` into the
-    response, so callers set the value here and return the response unchanged.
-    """
+    if AUTH_BYPASS_LOCAL or user.role == UserRole.ADMIN:
+        return
+    membership = session.exec(
+        select(ClientMembership).where(
+            ClientMembership.user_id == user.id,
+            ClientMembership.client_id == client_id,
+            cast(Any, ClientMembership.revoked_at).is_(None),
+        )
+    ).first()
+    if membership is None:
+        raise HTTPException(403, "Client membership required")
+
+
+def create_session(request: Request, user_id: uuid.UUID) -> None:
     request.session["user_id"] = str(user_id)
 
 
 def clear_session(request: Request) -> None:
-    """Clear the encrypted session cookie on logout."""
     request.session.clear()

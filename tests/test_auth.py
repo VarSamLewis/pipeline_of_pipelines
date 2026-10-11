@@ -1,8 +1,4 @@
-"""Unit tests for the WorkOS-backed auth layer.
-
-These tests exercise role hierarchy, local bypass mode, and the WorkOS user
-metadata mapping without making network calls to WorkOS.
-"""
+"""Unit tests for Clerk-backed authorization dependencies."""
 
 from __future__ import annotations
 
@@ -20,16 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend" / "src"))
 
-from auth_service import _extract_role_from_workos_user, get_current_user, require_role
+from auth_service import get_current_user, require_client_membership, require_role
 from fastapi import HTTPException
 from models import UserRole
-
-
-class FakeWorkOSUser:
-    """Minimal stand-in for a WorkOS user object."""
-
-    def __init__(self, metadata: dict[str, str] | None = None) -> None:
-        self.metadata = metadata
 
 
 class FakeRequest:
@@ -40,19 +29,24 @@ class FakeRequest:
         self.headers: dict[str, str] = {}
 
 
-def test_extract_role_defaults_to_creator() -> None:
-    """Missing or invalid metadata role defaults to creator."""
-    user = FakeWorkOSUser(metadata={})
-    assert _extract_role_from_workos_user(user) == UserRole.CREATOR
+class FakeMembershipResult:
+    """Minimal SQLModel result used by membership authorization tests."""
 
-    user_invalid = FakeWorkOSUser(metadata={"role": "superuser"})
-    assert _extract_role_from_workos_user(user_invalid) == UserRole.CREATOR
+    def __init__(self, membership: object | None) -> None:
+        self.membership = membership
+
+    def first(self) -> object | None:
+        return self.membership
 
 
-def test_extract_role_reads_metadata() -> None:
-    """A valid role in WorkOS metadata is parsed correctly."""
-    user = FakeWorkOSUser(metadata={"role": "admin"})
-    assert _extract_role_from_workos_user(user) == UserRole.ADMIN
+class FakeMembershipSession:
+    """Minimal session that returns the configured active membership result."""
+
+    def __init__(self, membership: object | None) -> None:
+        self.membership = membership
+
+    def exec(self, _: object) -> FakeMembershipResult:
+        return FakeMembershipResult(self.membership)
 
 
 def test_local_bypass_returns_admin_user() -> None:
@@ -70,7 +64,7 @@ def test_require_role_allows_equal_or_higher_role() -> None:
 
     admin_user = User(
         id=uuid.uuid4(),
-        workos_user_id="admin-1",
+        external_user_id="admin-1",
         email="admin@example.com",
         role=UserRole.ADMIN,
     )
@@ -84,7 +78,7 @@ def test_require_role_rejects_insufficient_role() -> None:
 
     creator_user = User(
         id=uuid.uuid4(),
-        workos_user_id="creator-1",
+        external_user_id="creator-1",
         email="creator@example.com",
         role=UserRole.CREATOR,
     )
@@ -92,6 +86,56 @@ def test_require_role_rejects_insufficient_role() -> None:
     with pytest.raises(HTTPException) as exc_info:
         checker(creator_user)
     assert exc_info.value.status_code == 403
+
+
+def test_client_membership_allows_active_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An active membership permits access to its client."""
+    import auth_service
+    from models import User
+
+    monkeypatch.setattr(auth_service, "AUTH_BYPASS_LOCAL", False)
+    user = User(
+        external_user_id="member-1",
+        email="member@example.com",
+        role=UserRole.REVIEWER,
+    )
+    require_client_membership(FakeMembershipSession(object()), user, uuid.uuid4())
+
+
+def test_client_membership_rejects_missing_or_revoked_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing and revoked memberships are both denied by the active query."""
+    import auth_service
+    from models import User
+
+    monkeypatch.setattr(auth_service, "AUTH_BYPASS_LOCAL", False)
+    user = User(
+        external_user_id="former-member-1",
+        email="former@example.com",
+        role=UserRole.REVIEWER,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        require_client_membership(FakeMembershipSession(None), user, uuid.uuid4())
+    assert exc_info.value.status_code == 403
+
+
+def test_client_membership_allows_admin_without_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Admins can manage every tenant without explicit memberships."""
+    import auth_service
+    from models import User
+
+    monkeypatch.setattr(auth_service, "AUTH_BYPASS_LOCAL", False)
+    user = User(
+        external_user_id="admin-1",
+        email="admin@example.com",
+        role=UserRole.ADMIN,
+    )
+    require_client_membership(FakeMembershipSession(None), user, uuid.uuid4())
 
 
 def test_require_auth_rejects_anonymous_request() -> None:

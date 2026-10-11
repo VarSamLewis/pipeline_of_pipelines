@@ -28,20 +28,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import json
-import secrets
 import uuid
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from auth_service import (
     AUTH_BYPASS_LOCAL,
+    CLERK_JWT_TEMPLATE,
+    CLERK_PUBLISHABLE_KEY,
+    CLERK_SIGN_IN_URL,
+    authenticate_clerk_session,
     clear_session,
     create_session,
-    get_authkit_url,
     require_auth,
+    require_client_membership,
     require_role,
-    update_user_role,
 )
+from config import get_settings
 from db_ops import (
     approve_business_rule,
     create_business_rule,
@@ -62,12 +65,18 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Request,
     UploadFile,
 )
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from file_ops import (
     build_storage_key,
     compute_sha256,
@@ -80,6 +89,7 @@ from repositories.clients import (
     get_client_by_code,
     get_ingestion_batch,
 )
+from sqlalchemy import desc
 from workflow import (
     approve_mapping,
     approve_result,
@@ -95,9 +105,114 @@ from workflow import (
 
 app = APIRouter()
 
+
+def require_mapping_spec_access(
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize access to the client that owns a mapping specification."""
+    if AUTH_BYPASS_LOCAL:
+        return
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise HTTPException(404, "Mapping spec not found")
+        require_client_membership(session, user, spec.client_id)
+
+
+def require_client_code_access(
+    client_code: str,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize access to a client addressed by its public code."""
+    if AUTH_BYPASS_LOCAL:
+        return
+    with get_session() as session:
+        client = get_client_by_code(session, client_code)
+        if client is None:
+            raise HTTPException(404, "Client not found")
+        require_client_membership(session, user, client.id)
+
+
+def require_raw_file_access(
+    raw_file_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize access through the raw file's owning client."""
+    if AUTH_BYPASS_LOCAL:
+        return
+    with get_session() as session:
+        raw_file = get_raw_file_by_id(session, raw_file_id)
+        if raw_file is None:
+            raise HTTPException(404, "Raw file not found")
+        require_client_membership(session, user, raw_file.client_id)
+
+
+def require_execution_run_access(
+    run_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize access through the execution run's owning client."""
+    if AUTH_BYPASS_LOCAL:
+        return
+    from models import ExecutionRun
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            raise HTTPException(404, "Execution run not found")
+        require_client_membership(session, user, run.client_id)
+
+
+def require_business_rule_access(
+    rule_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize access through a business rule's owning client."""
+    if AUTH_BYPASS_LOCAL:
+        return
+    from models import BusinessRule
+
+    with get_session() as session:
+        rule = session.get(BusinessRule, rule_id)
+        if rule is None:
+            raise HTTPException(404, "Business rule not found")
+        require_client_membership(session, user, rule.client_id)
+
+
+def require_staging_column_access(
+    staging_column_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize lineage through staging column, table, and execution run."""
+    if AUTH_BYPASS_LOCAL:
+        return
+    from models import ExecutionRun, StagingColumn, StagingTable
+
+    with get_session() as session:
+        column = session.get(StagingColumn, staging_column_id)
+        if column is None:
+            raise HTTPException(404, "Staging column not found")
+        table = session.get(StagingTable, column.staging_table_id)
+        if table is None:
+            raise HTTPException(404, "Staging table not found")
+        run = session.get(ExecutionRun, table.execution_run_id)
+        if run is None:
+            raise HTTPException(404, "Execution run not found")
+        require_client_membership(session, user, run.client_id)
+
+
+def require_output_folder_access(
+    folder_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> None:
+    """Authorize an output folder through its mapping-spec identifier."""
+    require_mapping_spec_access(folder_id, user)
+
+
 @app.get("/login")
 def login_page(request: Request) -> RedirectResponse:
-    """Redirect to the upload page or WorkOS AuthKit login."""
+    """Redirect to the upload page or Clerk sign-in."""
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
     return RedirectResponse(url="/auth/login")
@@ -115,44 +230,61 @@ def root(request: Request) -> RedirectResponse:
 
 
 # ---------------------------------------------------------------------------
-# WorkOS AuthKit routes
+# Clerk authentication routes
 # ---------------------------------------------------------------------------
 
 
 @app.get("/auth/login")
 def login(request: Request) -> RedirectResponse:
-    """Redirect the browser to WorkOS AuthKit for authentication."""
+    """Redirect the browser to Clerk's hosted sign-in page."""
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
-    state = secrets.token_urlsafe(32)
-    request.session["auth_state"] = state
-    url = get_authkit_url(state)
-    return RedirectResponse(url=url)
+    if not CLERK_SIGN_IN_URL:
+        raise HTTPException(500, "CLERK_SIGN_IN_URL is not configured")
+    return RedirectResponse(url=CLERK_SIGN_IN_URL)
 
 
 @app.get("/auth/callback")
-def auth_callback(
-    request: Request,
-    code: str,
-    state: str | None = None,
-) -> RedirectResponse:
-    """Handle the WorkOS AuthKit callback and establish a session."""
+def auth_callback() -> Response:
+    """Exchange the Clerk browser session for a verified local session."""
     if AUTH_BYPASS_LOCAL:
         return RedirectResponse(url="/upload")
+    if not CLERK_PUBLISHABLE_KEY:
+        raise HTTPException(500, "CLERK_PUBLISHABLE_KEY is not configured")
+    jwt_template = json.dumps(CLERK_JWT_TEMPLATE)
+    publishable_key = json.dumps(CLERK_PUBLISHABLE_KEY)
+    return HTMLResponse(
+        f"""<!doctype html><title>Signing in</title><p>Signing you in...</p>
+<script>
+async function startClerkSession() {{
+  try {{
+    await Clerk.load();
+    const token = await Clerk.session?.getToken({{template: {jwt_template}}});
+    if (!token) throw new Error("No active Clerk session");
+    const response = await fetch("/auth/session", {{
+      method: "POST", credentials: "same-origin",
+      headers: {{"Authorization": "Bearer " + token}}
+    }});
+    if (!response.ok) throw new Error("Sign-in was not authorized");
+    window.location.replace("/upload");
+  }} catch (error) {{ document.body.textContent = error.message || "Sign-in failed"; }}
+}}
+</script>
+<script async crossorigin="anonymous" onload="startClerkSession()"
+ src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+ data-clerk-publishable-key={publishable_key}></script>"""
+    )
 
-    stored_state = request.session.pop("auth_state", None)
-    if state is None or stored_state is None or state != stored_state:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
-    try:
-        user, _created = __import__("auth_service").authenticate_with_workos(code)
-    except Exception as exc:
-        msg = f"Authentication failed: {exc}"
-        raise HTTPException(status_code=401, detail=msg) from exc
-
-    response = RedirectResponse(url="/upload")
+@app.post("/auth/session")
+def create_authenticated_session(request: Request) -> dict[str, str]:
+    """Verify a Clerk bearer token and establish the local session."""
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(401, "Bearer Clerk session token required")
+    user = authenticate_clerk_session(token)
     create_session(request, user.id)
-    return response
+    return {"status": "ok"}
 
 
 @app.post("/auth/logout")
@@ -206,14 +338,150 @@ def set_user_role(
     payload: dict[str, Any],
     user: Any = Depends(require_role("admin")),
 ) -> dict[str, Any]:
-    """Update a user's role in WorkOS and locally (admin only)."""
-    updated = update_user_role(user_id, payload["role"])
+    """Update a provisioned user's platform role (admin only)."""
+    from models import User, UserRole
+
+    try:
+        role = UserRole(payload["role"])
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(422, "Invalid role") from exc
+    with get_session() as session:
+        updated = session.get(User, user_id)
+        if updated is None:
+            raise HTTPException(404, "User not found")
+        updated.role = role
+        session.add(updated)
+        session.commit()
+        session.refresh(updated)
     return {
         "id": str(updated.id),
         "email": updated.email,
         "name": updated.name,
         "role": updated.role.value,
     }
+
+
+@app.get("/admin/invitations")
+def list_invitations(
+    status: str | None = Query(default=None, pattern="^(pending|accepted|revoked)$"),
+    limit: int = Query(100, ge=1, le=500),
+    user: Any = Depends(require_role("admin")),
+) -> list[dict[str, Any]]:
+    """List beta invitations, optionally filtered by lifecycle status."""
+    from models import BetaInvitation
+    from sqlmodel import select
+
+    with get_session() as session:
+        statement = select(BetaInvitation).order_by(
+            desc(BetaInvitation.created_at)  # type: ignore[arg-type]
+        )
+        if status:
+            statement = statement.where(BetaInvitation.status == status)
+        invitations = session.exec(statement.limit(limit)).all()
+    return [
+        {
+            "id": str(invitation.id),
+            "email": invitation.email,
+            "client_id": str(invitation.client_id),
+            "role": invitation.role.value,
+            "status": invitation.status,
+            "created_at": invitation.created_at.isoformat(),
+            "updated_at": invitation.updated_at.isoformat(),
+        }
+        for invitation in invitations
+    ]
+
+
+@app.post("/admin/invitations")
+def create_invitation(
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, Any]:
+    """Create or update a pending client invitation for a verified Clerk email."""
+    from models import BetaInvitation, UserRole
+    from repositories.clients import get_client_by_code
+    from sqlmodel import select
+
+    email = payload.get("email")
+    client_code = payload.get("client_code")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(422, "email is required")
+    if not isinstance(client_code, str) or not client_code:
+        raise HTTPException(422, "client_code is required")
+    try:
+        role = UserRole(payload.get("role", UserRole.CREATOR.value))
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid role") from exc
+    email = email.strip().lower()
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    with get_session() as session:
+        client = get_client_by_code(session, client_code)
+        if client is None:
+            raise HTTPException(404, "Client not found")
+        invitation = session.exec(
+            select(BetaInvitation).where(
+                BetaInvitation.email == email,
+                BetaInvitation.client_id == client.id,
+                BetaInvitation.status == "pending",
+            )
+        ).first()
+        if invitation is None:
+            invitation = BetaInvitation(email=email, client_id=client.id, role=role)
+        else:
+            invitation.role = role
+            invitation.updated_at = now
+        session.add(invitation)
+        session.commit()
+        session.refresh(invitation)
+        write_audit_log(
+            session,
+            "beta_invitation_created",
+            "BetaInvitation",
+            invitation.id,
+            user.id,
+            user.email,
+            {"email": email, "client_code": client_code, "role": role.value},
+        )
+        session.refresh(invitation)
+        result = {
+            "id": str(invitation.id),
+            "email": invitation.email,
+            "client_id": str(invitation.client_id),
+            "role": invitation.role.value,
+            "status": invitation.status,
+        }
+    return result
+
+
+@app.post("/admin/invitations/{invitation_id}/revoke")
+def revoke_invitation(
+    invitation_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, str]:
+    """Revoke a pending invitation before it can provision an account."""
+    from models import BetaInvitation
+
+    with get_session() as session:
+        invitation = session.get(BetaInvitation, invitation_id)
+        if invitation is None:
+            raise HTTPException(404, "Invitation not found")
+        if invitation.status == "pending":
+            invitation.status = "revoked"
+            invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+            session.add(invitation)
+            session.commit()
+        write_audit_log(
+            session,
+            "beta_invitation_revoked",
+            "BetaInvitation",
+            invitation.id,
+            user.id,
+            user.email,
+            {"email": invitation.email},
+        )
+        status = invitation.status
+    return {"id": str(invitation_id), "status": status}
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +502,16 @@ def create_client_endpoint(
             code=payload["code"],
             metadata=payload.get("metadata", {}),
         )
+        from models import ClientMembership, UserRole
+
+        if not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+            session.add(
+                ClientMembership(
+                    user_id=user.id,
+                    client_id=client.id,
+                    role=user.role,
+                )
+            )
         write_audit_log(
             session,
             "client_created",
@@ -257,13 +535,20 @@ def list_clients_endpoint(
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """List all clients."""
-    from models import Client
+    from models import Client, ClientMembership, UserRole
     from sqlmodel import select
 
     with get_session() as session:
-        statement = select(Client).order_by(
-            cast(Any, Client.created_at).desc()
-        ).limit(limit)
+        statement = select(Client).order_by(cast(Any, Client.created_at).desc())
+        if not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+            statement = statement.join(
+                ClientMembership,
+                cast(Any, ClientMembership.client_id) == Client.id,
+            ).where(
+                ClientMembership.user_id == user.id,
+                cast(Any, ClientMembership.revoked_at).is_(None),
+            )
+        statement = statement.limit(limit)
         clients = session.exec(statement).all()
         return [
             {
@@ -276,7 +561,7 @@ def list_clients_endpoint(
         ]
 
 
-@app.get("/clients/{client_code}")
+@app.get("/clients/{client_code}", dependencies=[Depends(require_client_code_access)])
 def get_client(
     client_code: str,
     user: Any = Depends(require_auth),
@@ -295,7 +580,10 @@ def get_client(
         }
 
 
-@app.post("/clients/{client_code}/batches")
+@app.post(
+    "/clients/{client_code}/batches",
+    dependencies=[Depends(require_client_code_access)],
+)
 def create_ingestion_batch_endpoint(
     client_code: str,
     payload: dict[str, Any],
@@ -321,7 +609,10 @@ def create_ingestion_batch_endpoint(
         }
 
 
-@app.get("/clients/{client_code}/batches")
+@app.get(
+    "/clients/{client_code}/batches",
+    dependencies=[Depends(require_client_code_access)],
+)
 def list_ingestion_batches_endpoint(
     client_code: str,
     user: Any = Depends(require_auth),
@@ -352,7 +643,10 @@ def list_ingestion_batches_endpoint(
         ]
 
 
-@app.get("/clients/{client_code}/batches/{batch_id}")
+@app.get(
+    "/clients/{client_code}/batches/{batch_id}",
+    dependencies=[Depends(require_client_code_access)],
+)
 def get_ingestion_batch_endpoint(
     client_code: str,
     batch_id: uuid.UUID,
@@ -389,7 +683,10 @@ def get_ingestion_batch_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@app.post("/clients/{client_code}/batches/{batch_id}/files")
+@app.post(
+    "/clients/{client_code}/batches/{batch_id}/files",
+    dependencies=[Depends(require_client_code_access)],
+)
 def upload_raw_file(
     client_code: str,
     batch_id: uuid.UUID,
@@ -406,7 +703,10 @@ def upload_raw_file(
         if batch is None or batch.client_id != client.id:
             raise HTTPException(status_code=404, detail="Batch not found")
 
-        contents = file.file.read()
+        max_upload_size = get_settings().max_upload_size_bytes
+        contents = file.file.read(max_upload_size + 1)
+        if len(contents) > max_upload_size:
+            raise HTTPException(413, "Uploaded file exceeds the size limit")
         sha256 = compute_sha256(contents)
         mime_type = file.content_type or "application/octet-stream"
         file_type = detect_file_type(file.filename or "unknown", contents)
@@ -443,7 +743,7 @@ def upload_raw_file(
         }
 
 
-@app.get("/raw-files/{raw_file_id}")
+@app.get("/raw-files/{raw_file_id}", dependencies=[Depends(require_raw_file_access)])
 def get_raw_file(
     raw_file_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -464,7 +764,10 @@ def get_raw_file(
         }
 
 
-@app.post("/raw-files/{raw_file_id}/parse")
+@app.post(
+    "/raw-files/{raw_file_id}/parse",
+    dependencies=[Depends(require_raw_file_access)],
+)
 def parse_raw_file(
     raw_file_id: uuid.UUID,
     user: Any = Depends(require_role("creator")),
@@ -500,7 +803,10 @@ def parse_raw_file(
         }
 
 
-@app.post("/clients/{client_code}/ingest-folder")
+@app.post(
+    "/clients/{client_code}/ingest-folder",
+    dependencies=[Depends(require_client_code_access)],
+)
 def ingest_client_folder_endpoint(
     client_code: str,
     folder_path: str = Form(
@@ -509,7 +815,9 @@ def ingest_client_folder_endpoint(
     label: str | None = Form(None, description="Optional batch label."),
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
-    """Ingest an entire client folder of heterogeneous files as one batch."""
+    """Ingest a local client folder during local development only."""
+    if get_settings().app_environment != "local":
+        raise HTTPException(403, "Server-path ingestion is only available locally")
     with get_session() as session:
         client = get_client_by_code(session, client_code)
         if client is None:
@@ -532,7 +840,10 @@ def ingest_client_folder_endpoint(
         }
 
 
-@app.post("/clients/{client_code}/target-schema")
+@app.post(
+    "/clients/{client_code}/target-schema",
+    dependencies=[Depends(require_client_code_access)],
+)
 def upload_target_schema(
     client_code: str,
     schema_file: UploadFile = File(
@@ -546,7 +857,10 @@ def upload_target_schema(
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
-        content = schema_file.file.read()
+        max_upload_size = get_settings().max_upload_size_bytes
+        content = schema_file.file.read(max_upload_size + 1)
+        if len(content) > max_upload_size:
+            raise HTTPException(413, "Schema file exceeds the size limit")
         schema = TargetSchema.model_validate_json(content.decode("utf-8"))
         schema.client_code = client_code
 
@@ -554,14 +868,15 @@ def upload_target_schema(
 
         return {
             "client_code": client_code,
-            "schema_path": (
-                f"target-schemas/{client_code}/target_schema.json"
-            ),
+            "schema_path": (f"target-schemas/{client_code}/target_schema.json"),
             "schema": schema.model_dump(mode="json"),
         }
 
 
-@app.get("/clients/{client_code}/target-schema")
+@app.get(
+    "/clients/{client_code}/target-schema",
+    dependencies=[Depends(require_client_code_access)],
+)
 def get_target_schema(
     client_code: str,
     user: Any = Depends(require_auth),
@@ -586,7 +901,10 @@ def get_target_schema(
 # ---------------------------------------------------------------------------
 
 
-@app.get("/raw-files/{raw_file_id}/profile")
+@app.get(
+    "/raw-files/{raw_file_id}/profile",
+    dependencies=[Depends(require_raw_file_access)],
+)
 def get_spreadsheet_profile_endpoint(
     raw_file_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -612,14 +930,17 @@ def search_evidence_endpoint(
     top_k: int = Query(5, ge=1, le=100),
     user: Any = Depends(require_auth),
 ) -> list[dict[str, Any]]:
-    """Search extracted evidence by full text."""
+    """Search extracted evidence by full text within an authorized client."""
     with get_session() as session:
         client_id = None
         if client_code:
             client = get_client_by_code(session, client_code)
             if client is None:
                 raise HTTPException(status_code=404, detail="Client not found")
+            require_client_membership(session, user, client.id)
             client_id = client.id
+        elif not AUTH_BYPASS_LOCAL and user.role.value != "admin":
+            raise HTTPException(422, "client_code is required")
         items = search_evidence_by_text(session, query, client_id, top_k=top_k)
         return [
             {
@@ -639,7 +960,10 @@ def search_evidence_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@app.post("/clients/{client_code}/rules")
+@app.post(
+    "/clients/{client_code}/rules",
+    dependencies=[Depends(require_client_code_access)],
+)
 def create_business_rule_endpoint(
     client_code: str,
     payload: dict[str, Any],
@@ -665,7 +989,10 @@ def create_business_rule_endpoint(
         }
 
 
-@app.post("/rules/{rule_id}/approve")
+@app.post(
+    "/rules/{rule_id}/approve",
+    dependencies=[Depends(require_business_rule_access)],
+)
 def approve_business_rule_endpoint(
     rule_id: uuid.UUID,
     payload: dict[str, Any],
@@ -684,7 +1011,10 @@ def approve_business_rule_endpoint(
         }
 
 
-@app.get("/clients/{client_code}/rules")
+@app.get(
+    "/clients/{client_code}/rules",
+    dependencies=[Depends(require_client_code_access)],
+)
 def list_business_rules_endpoint(
     client_code: str,
     user: Any = Depends(require_auth),
@@ -715,7 +1045,10 @@ def list_business_rules_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@app.post("/clients/{client_code}/mapping-specs")
+@app.post(
+    "/clients/{client_code}/mapping-specs",
+    dependencies=[Depends(require_client_code_access)],
+)
 def create_mapping_spec_endpoint(
     client_code: str,
     payload: dict[str, Any],
@@ -756,7 +1089,7 @@ def list_mapping_specs_endpoint(
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """List mapping specs, optionally filtered by client or status."""
-    from models import MappingSpec
+    from models import ClientMembership, MappingSpec, UserRole
     from sqlmodel import select
 
     with get_session() as session:
@@ -767,7 +1100,16 @@ def list_mapping_specs_endpoint(
             client = get_client_by_code(session, client_code)
             if client is None:
                 raise HTTPException(status_code=404, detail="Client not found")
+            require_client_membership(session, user, client.id)
             statement = statement.where(MappingSpec.client_id == client.id)
+        elif not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+            statement = statement.join(
+                ClientMembership,
+                cast(Any, ClientMembership.client_id) == MappingSpec.client_id,
+            ).where(
+                ClientMembership.user_id == user.id,
+                cast(Any, ClientMembership.revoked_at).is_(None),
+            )
         if status:
             statement = statement.where(MappingSpec.status == status)
         specs = session.exec(statement.limit(limit)).all()
@@ -783,7 +1125,10 @@ def list_mapping_specs_endpoint(
         ]
 
 
-@app.get("/mapping-specs/{spec_id}")
+@app.get(
+    "/mapping-specs/{spec_id}",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def get_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -799,20 +1144,33 @@ def get_mapping_spec_endpoint(
     }
 
 
-@app.post("/mapping-specs/{spec_id}/propose")
+@app.post(
+    "/mapping-specs/{spec_id}/propose",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def propose_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
+    byok_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
     user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
-    """Ask the LLM to propose mappings for a draft specification."""
+    """Ask the configured LLM to propose mappings for a draft specification.
+
+    A caller may provide an OpenAI-compatible key in ``X-OpenAI-Api-Key``.
+    It remains request-scoped and is never persisted. Provider URLs are owned
+    by server configuration, preventing keys from being sent to arbitrary hosts.
+    """
     payload = payload or {}
+    if "api_key" in payload or "base_url" in payload:
+        raise HTTPException(
+            422,
+            "Use X-OpenAI-Api-Key for BYOK; provider URL is server configured",
+        )
     try:
         mapping = propose_mapping(
             spec_id,
             model=payload.get("model"),
-            api_key=payload.get("api_key"),
-            base_url=payload.get("base_url"),
+            api_key=byok_api_key,
             top_k_evidence=payload.get("top_k_evidence", 10),
         )
     except ValueError as exc:
@@ -820,7 +1178,10 @@ def propose_mapping_spec_endpoint(
     return mapping
 
 
-@app.post("/mapping-specs/{spec_id}/approve")
+@app.post(
+    "/mapping-specs/{spec_id}/approve",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def approve_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any],
@@ -843,7 +1204,10 @@ def approve_mapping_spec_endpoint(
     }
 
 
-@app.post("/mapping-specs/{spec_id}/reject")
+@app.post(
+    "/mapping-specs/{spec_id}/reject",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def reject_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any],
@@ -861,7 +1225,10 @@ def reject_mapping_spec_endpoint(
     return {"id": str(spec.id), "status": spec.status.value}
 
 
-@app.patch("/mapping-specs/{spec_id}/columns/{column_id}")
+@app.patch(
+    "/mapping-specs/{spec_id}/columns/{column_id}",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def update_mapping_column_endpoint(
     spec_id: uuid.UUID,
     column_id: uuid.UUID,
@@ -905,7 +1272,10 @@ def update_mapping_column_endpoint(
 # ---------------------------------------------------------------------------
 
 
-@app.post("/mapping-specs/{spec_id}/generate")
+@app.post(
+    "/mapping-specs/{spec_id}/generate",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def generate_artifacts_endpoint(
     spec_id: uuid.UUID,
     user: Any = Depends(require_role("approver")),
@@ -926,7 +1296,10 @@ def generate_artifacts_endpoint(
     }
 
 
-@app.post("/mapping-specs/{spec_id}/output-folder")
+@app.post(
+    "/mapping-specs/{spec_id}/output-folder",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def generate_output_folder_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
@@ -934,14 +1307,15 @@ def generate_output_folder_endpoint(
 ) -> PipelineOutputFolder:
     """Generate the complete client deliverable folder."""
     payload = payload or {}
-    output_folder_value = payload.get("output_folder")
-    output_folder = (
-        Path(output_folder_value) if output_folder_value is not None else None
-    )
-    return create_output_folder(spec_id, output_folder)
+    if "output_folder" in payload:
+        raise HTTPException(422, "output_folder is server managed")
+    return create_output_folder(spec_id)
 
 
-@app.get("/output-folders/{folder_id}/pipeline.py")
+@app.get(
+    "/output-folders/{folder_id}/pipeline.py",
+    dependencies=[Depends(require_output_folder_access)],
+)
 def get_generated_pipeline_py(
     folder_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -957,42 +1331,10 @@ def get_generated_pipeline_py(
     return PlainTextResponse(content.decode("utf-8"), media_type="text/x-python")
 
 
-@app.put("/output-folders/{folder_id}/pipeline.py")
-def update_generated_pipeline_py(
-    folder_id: uuid.UUID,
-    payload: dict[str, Any],
-    user: Any = Depends(require_role("reviewer")),
-) -> dict[str, Any]:
-    """Overwrite the generated pipeline.py for advanced code review.
-
-    Warning: editing the generated pipeline directly bypasses the mapping
-    contract for the edited file. The mapping.json and audit log remain
-    unchanged; the edited script is used on the next execution.
-    """
-    store = get_artifact_store()
-    try:
-        store.read_artifact(folder_id, "pipeline.py")
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail="pipeline.py not found",
-        ) from None
-    content = payload.get("content", "")
-    store.write_artifact(folder_id, "pipeline.py", content.encode("utf-8"))
-    with get_session() as session:
-        write_audit_log(
-            session,
-            "pipeline_py_edited",
-            "GeneratedPipeline",
-            folder_id,
-            user.id,
-            user.email,
-            {"folder_id": str(folder_id)},
-        )
-    return {"folder_id": str(folder_id), "bytes": len(content)}
-
-
-@app.get("/output-folders/{folder_id}/mapping.json")
+@app.get(
+    "/output-folders/{folder_id}/mapping.json",
+    dependencies=[Depends(require_output_folder_access)],
+)
 def get_generated_mapping_json(
     folder_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -1008,7 +1350,10 @@ def get_generated_mapping_json(
     return cast(dict[str, Any], json.loads(content))
 
 
-@app.get("/output-folders/{folder_id}/results.csv")
+@app.get(
+    "/output-folders/{folder_id}/results.csv",
+    dependencies=[Depends(require_output_folder_access)],
+)
 def get_generated_results_csv(
     folder_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -1028,7 +1373,10 @@ def get_generated_results_csv(
     )
 
 
-@app.post("/mapping-specs/{spec_id}/execute")
+@app.post(
+    "/mapping-specs/{spec_id}/execute",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
 def execute_pipeline(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
@@ -1036,21 +1384,21 @@ def execute_pipeline(
 ) -> dict[str, Any]:
     """Execute the Polars transformation pipeline for an approved spec."""
     payload = payload or {}
-    output_folder_value = payload.get("output_folder")
-    output_folder = (
-        Path(output_folder_value) if output_folder_value is not None else None
-    )
+    if "output_folder" in payload:
+        raise HTTPException(422, "output_folder is server managed")
     try:
         return execute_approved_mapping(
             spec_id,
             target_environment=payload.get("target_environment", "local"),
-            output_folder=output_folder,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/execution-runs/{run_id}")
+@app.get(
+    "/execution-runs/{run_id}",
+    dependencies=[Depends(require_execution_run_access)],
+)
 def get_execution_run(
     run_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -1088,7 +1436,7 @@ def list_execution_runs_endpoint(
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """List execution runs, optionally filtered by spec or status."""
-    from models import ExecutionRun
+    from models import ClientMembership, ExecutionRun, UserRole
     from sqlmodel import select
 
     with get_session() as session:
@@ -1096,7 +1444,19 @@ def list_execution_runs_endpoint(
             cast(Any, ExecutionRun.started_at).desc()
         )
         if spec_id:
+            spec = get_mapping_spec(session, spec_id)
+            if spec is None:
+                raise HTTPException(404, "Mapping spec not found")
+            require_client_membership(session, user, spec.client_id)
             statement = statement.where(ExecutionRun.mapping_spec_id == spec_id)
+        elif not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+            statement = statement.join(
+                ClientMembership,
+                cast(Any, ClientMembership.client_id) == ExecutionRun.client_id,
+            ).where(
+                ClientMembership.user_id == user.id,
+                cast(Any, ClientMembership.revoked_at).is_(None),
+            )
         if status:
             statement = statement.where(ExecutionRun.status == status)
         runs = session.exec(statement.limit(limit)).all()
@@ -1113,7 +1473,10 @@ def list_execution_runs_endpoint(
         ]
 
 
-@app.post("/execution-runs/{run_id}/approve")
+@app.post(
+    "/execution-runs/{run_id}/approve",
+    dependencies=[Depends(require_execution_run_access)],
+)
 def approve_execution_run_endpoint(
     run_id: uuid.UUID,
     user: Any = Depends(require_role("approver")),
@@ -1130,7 +1493,10 @@ def approve_execution_run_endpoint(
     }
 
 
-@app.post("/execution-runs/{run_id}/reject")
+@app.post(
+    "/execution-runs/{run_id}/reject",
+    dependencies=[Depends(require_execution_run_access)],
+)
 def reject_execution_run_endpoint(
     run_id: uuid.UUID,
     payload: dict[str, Any],
@@ -1155,7 +1521,7 @@ def query_audit_log(
     entity_id: uuid.UUID | None = Query(None),
     event_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_role("admin")),
 ) -> list[dict[str, Any]]:
     """Query the append-only audit log."""
     from models import AuditLog as ALModel
@@ -1168,9 +1534,9 @@ def query_audit_log(
             statement = statement.where(ALModel.entity_id == entity_id)
         if event_type:
             statement = statement.where(ALModel.event_type == event_type)
-        statement = statement.order_by(
-            cast(Any, ALModel.recorded_at).desc()
-        ).limit(limit)
+        statement = statement.order_by(cast(Any, ALModel.recorded_at).desc()).limit(
+            limit
+        )
         logs = session.exec(statement).all()
         return [
             {
@@ -1186,7 +1552,10 @@ def query_audit_log(
         ]
 
 
-@app.get("/lineage/staging-columns/{staging_column_id}")
+@app.get(
+    "/lineage/staging-columns/{staging_column_id}",
+    dependencies=[Depends(require_staging_column_access)],
+)
 def get_staging_column_lineage(
     staging_column_id: uuid.UUID,
     user: Any = Depends(require_auth),

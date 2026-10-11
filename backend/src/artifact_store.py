@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
+from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO
 
 from file_ops import LocalObjectStore, ObjectStore
 from models import TargetSchema
@@ -66,6 +68,10 @@ class ArtifactStore(ObjectStore, ABC):
     @abstractmethod
     def read_log(self, run_id: uuid.UUID) -> bytes:
         """Retrieve an execution log by durable run id."""
+
+    @abstractmethod
+    def sync_folder(self, spec_id: uuid.UUID) -> None:
+        """Persist generated files from the local working directory."""
 
 
 class LocalArtifactStore(LocalObjectStore, ArtifactStore):
@@ -147,3 +153,101 @@ class LocalArtifactStore(LocalObjectStore, ArtifactStore):
 
     def read_log(self, run_id: uuid.UUID) -> bytes:
         return (self.logs_dir / f"{run_id}.json").read_bytes()
+
+    def sync_folder(self, spec_id: uuid.UUID) -> None:
+        """Local artifacts are already durable."""
+
+
+class GCSArtifactStore(ArtifactStore):
+    """GCS-backed durable artifacts with an ephemeral local work directory."""
+
+    def __init__(self, bucket_name: str, work_dir: str | Path) -> None:
+        from google.cloud import storage  # type: ignore[import-untyped]
+
+        self.bucket = storage.Client().bucket(bucket_name)
+        self.work_dir = Path(work_dir).resolve()
+
+    @staticmethod
+    def _safe_segment(value: str) -> str:
+        if not value or Path(value).name != value:
+            raise ValueError("Storage key segment must not contain a path")
+        return value
+
+    @staticmethod
+    def _artifact_key(spec_id: uuid.UUID, filename: str) -> str:
+        if Path(filename).name != filename:
+            raise ValueError("Artifact filename must not contain a path")
+        return f"output-folders/{spec_id}/{filename}"
+
+    def put(self, key: str, data: bytes) -> str:
+        self.bucket.blob(key).upload_from_string(data)
+        return key
+
+    def get(self, key: str) -> bytes:
+        return bytes(self.bucket.blob(key).download_as_bytes())
+
+    def exists(self, key: str) -> bool:
+        return bool(self.bucket.blob(key).exists())
+
+    def delete(self, key: str) -> None:
+        self.bucket.blob(key).delete(if_generation_match=None)
+
+    def open(self, key: str) -> BinaryIO:
+        return BytesIO(self.get(key))
+
+    def write_target_schema(self, client_code: str, schema: TargetSchema) -> None:
+        key = f"target-schemas/{self._safe_segment(client_code)}/target_schema.json"
+        self.put(key, schema.model_dump_json(indent=2).encode())
+
+    def read_target_schema(self, client_code: str) -> TargetSchema:
+        key = f"target-schemas/{self._safe_segment(client_code)}/target_schema.json"
+        return TargetSchema.model_validate_json(self.get(key))
+
+    def folder(self, spec_id: uuid.UUID) -> Path:
+        folder = self.work_dir / "output-folders" / str(spec_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        prefix = f"output-folders/{spec_id}/"
+        for blob in self.bucket.list_blobs(prefix=prefix):
+            name = blob.name.removeprefix(prefix)
+            if Path(name).name != name:
+                continue
+            (folder / name).write_bytes(bytes(blob.download_as_bytes()))
+        return folder
+
+    def path(self, spec_id: uuid.UUID, filename: str) -> Path:
+        self._artifact_key(spec_id, filename)
+        return self.folder(spec_id) / filename
+
+    def read_artifact(self, spec_id: uuid.UUID, filename: str) -> bytes:
+        return self.get(self._artifact_key(spec_id, filename))
+
+    def write_artifact(self, spec_id: uuid.UUID, filename: str, data: bytes) -> None:
+        self.put(self._artifact_key(spec_id, filename), data)
+
+    def list_artifacts(
+        self,
+        spec_id: uuid.UUID,
+        suffix: str | None = None,
+    ) -> list[str]:
+        prefix = f"output-folders/{spec_id}/"
+        return sorted(
+            name
+            for blob in self.bucket.list_blobs(prefix=prefix)
+            if (name := blob.name.removeprefix(prefix))
+            and Path(name).name == name
+            and (suffix is None or name.endswith(suffix))
+        )
+
+    def write_log(self, run_id: uuid.UUID, data: bytes) -> None:
+        self.put(f"execution-logs/{run_id}.json", data)
+
+    def read_log(self, run_id: uuid.UUID) -> bytes:
+        return self.get(f"execution-logs/{run_id}.json")
+
+    def sync_folder(self, spec_id: uuid.UUID) -> None:
+        folder = self.work_dir / "output-folders" / str(spec_id)
+        if not folder.exists():
+            return
+        for path in folder.iterdir():
+            if path.is_file():
+                self.write_artifact(spec_id, path.name, path.read_bytes())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,59 @@ def test_create_client(registered_client: dict) -> None:
     assert "id" in registered_client
 
 
+def test_output_folder_override_is_rejected(client: TestClient) -> None:
+    """Artifact output locations are always controlled by the server."""
+    response = client.post(
+        f"/mapping-specs/{uuid.uuid4()}/output-folder",
+        json={"output_folder": "/tmp/escape"},
+    )
+    assert response.status_code == 422
+
+
+def test_generated_pipeline_is_not_mutable(client: TestClient) -> None:
+    """Generated code can be reviewed but not replaced through the API."""
+    response = client.put(
+        f"/output-folders/{uuid.uuid4()}/pipeline.py",
+        json={"content": "raise RuntimeError('unsafe')"},
+    )
+    assert response.status_code == 405
+
+
+def test_responses_include_browser_security_headers(client: TestClient) -> None:
+    """Every application response includes the baseline browser protections."""
+    response = client.get("/health")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+
+
+def test_manage_beta_invitation(
+    client: TestClient,
+    registered_client: dict,
+) -> None:
+    """Admins can create, inspect, and revoke client invitations."""
+    created = client.post(
+        "/admin/invitations",
+        json={
+            "email": "operator@example.com",
+            "client_code": registered_client["code"],
+            "role": "reviewer",
+        },
+    )
+    assert created.status_code == 200, created.text
+    invitation = created.json()
+    assert invitation["email"] == "operator@example.com"
+    assert invitation["status"] == "pending"
+
+    listed = client.get("/admin/invitations?status=pending")
+    assert listed.status_code == 200, listed.text
+    assert invitation["id"] in {entry["id"] for entry in listed.json()}
+
+    revoked = client.post(f"/admin/invitations/{invitation['id']}/revoke")
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "revoked"
+
+
 def test_upload_target_schema(client_with_schema: dict) -> None:
     """Target schema upload should store the schema."""
     schema_payload = client_with_schema["schema"]
@@ -76,6 +130,7 @@ def test_ingest_folder(
 
 def test_full_propose_approve_execute_flow(
     client: TestClient,
+    mock_openai: None,
     registered_client: dict,
     client_with_schema: dict,
     ingested_batch: dict,
@@ -98,7 +153,10 @@ def test_full_propose_approve_execute_flow(
     assert spec_response.status_code == 200, spec_response.text
     spec_id = spec_response.json()["id"]
 
-    propose_response = client.post(f"/mapping-specs/{spec_id}/propose")
+    propose_response = client.post(
+        f"/mapping-specs/{spec_id}/propose",
+        headers={"X-OpenAI-Api-Key": "test-byok-key"},
+    )
     assert propose_response.status_code == 200, propose_response.text
     proposed = propose_response.json()
     columns = proposed["columns"]
@@ -130,13 +188,15 @@ def test_full_propose_approve_execute_flow(
     assert mapping_response.status_code == 200
     mapping_artifact = mapping_response.json()
     assert mapping_artifact["id"] == spec_id
-    assert {
-        column["target_column"] for column in mapping_artifact["columns"]
-    } == {"record_id", "full_name", "score"}
+    assert {column["target_column"] for column in mapping_artifact["columns"]} == {
+        "record_id",
+        "full_name",
+        "score",
+    }
 
     pipeline_response = client.get(f"/output-folders/{spec_id}/pipeline.py")
     assert pipeline_response.status_code == 200
-    assert "def main()" in pipeline_response.text
+    assert "def build_target_tables()" in pipeline_response.text
     assert "mapping.json" in pipeline_response.text
 
     csv_response = client.get(f"/output-folders/{spec_id}/results.csv")

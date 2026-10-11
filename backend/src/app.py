@@ -7,16 +7,22 @@ translation belongs to router modules.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from auth_service import SESSION_MAX_AGE_SECONDS, SESSION_SECRET_KEY
+from auth_service import (
+    SESSION_COOKIE_SECURE,
+    SESSION_MAX_AGE_SECONDS,
+    SESSION_SECRET_KEY,
+)
 from config import get_settings
 from db_ops import create_tables, get_engine
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from routers.api import app as api_router
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from ui import router as ui_router
 
 
@@ -33,8 +39,7 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title="Pipeline of Pipelines",
         description=(
-            "Auditable data-transformation platform for heterogeneous client "
-            "files."
+            "Auditable data-transformation platform for heterogeneous client files."
         ),
         version="0.1.0",
         lifespan=lifespan,
@@ -45,9 +50,29 @@ def create_app() -> FastAPI:
         session_cookie="session",
         max_age=SESSION_MAX_AGE_SECONDS,
         same_site="lax",
-        https_only=False,
+        https_only=SESSION_COOKIE_SECURE,
         path="/",
     )
+
+    @application.middleware("http")
+    async def add_security_headers(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Apply browser protections to every application response."""
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()"
+        )
+        if settings.app_environment == "production":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        return response
+
     application.mount(
         "/static",
         StaticFiles(directory=str(settings.static_dir)),

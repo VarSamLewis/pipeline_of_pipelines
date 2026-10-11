@@ -63,7 +63,7 @@ class ExecutionStatus(str, enum.Enum):
 
 
 class UserRole(str, enum.Enum):
-    """Authorization roles enforced by the WorkOS-backed auth layer."""
+    """Authorization roles enforced by the Clerk-backed auth layer."""
 
     CREATOR = "creator"
     REVIEWER = "reviewer"
@@ -345,6 +345,29 @@ class Client(SQLModel, table=True):
     )
 
 
+class ClientMembership(SQLModel, table=True):
+    """A user's role within a client tenant."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True)
+    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True)
+    role: UserRole = SQLField(default=UserRole.CREATOR)
+    revoked_at: datetime.datetime | None = SQLField(default=None)
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+
+
+class BetaInvitation(SQLModel, table=True):
+    """A pending invitation that authorizes Clerk account provisioning."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    email: str = SQLField(index=True)
+    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True)
+    role: UserRole = SQLField(default=UserRole.CREATOR)
+    status: str = SQLField(default="pending", index=True)
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+    updated_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+
+
 class IngestionBatch(SQLModel, table=True):
     """A logical grouping of raw files uploaded together."""
 
@@ -596,14 +619,10 @@ class StagingColumn(SQLModel, table=True):
 
 
 class User(SQLModel, table=True):
-    """Platform user provisioned from WorkOS AuthKit.
-
-    WorkOS remains the source of truth for identity and role metadata. The local
-    record caches the latest role for fast permission checks and audit lineage.
-    """
+    """Platform user provisioned from an invited Clerk identity."""
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
-    workos_user_id: str = SQLField(unique=True, index=True)
+    external_user_id: str = SQLField(unique=True, index=True)
     email: str = SQLField(index=True)
     name: str | None = SQLField(default=None)
     role: UserRole = SQLField(default=UserRole.CREATOR)

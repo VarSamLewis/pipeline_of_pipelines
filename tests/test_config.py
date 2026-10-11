@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from config import DEFAULT_DATABASE_URL, Settings
 
 
@@ -31,6 +32,8 @@ def test_settings_honour_environment_overrides(tmp_path: Path) -> None:
             "MAPPING_MODEL": "test-model",
             "SESSION_SECRET_KEY": "test-secret",
             "SESSION_MAX_AGE": "120",
+            "PIPELINE_EXECUTION_TIMEOUT_SECONDS": "45",
+            "MAX_UPLOAD_SIZE_BYTES": "1024",
             "AUTH_BYPASS_LOCAL": "yes",
         },
         project_root=tmp_path,
@@ -43,4 +46,32 @@ def test_settings_honour_environment_overrides(tmp_path: Path) -> None:
     assert settings.mapping_model == "test-model"
     assert settings.session_secret_key == "test-secret"
     assert settings.session_max_age_seconds == 120
+    assert settings.pipeline_execution_timeout_seconds == 45
+    assert settings.max_upload_size_bytes == 1024
     assert settings.auth_bypass_local is True
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"APP_ENVIRONMENT": "production"},
+        {
+            "APP_ENVIRONMENT": "production",
+            "SESSION_SECRET_KEY": "test-secret",
+            "AUTH_BYPASS_LOCAL": "true",
+            "SESSION_COOKIE_SECURE": "true",
+        },
+        {
+            "APP_ENVIRONMENT": "production",
+            "SESSION_SECRET_KEY": "test-secret",
+            "SESSION_COOKIE_SECURE": "false",
+        },
+    ],
+)
+def test_production_settings_reject_unsafe_auth_configuration(
+    tmp_path: Path,
+    env: dict[str, str],
+) -> None:
+    """Production startup fails closed for session and auth settings."""
+    with pytest.raises(ValueError):
+        Settings.from_env(env, project_root=tmp_path)

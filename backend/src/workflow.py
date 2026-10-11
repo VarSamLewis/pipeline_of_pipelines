@@ -242,7 +242,6 @@ def propose_mapping(
     *,
     model: str | None = None,
     api_key: str | None = None,
-    base_url: str | None = None,
     top_k_evidence: int = 10,
 ) -> dict[str, Any]:
     """Propose columns for an existing draft mapping specification."""
@@ -258,7 +257,7 @@ def propose_mapping(
             target_schema=target_schema,
             model=model or settings.mapping_model,
             api_key=api_key or settings.openai_api_key,
-            base_url=base_url or settings.openai_base_url,
+            base_url=settings.openai_base_url,
             top_k_evidence=top_k_evidence,
         )
     return get_mapping_review(spec_id)
@@ -285,8 +284,11 @@ def generate_artifacts(
     spec_id: uuid.UUID,
 ) -> tuple[Path, list[GeneratedArtifact]]:
     """Generate reviewable mapping and Python artifacts."""
-    output_folder = get_artifact_store().folder(spec_id)
-    return output_folder, generate_artifact_set(spec_id, output_folder)
+    store = get_artifact_store()
+    output_folder = store.folder(spec_id)
+    artifacts = generate_artifact_set(spec_id, output_folder)
+    store.sync_folder(spec_id)
+    return output_folder, artifacts
 
 
 def create_output_folder(
@@ -294,8 +296,11 @@ def create_output_folder(
     output_folder: Path | None = None,
 ) -> PipelineOutputFolder:
     """Generate the complete deliverable through infrastructure adapters."""
-    folder = output_folder or get_artifact_store().folder(spec_id)
-    return generate_output_folder(spec_id, folder, get_object_store())
+    store = get_artifact_store()
+    folder = output_folder or store.folder(spec_id)
+    output = generate_output_folder(spec_id, folder, get_object_store())
+    store.sync_folder(spec_id)
+    return output
 
 
 def execute_approved_mapping(
@@ -348,9 +353,7 @@ def execute_approved_mapping(
         "target_environment": target_environment,
         "csv_paths": {name: str(path) for name, path in csv_paths.items()},
         "results_csv": (
-            str(folder / "results.csv")
-            if (folder / "results.csv").exists()
-            else None
+            str(folder / "results.csv") if (folder / "results.csv").exists() else None
         ),
         "validation_results": test_results,
         "quality_profiles": {
@@ -361,6 +364,7 @@ def execute_approved_mapping(
         run_id,
         json.dumps(result, indent=2, default=str).encode("utf-8"),
     )
+    get_artifact_store().sync_folder(spec_id)
     return result
 
 

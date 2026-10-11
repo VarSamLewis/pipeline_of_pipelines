@@ -1,144 +1,94 @@
-variable "environment" {
-  description = "Environment name (dev, staging, prod)"
+variable "project_id" {
+  description = "GCP project hosting the application."
   type        = string
-  validation {
-    condition     = contains(["dev", "staging", "prod"], var.environment)
-    error_message = "Environment must be dev, staging, or prod."
-  }
 }
 
-variable "location" {
-  description = "Azure region for resources"
+variable "region" {
+  description = "GCP region for regional resources."
   type        = string
-  default     = "eastus"
+  default     = "us-central1"
+}
+
+variable "environment" {
+  description = "Deployment environment name."
+  type        = string
+  default     = "dev"
 }
 
 variable "project_name" {
-  description = "Project name prefix for resources"
+  description = "Short, DNS-safe application name."
   type        = string
-  default     = "pop"
+  default     = "pipeline"
 }
 
-variable "postgres_admin_username" {
-  description = "PostgreSQL admin username"
+variable "container_image" {
+  description = "Immutable container image URI deployed to Cloud Run."
   type        = string
-  default     = "popadmin"
 }
 
-variable "postgres_admin_password" {
-  description = "PostgreSQL admin password"
+variable "postgres_password" {
+  description = "Password for the application Cloud SQL user. Supply outside source control."
   type        = string
   sensitive   = true
-}
-
-variable "entra_id_tenant_id" {
-  description = "Entra ID tenant ID for App Registration"
-  type        = string
-}
-
-variable "entra_id_client_id" {
-  description = "Existing Entra ID App Registration client ID (optional, creates new if empty)"
-  type        = string
-  default     = ""
-}
-
-variable "entra_id_client_secret" {
-  description = "Existing Entra ID App Registration client secret (optional)"
-  type        = string
-  sensitive   = true
-  default     = ""
 }
 
 variable "session_secret_key" {
-  description = "Session secret key for FastAPI (generate with: python -c \"import secrets; print(secrets.token_urlsafe(32))\")"
+  description = "Starlette session signing secret. Supply outside source control."
   type        = string
   sensitive   = true
 }
 
-variable "openai_deployment_name" {
-  description = "Azure OpenAI deployment name for chat completions"
+variable "openai_api_key" {
+  description = "Optional platform OpenAI API key. Supply outside source control."
   type        = string
-  default     = "gpt-4o-mini"
+  sensitive   = true
+  default     = ""
 }
 
-variable "embedding_deployment_name" {
-  description = "Azure OpenAI deployment name for embeddings"
+variable "clerk_publishable_key" {
+  description = "Clerk browser publishable key."
   type        = string
-  default     = "text-embedding-3-small"
+  default     = ""
 }
 
-variable "container_app_cpu" {
-  description = "CPU cores for Container App (consumption)"
+variable "clerk_issuer" {
+  description = "Clerk JWT issuer URL."
+  type        = string
+  default     = ""
+}
+
+variable "clerk_audience" {
+  description = "Clerk JWT audience configured on the application template."
+  type        = string
+  default     = ""
+}
+
+variable "clerk_jwks_url" {
+  description = "Clerk JWKS endpoint used to verify session JWTs."
+  type        = string
+  default     = ""
+}
+
+variable "clerk_sign_in_url" {
+  description = "Clerk hosted sign-in URL returning to the application callback."
+  type        = string
+  default     = ""
+}
+
+variable "clerk_jwt_template" {
+  description = "Clerk JWT template name containing verified email claims."
+  type        = string
+  default     = "pipeline-beta"
+}
+
+variable "min_instances" {
+  description = "Cloud Run minimum API instances."
   type        = number
-  default     = 0.25
+  default     = 0
 }
 
-variable "container_app_memory" {
-  description = "Memory in GB for Container App (consumption)"
+variable "max_instances" {
+  description = "Cloud Run maximum API instances."
   type        = number
-  default     = 0.5
-}
-
-variable "pipeline_job_cpu" {
-  description = "CPU cores for Pipeline Job"
-  type        = number
-  default     = 0.5
-}
-
-variable "pipeline_job_memory" {
-  description = "Memory in GB for Pipeline Job"
-  type        = number
-  default     = 1.0
-}
-
-variable "acr_sku" {
-  description = "ACR SKU (Basic, Standard, Premium)"
-  type        = string
-  default     = "Basic"
-}
-
-variable "postgres_sku" {
-  description = "PostgreSQL Flexible Server SKU"
-  type        = string
-  default     = "Standard_D2s_v3"
-}
-
-variable "postgres_storage_gb" {
-  description = "PostgreSQL storage in GB"
-  type        = number
-  default     = 32
-}
-
-variable "log_analytics_retention" {
-  description = "Log Analytics retention in days"
-  type        = number
-  default     = 30
-}
-
-variable "vnet_address_space" {
-  description = "VNet address space CIDR"
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
-variable "container_apps_subnet_cidr" {
-  description = "Container Apps subnet CIDR"
-  type        = string
-  default     = "10.0.1.0/23"
-}
-
-variable "data_subnet_cidr" {
-  description = "Data subnet CIDR (PostgreSQL, Storage, Key Vault)"
-  type        = string
-  default     = "10.0.2.0/24"
-}
-
-variable "tags" {
-  description = "Common tags for all resources"
-  type        = map(string)
-  default     = {
-    project     = "pipeline-of-pipelines"
-    managed_by  = "terraform"
-    environment = var.environment
-  }
+  default     = 10
 }

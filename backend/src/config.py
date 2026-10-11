@@ -14,9 +14,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-DEFAULT_DATABASE_URL = (
-    "postgresql+psycopg://postgres:postgres@localhost:5432/pipeline"
-)
+DEFAULT_DATABASE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/pipeline"
 
 
 def _as_bool(value: str | None, *, default: bool = False) -> bool:
@@ -31,10 +29,12 @@ class Settings:
     """Runtime configuration and canonical local-development paths."""
 
     project_root: Path
+    app_environment: str
     data_dir: Path
     object_store_dir: Path
     target_schemas_dir: Path
     output_folders_dir: Path
+    work_dir: Path
     static_dir: Path
     templates_dir: Path
     database_url: str
@@ -42,13 +42,19 @@ class Settings:
     openai_base_url: str | None
     mapping_model: str
     embedding_model: str
-    workos_client_id: str
-    workos_api_key: str
-    workos_redirect_uri: str
-    workos_authkit_domain: str
+    clerk_publishable_key: str
+    clerk_issuer: str
+    clerk_audience: str
+    clerk_jwks_url: str
+    clerk_sign_in_url: str
+    clerk_jwt_template: str
     session_secret_key: str
     session_max_age_seconds: int
+    session_cookie_secure: bool
     auth_bypass_local: bool
+    pipeline_execution_timeout_seconds: int
+    max_upload_size_bytes: int
+    gcs_bucket: str
 
     @classmethod
     def from_env(
@@ -67,9 +73,21 @@ class Settings:
         )
         root = Path(configured_root).resolve()
         data_dir = Path(values.get("PIPELINE_DATA_DIR", root / "data")).resolve()
+        app_environment = values.get("APP_ENVIRONMENT", "local").lower()
+        session_secret_key = values.get("SESSION_SECRET_KEY")
+        auth_bypass_local = _as_bool(values.get("AUTH_BYPASS_LOCAL"))
+        session_cookie_secure = _as_bool(values.get("SESSION_COOKIE_SECURE"))
+        if app_environment == "production":
+            if not session_secret_key:
+                raise ValueError("SESSION_SECRET_KEY is required in production")
+            if auth_bypass_local:
+                raise ValueError("AUTH_BYPASS_LOCAL must be false in production")
+            if not session_cookie_secure:
+                raise ValueError("SESSION_COOKIE_SECURE must be true in production")
 
         return cls(
             project_root=root,
+            app_environment=app_environment,
             data_dir=data_dir,
             object_store_dir=Path(
                 values.get("OBJECT_STORE_DIR", data_dir / "object-store")
@@ -80,6 +98,7 @@ class Settings:
             output_folders_dir=Path(
                 values.get("OUTPUT_FOLDERS_DIR", data_dir / "output-folders")
             ).resolve(),
+            work_dir=Path(values.get("WORK_DIR", "/tmp/pipeline-work")).resolve(),
             static_dir=Path(
                 values.get("STATIC_DIR", root / "backend" / "static")
             ).resolve(),
@@ -90,26 +109,24 @@ class Settings:
             openai_api_key=values.get("OPENAI_API_KEY"),
             openai_base_url=values.get("OPENAI_BASE_URL"),
             mapping_model=values.get("MAPPING_MODEL", "gpt-4o-mini"),
-            embedding_model=values.get(
-                "EMBEDDING_MODEL", "text-embedding-3-small"
-            ),
-            workos_client_id=values.get("WORKOS_CLIENT_ID", ""),
-            workos_api_key=values.get("WORKOS_API_KEY", ""),
-            workos_redirect_uri=values.get(
-                "WORKOS_REDIRECT_URI",
-                "http://localhost:8000/auth/callback",
-            ),
-            workos_authkit_domain=values.get(
-                "WORKOS_AUTHKIT_DOMAIN",
-                "https://auth.workos.com",
-            ),
-            session_secret_key=values.get(
-                "SESSION_SECRET_KEY",
-                secrets.token_urlsafe(32),
-            ),
+            embedding_model=values.get("EMBEDDING_MODEL", "text-embedding-3-small"),
+            clerk_publishable_key=values.get("CLERK_PUBLISHABLE_KEY", ""),
+            clerk_issuer=values.get("CLERK_ISSUER", ""),
+            clerk_audience=values.get("CLERK_AUDIENCE", ""),
+            clerk_jwks_url=values.get("CLERK_JWKS_URL", ""),
+            clerk_sign_in_url=values.get("CLERK_SIGN_IN_URL", ""),
+            clerk_jwt_template=values.get("CLERK_JWT_TEMPLATE", "pipeline-beta"),
+            session_secret_key=session_secret_key or secrets.token_urlsafe(32),
             session_max_age_seconds=int(values.get("SESSION_MAX_AGE", "86400")),
-            auth_bypass_local=_as_bool(values.get("AUTH_BYPASS_LOCAL")),
+            session_cookie_secure=session_cookie_secure,
+            auth_bypass_local=auth_bypass_local,
+            pipeline_execution_timeout_seconds=int(
+                values.get("PIPELINE_EXECUTION_TIMEOUT_SECONDS", "120")
+            ),
+            max_upload_size_bytes=int(values.get("MAX_UPLOAD_SIZE_BYTES", "52428800")),
+            gcs_bucket=values.get("GCS_BUCKET", ""),
         )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

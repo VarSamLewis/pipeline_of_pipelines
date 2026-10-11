@@ -283,9 +283,7 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
 
     if expression:
         return (
-            f"df = df.with_columns(\n"
-            f"    ({expression}).alias({target_column!r})\n"
-            f")\n"
+            f"df = df.with_columns(\n    ({expression}).alias({target_column!r})\n)\n"
         )
 
     return f"df = df.with_columns(pl.col({first_source!r}).alias({target_column!r}))\n"
@@ -575,8 +573,16 @@ def generate_output_folder(
         spec_id,
     )
 
-    # Keep the generated artifacts plus one CSV per target table.
-    allowed = {"pipeline.py", "mapping.json"}
+    # Keep a stable result name for the review API when a single target exists.
+    target_table_names = {c["target_table"] for c in mapping_spec["columns"]}
+    results_csv_path = output_folder / "results.csv"
+    if len(target_table_names) == 1:
+        (output_folder / f"{next(iter(target_table_names))}.csv").replace(
+            results_csv_path
+        )
+
+    # Keep the generated artifacts plus one CSV per target table when needed.
+    allowed = {"pipeline.py", "mapping.json", "results.csv"}
     target_tables = {f"{c['target_table']}.csv" for c in mapping_spec["columns"]}
     for path in output_folder.iterdir():
         if (
@@ -586,11 +592,6 @@ def generate_output_folder(
         ):
             path.unlink()
 
-    first_table = next(iter({c["target_table"] for c in mapping_spec["columns"]}), None)
-    if first_table:
-        results_csv_path = output_folder / f"{first_table}.csv"
-    else:
-        results_csv_path = output_folder / "results.csv"
     return PipelineOutputFolder(
         folder_path=output_folder,
         pipeline_py_path=output_folder / "pipeline.py",
@@ -607,6 +608,7 @@ def execute_generated_pipeline(
     spec_id: uuid.UUID,
 ) -> dict[str, Path]:
     """Run a generated pipeline.py script and capture its CSV outputs."""
+    from config import get_settings
     from db_ops import get_mapping_spec, get_session
 
     pipeline_py_path = Path(pipeline_py_path)
@@ -629,17 +631,23 @@ def execute_generated_pipeline(
                 runtime_name = f"{raw_file.id}_{raw_file.original_filename}"
                 (source_folder / runtime_name).write_bytes(data)
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(pipeline_py_path),
-                "--source-folder",
-                str(source_folder),
-                "--output-folder",
-                str(output_folder),
-            ],
-            capture_output=True,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(pipeline_py_path),
+                    "--source-folder",
+                    str(source_folder),
+                    "--output-folder",
+                    str(output_folder),
+                ],
+                capture_output=True,
+                timeout=get_settings().pipeline_execution_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "Pipeline execution exceeded the configured time limit"
+            ) from exc
         if result.returncode != 0:
             stderr = result.stderr.decode(errors="replace")
             raise RuntimeError(

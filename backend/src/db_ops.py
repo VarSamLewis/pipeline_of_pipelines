@@ -34,6 +34,7 @@ from models import (
     RawFile,
     SpreadsheetProfile,
     TargetSchema,
+    User,
 )
 from parser import (
     discover_source_tables,
@@ -639,6 +640,10 @@ def write_audit_log(
     payload: dict[str, Any],
 ) -> AuditLog:
     """Append an audit event to the database."""
+    # Local-development bypass identities are deliberately in-memory and cannot
+    # satisfy the audit-log foreign key in a freshly rebuilt database.
+    if actor_user_id is not None and session.get(User, actor_user_id) is None:
+        actor_user_id = None
     log = AuditLog(
         event_type=event_type,
         entity_type=entity_type,

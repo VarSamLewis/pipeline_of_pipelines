@@ -90,6 +90,7 @@ The API is then available at `http://127.0.0.1:8000`. Visit
 3. **Ingest a folder of raw files**
 
    ```bash
+   # Local development only: server-path ingestion is disabled when deployed.
    curl -X POST "http://127.0.0.1:8000/clients/acme/ingest-folder" \
      -F "folder_path=examples/complex_client"
    ```
