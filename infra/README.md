@@ -29,3 +29,6 @@ Terraform necessarily tracks the secret versions it creates. Use a protected,
 encrypted remote Terraform state backend with restricted access. For production,
 prefer creating secret versions through a separate approved secret-delivery
 process and remove the version resources from Terraform.
+
+See `../docs/production_runbook.md` for the Clerk bootstrap and production
+verification procedure.
