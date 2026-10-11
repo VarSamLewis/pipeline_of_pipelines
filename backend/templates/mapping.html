@@ -61,10 +61,87 @@
 {% endif %}
 
 <div class="card">
-  <h2>Proposed mapping</h2>
-  <p class="muted">This is the raw mapping JSON produced by the LLM. Review it before generating code and running the pipeline.</p>
-  <pre class="code-editor">{{ mapping_json }}</pre>
+  <h2>Mapping editor</h2>
+  <p class="muted">Review each target column below. Select a catalogued source, explain the transformation, and optionally refine the generated Polars expression.</p>
+  {% for column in mapping_columns %}
+  {% set source = column.source_columns[0] if column.source_columns else {} %}
+  <form class="mapping-editor-row"
+        hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}"
+        hx-target="#save-status-{{ column.id }}"
+        hx-swap="innerHTML">
+    <div class="mapping-editor-heading">
+      <div><span class="muted">Target</span><strong>{{ column.target_table }}.{{ column.target_column }}</strong></div>
+      <span class="badge badge-proposed">{{ "%.0f"|format((column.confidence or 0) * 100) }}% confidence</span>
+    </div>
+    <div class="grid grid-2">
+      <div class="form-group">
+        <label for="source-{{ column.id }}">Source column</label>
+        <select id="source-{{ column.id }}" name="source_ref">
+          <option value="">No source column / constant value</option>
+          {% for table in source_tables %}
+            {% for source_column in table.columns %}
+            <option value="{{ table.source_table_id }}|{{ source_column.source_column_id }}"
+              {% if source.source_table_id == table.source_table_id and source.source_column_id == source_column.source_column_id %}selected{% endif %}>
+              {{ table.display_name }} · {{ source_column.normalized_name }}
+            </option>
+            {% endfor %}
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="type-{{ column.id }}">Transformation type</label>
+        <select id="type-{{ column.id }}" name="transformation_type">
+          {% for type in ["expression", "lookup", "aggregation", "filter"] %}
+          <option value="{{ type }}" {% if column.transformation_type == type %}selected{% endif %}>{{ type|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="logic-{{ column.id }}">Transformation logic</label>
+      <input id="logic-{{ column.id }}" name="transformation_logic" value="{{ column.transformation_logic }}">
+    </div>
+    <details class="mapping-advanced">
+      <summary>Optional expression and lookup settings</summary>
+      <div class="form-group">
+        <label for="expression-{{ column.id }}">Polars expression</label>
+        <textarea id="expression-{{ column.id }}" name="polars_expression" placeholder="col('source').cast(String)">{{ column.polars_expression or "" }}</textarea>
+      </div>
+      <div class="grid grid-3">
+        <div class="form-group">
+          <label for="lookup-table-{{ column.id }}">Lookup table</label>
+          <select id="lookup-table-{{ column.id }}" name="lookup_source_table">
+            <option value="">No lookup table</option>
+            {% for table in source_tables %}
+            <option value="{{ table.source_table_id }}" {% if column.lookup_source_table == table.source_table_id %}selected{% endif %}>{{ table.display_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="lookup-key-{{ column.id }}">Lookup key</label>
+          <input id="lookup-key-{{ column.id }}" name="lookup_key" value="{{ column.lookup_key or "" }}">
+        </div>
+        <div class="form-group">
+          <label for="lookup-value-{{ column.id }}">Lookup value</label>
+          <input id="lookup-value-{{ column.id }}" name="lookup_value" value="{{ column.lookup_value or "" }}">
+        </div>
+      </div>
+    </details>
+    <div class="mapping-editor-footer">
+      <label>Tests <input name="tests" value="{{ column.tests|join(', ') }}" placeholder="not_null, unique"></label>
+      <button class="btn btn-primary btn-sm" type="submit">Save mapping</button>
+      <span id="save-status-{{ column.id }}" aria-live="polite"></span>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted">No proposed mappings are available to edit.</p>
+  {% endfor %}
 </div>
+
+<details class="card">
+  <summary><strong>Raw mapping JSON</strong> <span class="muted">Advanced review</span></summary>
+  <pre class="code-editor">{{ mapping_json }}</pre>
+</details>
 
 <div class="card">
   <form

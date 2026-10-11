@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 import polars as pl
-from auth_service import require_auth
+from auth_service import require_auth, require_role
 from config import get_settings
 from fastapi import (
     APIRouter,
@@ -39,6 +39,9 @@ from workflow import (
     list_clients,
     reject_mapping,
     reject_result,
+)
+from workflow import (
+    update_mapping_column_from_editor as save_mapping_column_from_editor,
 )
 
 router = APIRouter()
@@ -150,10 +153,46 @@ def mapping_review_page(
             **_user_context(request, user),
             "spec_id": str(spec_id),
             "mapping_json": mapping_json,
+            "mapping_columns": mapping.get("columns", []),
             "source_tables": source_tables,
             "parse_warnings": parse_warnings,
         },
     )
+
+
+@router.post("/mapping/{spec_id}/columns/{column_id}")
+def update_mapping_column_from_editor(
+    request: Request,
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    source_ref: str = Form(""),
+    transformation_type: str = Form("expression"),
+    transformation_logic: str = Form(""),
+    polars_expression: str = Form(""),
+    lookup_source_table: str = Form(""),
+    lookup_key: str = Form(""),
+    lookup_value: str = Form(""),
+    tests: str = Form(""),
+    user: Any = Depends(require_role("reviewer")),
+) -> Any:
+    """Save one guided mapping edit after validating catalog selections."""
+    try:
+        save_mapping_column_from_editor(
+            spec_id,
+            column_id,
+            source_ref=source_ref,
+            transformation_type=transformation_type,
+            transformation_logic=transformation_logic,
+            polars_expression=polars_expression,
+            lookup_source_table=lookup_source_table,
+            lookup_key=lookup_key,
+            lookup_value=lookup_value,
+            tests=tests,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    return HTMLResponse("<span class='save-note'>Saved</span>")
 
 
 @router.post("/mapping/{spec_id}/confirm")

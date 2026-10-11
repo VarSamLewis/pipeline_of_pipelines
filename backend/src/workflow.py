@@ -41,6 +41,7 @@ from models import (
     ExecutionRun,
     FileStatus,
     GeneratedArtifact,
+    MappingColumn,
     MappingSpec,
     MappingSpecStatus,
     PipelineOutputFolder,
@@ -442,6 +443,80 @@ def _update_execution_log(run_id: uuid.UUID, **updates: Any) -> None:
 def get_mapping_review(spec_id: uuid.UUID) -> dict[str, Any]:
     """Return the canonical mapping review projection."""
     return load_mapping_spec(spec_id)
+
+
+def update_mapping_column_from_editor(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    *,
+    source_ref: str,
+    transformation_type: str,
+    transformation_logic: str,
+    polars_expression: str,
+    lookup_source_table: str,
+    lookup_key: str,
+    lookup_value: str,
+    tests: str,
+) -> None:
+    """Save a guided mapping edit after validating its catalog references."""
+    if transformation_type not in {"expression", "lookup", "aggregation", "filter"}:
+        raise ValueError("Invalid transformation type")
+
+    review = load_mapping_spec(spec_id)
+    source_tables = [
+        table
+        for catalog in review.get("source_catalogs", [])
+        for table in catalog.get("tables", [])
+    ]
+    tables_by_id = {str(table.get("source_table_id")): table for table in source_tables}
+    source_columns: list[dict[str, Any]] = []
+    if source_ref:
+        table_id, separator, column_id_value = source_ref.partition("|")
+        table = tables_by_id.get(table_id)
+        if table is None or not separator:
+            raise ValueError("Selected source column is not in the catalog")
+        selected_column = next(
+            (
+                candidate
+                for candidate in table.get("columns", [])
+                if str(candidate.get("source_column_id")) == column_id_value
+            ),
+            None,
+        )
+        if selected_column is None:
+            raise ValueError("Selected source column is not in the catalog")
+        source_columns.append(
+            {
+                "source_table_id": table_id,
+                "source_column_id": column_id_value,
+                "raw_file_id": table.get("raw_file_id"),
+                "source_table": table.get("display_name") or table_id,
+                "source_column": (
+                    selected_column.get("normalized_name")
+                    or selected_column.get("original_name")
+                    or column_id_value
+                ),
+            }
+        )
+
+    if lookup_source_table and lookup_source_table not in tables_by_id:
+        raise ValueError("Selected lookup table is not in the catalog")
+
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        column = session.get(MappingColumn, column_id)
+        if spec is None or column is None or column.mapping_spec_id != spec.id:
+            raise ValueError("Mapping column not found")
+        column.source_columns_json = source_columns
+        column.transformation_type = transformation_type
+        column.transformation_logic = transformation_logic
+        column.polars_expression = polars_expression or None
+        column.lookup_source_table = lookup_source_table or None
+        column.lookup_key = lookup_key or None
+        column.lookup_value = lookup_value or None
+        column.tests = [test.strip() for test in tests.split(",") if test.strip()]
+        session.add(column)
+        session.commit()
 
 
 def get_result_review(run_id: uuid.UUID) -> dict[str, Any]:

@@ -19,7 +19,22 @@ def test_mapping_review_surfaces_catalog_warnings(
         "get_mapping_review",
         lambda spec_id: {
             "id": str(spec_id),
-            "columns": [],
+            "columns": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "target_table": "records",
+                    "target_column": "client_name",
+                    "source_columns": [],
+                    "transformation_logic": "Direct map",
+                    "polars_expression": None,
+                    "transformation_type": "expression",
+                    "lookup_source_table": None,
+                    "lookup_key": None,
+                    "lookup_value": None,
+                    "tests": ["not_null"],
+                    "confidence": 0.8,
+                }
+            ],
             "source_catalogs": [
                 {
                     "original_filename": "clients.csv",
@@ -59,6 +74,8 @@ def test_mapping_review_surfaces_catalog_warnings(
     response = TestClient(app).get(f"/mapping/{uuid.uuid4()}")
 
     assert response.status_code == 200
+    assert "Mapping editor" in response.text
+    assert "Raw mapping JSON" in response.text
     assert "Discovered source tables" in response.text
     assert "encoding_fallback" in response.text
     assert "preamble_detected" in response.text
