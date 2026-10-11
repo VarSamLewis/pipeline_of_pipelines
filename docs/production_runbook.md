@@ -1,5 +1,27 @@
 # Production Runbook
 
+## Local Validation
+
+Run these commands before opening a pull request or building a deployment
+image:
+
+```bash
+uv sync --extra dev
+docker compose up -d postgres
+uv run ruff check backend/src tests scripts
+uv run mypy backend/src
+uv run pytest
+git diff --check
+docker build --tag pipeline-of-pipelines:test .
+terraform -chdir=infra init -backend=false
+terraform -chdir=infra fmt -check -recursive
+terraform -chdir=infra validate
+```
+
+The API integration tests are skipped if PostgreSQL is unavailable. Start the
+Compose database first to run all tests. The test suite uses mocked LLM calls,
+so it does not require an OpenAI key.
+
 ## Before Deploying
 
 1. Create a dedicated GCP project and use an encrypted, access-restricted
@@ -54,6 +76,34 @@
    generated artifacts appear in the GCS bucket.
 5. Confirm Cloud Logging receives application logs and Cloud Monitoring emits
    Cloud Run metrics.
+
+## GCP Smoke Test
+
+After `terraform apply`, replace `<service-url>` with the `cloud_run_url`
+output and run:
+
+```bash
+curl --fail --show-error https://<service-url>/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+Then complete this browser smoke test:
+
+1. Navigate to `https://<service-url>/login` with a bootstrap admin Clerk
+   identity and confirm the redirect to Clerk.
+2. Confirm the return to `/auth/callback` reaches the upload page.
+3. Request `https://<service-url>/auth/me` in the signed-in browser session
+   and confirm the expected admin email and role.
+4. Create a client, invite a non-admin operator, and confirm that operator
+   receives `403` for another client's mapping-spec or raw-file URL.
+5. Upload a small CSV and target schema, propose a mapping, approve it, run it,
+   and confirm its `pipeline.py`, `mapping.json`, and `results.csv` objects are
+   present under `output-folders/<spec-id>/` in GCS.
 
 ## Rollback
 

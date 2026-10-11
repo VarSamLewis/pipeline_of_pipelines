@@ -152,22 +152,39 @@ python examples/complex_client/generate_fixture.py
 
 ## Testing
 
-Integration tests need the PostgreSQL container running and an OpenAI key:
+Install the locked development dependencies and start PostgreSQL:
 
 ```bash
+uv sync --extra dev
 docker compose up -d postgres
-export OPENAI_API_KEY="sk-..."
-python -m pytest tests/ -v
+uv run pytest
 ```
 
-Unit tests that do not touch the database run without Postgres. Integration
-tests are automatically skipped if Postgres is unreachable.
-
-Run lint checks:
+Run the complete local quality suite:
 
 ```bash
-python -m ruff check backend/src tests README.md
+uv run ruff check backend/src tests scripts
+uv run mypy backend/src
+uv run pytest
+git diff --check
 ```
+
+Build the production container locally:
+
+```bash
+docker build --tag pipeline-of-pipelines:test .
+```
+
+Run Terraform validation after installing Terraform:
+
+```bash
+terraform -chdir=infra init -backend=false
+terraform -chdir=infra fmt -check -recursive
+terraform -chdir=infra validate
+```
+
+See [`docs/production_runbook.md`](docs/production_runbook.md) for the GCP
+smoke-test and deployment checklist.
 
 ## Configuration
 
