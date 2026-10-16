@@ -13,6 +13,7 @@ when proposing how to shape the data into the supplied target schema.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any, cast
 
@@ -202,6 +203,7 @@ def _gather_targeted_evidence(
     target_schema: TargetSchema,
     source_catalogs: list[dict[str, Any]],
     search_evidence_by_text: Any,
+    api_key: str | None,
     top_k_per_query: int = 5,
     max_total: int = 40,
 ) -> list[ExtractedEvidence]:
@@ -251,7 +253,11 @@ def _gather_targeted_evidence(
         if len(evidence_items) >= max_total:
             break
         results = search_evidence_by_text(
-            session, query, client_id, top_k=top_k_per_query
+            session,
+            query,
+            client_id,
+            top_k=top_k_per_query,
+            api_key=api_key,
         )
         for item in results:
             if item.id in seen_ids:
@@ -394,8 +400,6 @@ def _normalize_polars_expression(expression: str | None) -> str | None:
     """
     if expression is None:
         return None
-    import re
-
     # LLMs often use pandas/string-style title casing
     expression = expression.replace(".str.title()", ".str.to_titlecase()")
     # LLMs often call Series.map() which does not exist in Polars
@@ -436,6 +440,58 @@ def _normalize_polars_expression(expression: str | None) -> str | None:
         expression,
     )
     return expression
+
+
+def _expression_output_cast_dtype(expression: str | None) -> str | None:
+    """Return the final explicit dtype cast in an expression, when present."""
+    if not expression:
+        return None
+    casts = re.findall(
+        r"\.cast\(\s*(?:pl\.)?([A-Za-z_][A-Za-z0-9_]*)",
+        expression,
+    )
+    if not casts:
+        return None
+    aliases = {
+        "str": "String",
+        "string": "String",
+        "int": "Int64",
+        "float": "Float64",
+        "bool": "Boolean",
+    }
+    dtype = casts[-1]
+    return aliases.get(dtype.lower(), dtype)
+
+
+def validate_mapping_expression_dtypes(
+    mappings: list[ProposedMapping] | list[dict[str, Any]],
+    target_schema: TargetSchema,
+) -> list[str]:
+    """Reject expressions whose final explicit cast conflicts with the target."""
+    target_dtypes = {
+        (table.name, column.name): column.dtype
+        for table in target_schema.tables
+        for column in table.columns
+        if column.dtype
+    }
+    errors: list[str] = []
+    for mapping in mappings:
+        if isinstance(mapping, dict):
+            target_table = mapping.get("target_table", "")
+            target_column = mapping.get("target_column", "")
+            expression = mapping.get("polars_expression")
+        else:
+            target_table = mapping.target_table
+            target_column = mapping.target_column
+            expression = mapping.polars_expression
+        target_dtype = target_dtypes.get((target_table, target_column))
+        cast_dtype = _expression_output_cast_dtype(expression)
+        if target_dtype and cast_dtype and cast_dtype != target_dtype:
+            errors.append(
+                f"{target_table}.{target_column} casts to {cast_dtype}, but the "
+                f"target schema requires {target_dtype}"
+            )
+    return errors
 
 
 def parse_llm_mapping_response(
@@ -511,6 +567,14 @@ def propose_mapping_spec(
     ]
     raw_files = [rf for rf in raw_files if rf is not None]
 
+    settings = get_settings()
+    api_key = api_key or settings.openai_api_key
+    base_url = base_url or settings.openai_base_url
+    if not api_key:
+        raise RuntimeError(
+            "No organization API key is configured. Ask an administrator to add one."
+        )
+
     source_catalogs: list[dict[str, Any]] = []
     for raw_file in raw_files:
         profile = get_spreadsheet_profile(session, raw_file.id)
@@ -532,6 +596,7 @@ def propose_mapping_spec(
         target_schema,
         source_catalogs,
         search_evidence_by_text,
+        api_key,
         top_k_per_query=max(1, top_k_evidence // 2),
         max_total=top_k_evidence * 4,
     )
@@ -543,14 +608,6 @@ def propose_mapping_spec(
             BusinessRule.status == "approved",
         )
     ).all()
-
-    settings = get_settings()
-    api_key = api_key or settings.openai_api_key
-    base_url = base_url or settings.openai_base_url
-    if not api_key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set. Mapping proposals require an LLM."
-        )
 
     messages = build_mapping_prompt(
         target_schema,
@@ -643,6 +700,7 @@ def validate_mapping_columns(
         errors: list[str] = []
         if (mapping.target_table, mapping.target_column) not in target_columns:
             errors.append("target column not in target schema")
+        errors.extend(validate_mapping_expression_dtypes([mapping], target_schema))
         for ref in mapping.source_columns:
             if not ref.source_table_id:
                 errors.append(

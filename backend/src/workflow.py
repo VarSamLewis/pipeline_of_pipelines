@@ -10,11 +10,22 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import polars as pl
-from codegen import generate_artifact_set, generate_output_folder
+from auth_service import send_clerk_invitation
+from byok import (
+    get_organization_api_key,
+    get_organization_api_key_suffix,
+    save_organization_api_key,
+)
+from codegen import (
+    generate_artifact_set,
+    generate_output_folder,
+    generated_artifact_filenames,
+)
 from config import get_settings
 from db_ops import (
     _parse_raw_file,
@@ -34,9 +45,10 @@ from file_ops import (
     compute_sha256,
     detect_file_type,
 )
-from mapping import propose_mapping_spec
+from mapping import propose_mapping_spec, validate_mapping_expression_dtypes
 from mapping_specs import load_mapping_spec, load_target_schema_from_spec
 from models import (
+    BetaInvitation,
     Client,
     ExecutionRun,
     FileStatus,
@@ -46,6 +58,7 @@ from models import (
     MappingSpecStatus,
     PipelineOutputFolder,
     TargetSchema,
+    UserRole,
     ValidationResult,
 )
 from pipeline import (
@@ -58,7 +71,6 @@ from pipeline import (
 from repositories.clients import (
     create_client,
     create_ingestion_batch,
-    get_client_by_code,
     get_client_by_id,
 )
 from repositories.executions import (
@@ -74,7 +86,6 @@ def get_or_create_client(
     session: Any,
     existing_client_id: uuid.UUID | None,
     new_client_name: str | None,
-    new_client_code: str | None,
 ) -> Client:
     """Resolve a client from an existing id or create a new one."""
     if existing_client_id:
@@ -83,18 +94,13 @@ def get_or_create_client(
             raise ValueError("Selected client not found")
         return client
 
-    if not new_client_name or not new_client_code:
+    if not new_client_name:
         msg = "Either select an existing client or provide new client details"
         raise ValueError(msg)
-
-    existing = get_client_by_code(session, new_client_code)
-    if existing is not None:
-        raise ValueError(f"Client code '{new_client_code}' already exists")
 
     return create_client(
         session,
         name=new_client_name,
-        code=new_client_code,
         metadata={},
     )
 
@@ -105,10 +111,89 @@ def list_clients() -> list[Client]:
         return list(session.exec(select(Client).order_by(Client.name)).all())
 
 
-def _save_target_schema(client_code: str, content: bytes) -> TargetSchema:
+def get_organization_key_settings() -> list[dict[str, Any]]:
+    """Return organizations and non-sensitive BYOK status for the settings page."""
+    with get_session() as session:
+        clients = list(session.exec(select(Client).order_by(Client.name)).all())
+        return [
+            {
+                "id": client.id,
+                "name": client.name,
+                "key_suffix": get_organization_api_key_suffix(session, client.id),
+                "pending_invitations": [
+                    {"id": invitation.id, "email": invitation.email}
+                    for invitation in session.exec(
+                        select(BetaInvitation).where(
+                            BetaInvitation.client_id == client.id,
+                            BetaInvitation.status == "pending",
+                        )
+                    ).all()
+                ],
+            }
+            for client in clients
+        ]
+
+
+def save_organization_key(client_id: uuid.UUID, api_key: str) -> None:
+    """Save a BYOK credential for an existing organization."""
+    with get_session() as session:
+        if get_client_by_id(session, client_id) is None:
+            raise ValueError("Organization not found")
+        save_organization_api_key(session, client_id, api_key)
+
+
+def invite_organization_reviewer(client_id: uuid.UUID, email: str) -> None:
+    """Create or refresh a pending reviewer invitation for an organization."""
+    email = email.strip().lower()
+    if not email:
+        raise ValueError("Email is required")
+    with get_session() as session:
+        if get_client_by_id(session, client_id) is None:
+            raise ValueError("Organization not found")
+        invitation = session.exec(
+            select(BetaInvitation).where(
+                BetaInvitation.client_id == client_id,
+                BetaInvitation.email == email,
+                BetaInvitation.status == "pending",
+            )
+        ).first()
+        if invitation is None:
+            send_clerk_invitation(email)
+            invitation = BetaInvitation(
+                client_id=client_id,
+                email=email,
+                role=UserRole.REVIEWER,
+            )
+        else:
+            invitation.role = UserRole.REVIEWER
+            invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        session.add(invitation)
+        session.commit()
+
+
+def revoke_organization_reviewer_invitation(
+    client_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+) -> None:
+    """Revoke one pending organization reviewer invitation."""
+    with get_session() as session:
+        invitation = session.get(BetaInvitation, invitation_id)
+        if (
+            invitation is None
+            or invitation.client_id != client_id
+            or invitation.status != "pending"
+        ):
+            raise ValueError("Pending reviewer invitation not found")
+        invitation.status = "revoked"
+        invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        session.add(invitation)
+        session.commit()
+
+
+def _save_target_schema(client_id: uuid.UUID, content: bytes) -> TargetSchema:
     """Persist the uploaded target schema JSON and parse it into a model."""
     schema = TargetSchema.model_validate(json.loads(content))
-    get_artifact_store().write_target_schema(client_code, schema)
+    get_artifact_store().write_target_schema(str(client_id), schema)
     return schema
 
 
@@ -130,7 +215,7 @@ def _store_raw_file(
     elif file_type == "xlsx":
         mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-    storage_key = build_storage_key(client.code, str(batch_id), filename, sha256)
+    storage_key = build_storage_key(str(client.id), str(batch_id), filename, sha256)
     object_store.put(storage_key, contents)
 
     raw_file = create_raw_file(
@@ -150,7 +235,6 @@ def _store_raw_file(
 def ingest_and_propose(
     existing_client_id: uuid.UUID | None,
     new_client_name: str | None,
-    new_client_code: str | None,
     source_uploads: list[Any],
     target_schema_bytes: bytes,
     model: str | None = None,
@@ -160,7 +244,6 @@ def ingest_and_propose(
     Args:
         existing_client_id: UUID of an existing client, if selected.
         new_client_name: Name for a new client, if creating one.
-        new_client_code: Short code for a new client, if creating one.
         source_uploads: List of uploaded source files.
         target_schema_bytes: Raw bytes of the uploaded target schema JSON.
         model: LLM model to use for mapping proposal.
@@ -172,12 +255,34 @@ def ingest_and_propose(
         raise ValueError("At least one source file is required")
 
     settings = get_settings()
+    if len(source_uploads) > settings.max_source_files:
+        raise ValueError(
+            f"A maximum of {settings.max_source_files} source files may be uploaded"
+        )
+    source_sizes = []
+    for upload in source_uploads:
+        upload.file.seek(0, 2)
+        size = upload.file.tell()
+        upload.file.seek(0)
+        if size > settings.max_upload_size_bytes:
+            raise ValueError(
+                f"{upload.filename or 'Source file'} exceeds the individual file limit"
+            )
+        source_sizes.append(size)
+    if sum(source_sizes) > settings.max_total_upload_size_bytes:
+        raise ValueError("Source files exceed the total upload size limit")
     object_store = get_object_store()
 
     with get_session() as session:
-        client = get_or_create_client(
-            session, existing_client_id, new_client_name, new_client_code
+        client = get_or_create_client(session, existing_client_id, new_client_name)
+        api_key = (
+            get_organization_api_key(session, client.id) or settings.openai_api_key
         )
+        if not api_key:
+            raise RuntimeError(
+                "No organization API key is configured. "
+                "Ask an administrator to add one."
+            )
         batch = create_ingestion_batch(
             session,
             client_id=client.id,
@@ -193,7 +298,7 @@ def ingest_and_propose(
             )
             raw_file_ids.append(raw_file_id)
 
-        target_schema = _save_target_schema(client.code, target_schema_bytes)
+        target_schema = _save_target_schema(client.id, target_schema_bytes)
 
         spec = create_mapping_spec(
             session,
@@ -211,7 +316,7 @@ def ingest_and_propose(
             file_type = detect_file_type(raw_file.original_filename)
             data = object_store.get(raw_file.storage_key)
             try:
-                _parse_raw_file(session, raw_file, data, file_type)
+                _parse_raw_file(session, raw_file, data, file_type, api_key=api_key)
                 update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
             except Exception as exc:
                 update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
@@ -230,7 +335,7 @@ def ingest_and_propose(
             spec.id,
             target_schema=target_schema,
             model=model or settings.mapping_model,
-            api_key=settings.openai_api_key,
+            api_key=api_key,
             base_url=settings.openai_base_url,
             top_k_evidence=10,
         )
@@ -252,12 +357,13 @@ def propose_mapping(
         if spec is None:
             raise ValueError("Mapping spec not found")
         target_schema = TargetSchema.model_validate(spec.target_schema_json)
+        organization_api_key = get_organization_api_key(session, spec.client_id)
         propose_mapping_spec(
             session,
             spec_id,
             target_schema=target_schema,
             model=model or settings.mapping_model,
-            api_key=api_key or settings.openai_api_key,
+            api_key=api_key or organization_api_key or settings.openai_api_key,
             base_url=settings.openai_base_url,
             top_k_evidence=top_k_evidence,
         )
@@ -275,6 +381,15 @@ def approve_mapping(
         spec = get_mapping_spec(session, spec_id)
         if spec is None:
             raise ValueError("Mapping spec not found")
+        mapping_spec = load_mapping_spec(spec_id)
+        target_schema = load_target_schema_from_spec(mapping_spec)
+        expression_errors = validate_mapping_expression_dtypes(
+            mapping_spec["columns"], target_schema
+        )
+        if expression_errors:
+            raise ValueError(
+                "Mapping cannot be approved: " + "; ".join(expression_errors)
+            )
         approved = approve_mapping_spec(session, spec_id, reviewer, notes)
         if approved is None:
             raise ValueError("Mapping spec not found")
@@ -327,7 +442,12 @@ def execute_approved_mapping(
             csv_paths[table_name] = csv_path
 
     if len(csv_paths) == 1:
-        shutil.copy2(next(iter(csv_paths.values())), folder / "results.csv")
+        filenames = generated_artifact_filenames(
+            target_schema,
+            mapping_spec.get("client_name", "client"),
+            mapping_spec.get("created_at"),
+        )
+        shutil.copy2(next(iter(csv_paths.values())), folder / filenames["results"])
 
     with get_session() as session:
         spec = get_mapping_spec(session, spec_id)
@@ -348,14 +468,18 @@ def execute_approved_mapping(
         mapping_spec["columns"],
         target_schema,
     )
+    filenames = generated_artifact_filenames(
+        target_schema,
+        mapping_spec.get("client_name", "client"),
+        mapping_spec.get("created_at"),
+    )
+    results_path = folder / filenames["results"]
     result = {
         "execution_run_id": str(run_id),
         "spec_id": str(spec_id),
         "target_environment": target_environment,
         "csv_paths": {name: str(path) for name, path in csv_paths.items()},
-        "results_csv": (
-            str(folder / "results.csv") if (folder / "results.csv").exists() else None
-        ),
+        "results_csv": str(results_path) if results_path.exists() else None,
         "validation_results": test_results,
         "quality_profiles": {
             name: compute_quality_profile(df) for name, df in target_dfs.items()
@@ -445,6 +569,27 @@ def get_mapping_review(spec_id: uuid.UUID) -> dict[str, Any]:
     return load_mapping_spec(spec_id)
 
 
+def get_generated_artifact_filename(spec_id: uuid.UUID, artifact_type: str) -> str:
+    """Resolve a generated artifact name, tolerating pre-rename artifacts."""
+    legacy_names = {
+        "pipeline": "pipeline.py",
+        "mapping": "mapping.json",
+        "results": "results.csv",
+    }
+    if artifact_type not in legacy_names:
+        raise ValueError(f"Unknown artifact type: {artifact_type}")
+    try:
+        mapping_spec = load_mapping_spec(spec_id)
+        target_schema = load_target_schema_from_spec(mapping_spec)
+    except Exception:
+        return legacy_names[artifact_type]
+    return generated_artifact_filenames(
+        target_schema,
+        mapping_spec.get("client_name", "client"),
+        mapping_spec.get("created_at"),
+    )[artifact_type]
+
+
 def update_mapping_column_from_editor(
     spec_id: uuid.UUID,
     column_id: uuid.UUID,
@@ -456,7 +601,7 @@ def update_mapping_column_from_editor(
     lookup_source_table: str,
     lookup_key: str,
     lookup_value: str,
-    tests: str,
+    tests: str | None = None,
 ) -> None:
     """Save a guided mapping edit after validating its catalog references."""
     if transformation_type not in {"expression", "lookup", "aggregation", "filter"}:
@@ -514,7 +659,8 @@ def update_mapping_column_from_editor(
         column.lookup_source_table = lookup_source_table or None
         column.lookup_key = lookup_key or None
         column.lookup_value = lookup_value or None
-        column.tests = [test.strip() for test in tests.split(",") if test.strip()]
+        if tests is not None:
+            column.tests = [test.strip() for test in tests.split(",") if test.strip()]
         session.add(column)
         session.commit()
 
@@ -536,7 +682,11 @@ def get_result_review(run_id: uuid.UUID) -> dict[str, Any]:
 
     store = get_artifact_store()
     csv_names = store.list_artifacts(spec_id, suffix=".csv")
-    results_name = "results.csv" if "results.csv" in csv_names else None
+    pipeline_name = get_generated_artifact_filename(spec_id, "pipeline")
+    mapping_name = get_generated_artifact_filename(spec_id, "mapping")
+    results_name = get_generated_artifact_filename(spec_id, "results")
+    if results_name not in csv_names:
+        results_name = None
     if results_name is None and csv_names:
         results_name = csv_names[0]
 
@@ -552,6 +702,6 @@ def get_result_review(run_id: uuid.UUID) -> dict[str, Any]:
         "run": run,
         "validation_results": validation_results,
         "results_csv": read_optional(results_name),
-        "pipeline_py": read_optional("pipeline.py"),
-        "mapping_json": read_optional("mapping.json"),
+        "pipeline_py": read_optional(pipeline_name),
+        "mapping_json": read_optional(mapping_name),
     }

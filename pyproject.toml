@@ -27,6 +27,7 @@ dependencies = [
     "google-cloud-storage>=2.19.0",
     "jinja2>=3.1.0",
     "itsdangerous>=2.2.0",
+    "cryptography>=43.0.0",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +46,7 @@ py-modules = [
     "app",
     "artifact_store",
     "codegen",
+    "byok",
     "config",
     "db_ops",
     "dependencies",

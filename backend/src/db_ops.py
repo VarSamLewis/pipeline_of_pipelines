@@ -243,7 +243,7 @@ def ingest_client_folder(
             )
 
         storage_key = build_storage_key(
-            client.code, str(batch.id), file_path.name, sha256
+            str(client.id), str(batch.id), file_path.name, sha256
         )
         object_store.put(storage_key, file_bytes)
 
@@ -285,6 +285,7 @@ def _parse_raw_file(
     raw_file: RawFile,
     file_bytes: bytes,
     file_type: str,
+    api_key: str | None = None,
 ) -> None:
     """Parse a raw file and store profiles/evidence."""
     if file_type in {"csv", "xlsx"}:
@@ -313,7 +314,7 @@ def _parse_raw_file(
 
     chunks = extract_evidence_chunks(parsed, str(raw_file.id))
     for chunk in chunks:
-        embedding = get_embedding(chunk["content"])
+        embedding = get_embedding(chunk["content"], api_key=api_key)
         create_extracted_evidence(
             session=session,
             client_id=raw_file.client_id,
@@ -409,9 +410,10 @@ def search_evidence_by_text(
     query: str,
     client_id: uuid.UUID | None,
     top_k: int = 5,
+    api_key: str | None = None,
 ) -> Sequence[ExtractedEvidence]:
     """Embed a text query and search extracted evidence by vector similarity."""
-    query_embedding = get_embedding(query)
+    query_embedding = get_embedding(query, api_key=api_key)
     return search_evidence(session, query_embedding, client_id, top_k=top_k)
 
 

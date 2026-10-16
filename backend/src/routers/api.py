@@ -86,7 +86,7 @@ from models import PipelineOutputFolder, TargetSchema
 from repositories.clients import (
     create_client,
     create_ingestion_batch,
-    get_client_by_code,
+    get_client_by_id,
     get_ingestion_batch,
 )
 from sqlalchemy import desc
@@ -96,6 +96,7 @@ from workflow import (
     create_output_folder,
     execute_approved_mapping,
     generate_artifacts,
+    get_generated_artifact_filename,
     get_mapping_review,
     get_result_review,
     propose_mapping,
@@ -126,15 +127,15 @@ def require_mapping_spec_access(
         require_client_membership(session, user, spec.client_id)
 
 
-def require_client_code_access(
-    client_code: str,
+def require_client_id_access(
+    client_id: uuid.UUID,
     user: Any = Depends(require_auth),
 ) -> None:
-    """Authorize access to a client addressed by its public code."""
+    """Authorize access to a client addressed by its UUID."""
     if AUTH_BYPASS_LOCAL:
         return
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(404, "Client not found")
         require_client_membership(session, user, client.id)
@@ -405,24 +406,22 @@ def create_invitation(
 ) -> dict[str, Any]:
     """Create or update a pending client invitation for a verified Clerk email."""
     from models import BetaInvitation, UserRole
-    from repositories.clients import get_client_by_code
     from sqlmodel import select
 
     email = payload.get("email")
-    client_code = payload.get("client_code")
+    client_id = payload.get("client_id")
     if not isinstance(email, str) or not email.strip():
         raise HTTPException(422, "email is required")
-    if not isinstance(client_code, str) or not client_code:
-        raise HTTPException(422, "client_code is required")
     try:
-        role = UserRole(payload.get("role", UserRole.CREATOR.value))
-    except ValueError as exc:
-        raise HTTPException(422, "Invalid role") from exc
+        client_id = uuid.UUID(client_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "client_id is required") from exc
+    role = UserRole.REVIEWER
     email = email.strip().lower()
     now = datetime.now(UTC).replace(tzinfo=None)
 
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(404, "Client not found")
         invitation = session.exec(
@@ -447,7 +446,7 @@ def create_invitation(
             invitation.id,
             user.id,
             user.email,
-            {"email": email, "client_code": client_code, "role": role.value},
+            {"email": email, "client_id": str(client.id), "role": role.value},
         )
         session.refresh(invitation)
         result = {
@@ -505,7 +504,6 @@ def create_client_endpoint(
         client = create_client(
             session,
             name=payload["name"],
-            code=payload["code"],
             metadata=payload.get("metadata", {}),
         )
         from models import ClientMembership, UserRole
@@ -530,7 +528,6 @@ def create_client_endpoint(
         return {
             "id": str(client.id),
             "name": client.name,
-            "code": client.code,
             "created_at": client.created_at.isoformat(),
         }
 
@@ -560,44 +557,42 @@ def list_clients_endpoint(
             {
                 "id": str(c.id),
                 "name": c.name,
-                "code": c.code,
                 "created_at": c.created_at.isoformat(),
             }
             for c in clients
         ]
 
 
-@app.get("/clients/{client_code}", dependencies=[Depends(require_client_code_access)])
+@app.get("/clients/{client_id}", dependencies=[Depends(require_client_id_access)])
 def get_client(
-    client_code: str,
+    client_id: uuid.UUID,
     user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
-    """Fetch a client by its short code."""
+    """Fetch a client by UUID."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         return {
             "id": str(client.id),
             "name": client.name,
-            "code": client.code,
             "metadata": client.meta,
             "created_at": client.created_at.isoformat(),
         }
 
 
 @app.post(
-    "/clients/{client_code}/batches",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/batches",
+    dependencies=[Depends(require_client_id_access)],
 )
 def create_ingestion_batch_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     payload: dict[str, Any],
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Create a new ingestion batch for a client."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         batch = create_ingestion_batch(
@@ -616,11 +611,11 @@ def create_ingestion_batch_endpoint(
 
 
 @app.get(
-    "/clients/{client_code}/batches",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/batches",
+    dependencies=[Depends(require_client_id_access)],
 )
 def list_ingestion_batches_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     user: Any = Depends(require_auth),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
@@ -629,7 +624,7 @@ def list_ingestion_batches_endpoint(
     from sqlmodel import select
 
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         statement = (
@@ -650,17 +645,17 @@ def list_ingestion_batches_endpoint(
 
 
 @app.get(
-    "/clients/{client_code}/batches/{batch_id}",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/batches/{batch_id}",
+    dependencies=[Depends(require_client_id_access)],
 )
 def get_ingestion_batch_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     batch_id: uuid.UUID,
     user: Any = Depends(require_auth),
 ) -> dict[str, Any]:
     """Fetch an ingestion batch and its files."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         batch = get_ingestion_batch(session, batch_id)
@@ -690,11 +685,11 @@ def get_ingestion_batch_endpoint(
 
 
 @app.post(
-    "/clients/{client_code}/batches/{batch_id}/files",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/batches/{batch_id}/files",
+    dependencies=[Depends(require_client_id_access)],
 )
 def upload_raw_file(
-    client_code: str,
+    client_id: uuid.UUID,
     batch_id: uuid.UUID,
     file: UploadFile = File(...),
     metadata: str = Form("{}"),
@@ -702,17 +697,26 @@ def upload_raw_file(
 ) -> dict[str, Any]:
     """Upload a raw file into immutable object storage and register metadata."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         batch = get_ingestion_batch(session, batch_id)
         if batch is None or batch.client_id != client.id:
             raise HTTPException(status_code=404, detail="Batch not found")
 
-        max_upload_size = get_settings().max_upload_size_bytes
+        settings = get_settings()
+        existing_files = list_raw_files_by_batch(session, batch.id)
+        if len(existing_files) >= settings.max_source_files:
+            raise HTTPException(422, "Batch has reached the maximum source file count")
+        max_upload_size = settings.max_upload_size_bytes
         contents = file.file.read(max_upload_size + 1)
         if len(contents) > max_upload_size:
             raise HTTPException(413, "Uploaded file exceeds the size limit")
+        if (
+            sum(raw_file.size_bytes for raw_file in existing_files) + len(contents)
+            > settings.max_total_upload_size_bytes
+        ):
+            raise HTTPException(413, "Upload exceeds the batch total size limit")
         sha256 = compute_sha256(contents)
         mime_type = file.content_type or "application/octet-stream"
         file_type = detect_file_type(file.filename or "unknown", contents)
@@ -724,7 +728,7 @@ def upload_raw_file(
             )
 
         storage_key = build_storage_key(
-            client.code, str(batch.id), file.filename or "unknown", sha256
+            str(client.id), str(batch.id), file.filename or "unknown", sha256
         )
         object_store = get_object_store()
         object_store.put(storage_key, contents)
@@ -743,7 +747,6 @@ def upload_raw_file(
         return {
             "id": str(raw_file.id),
             "original_filename": raw_file.original_filename,
-            "storage_key": raw_file.storage_key,
             "sha256": raw_file.sha256,
             "status": raw_file.status.value,
         }
@@ -810,11 +813,11 @@ def parse_raw_file(
 
 
 @app.post(
-    "/clients/{client_code}/ingest-folder",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/ingest-folder",
+    dependencies=[Depends(require_client_id_access)],
 )
 def ingest_client_folder_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     folder_path: str = Form(
         ..., description="Absolute or relative path to the client folder."
     ),
@@ -825,7 +828,7 @@ def ingest_client_folder_endpoint(
     if get_settings().app_environment != "local":
         raise HTTPException(403, "Server-path ingestion is only available locally")
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
@@ -847,11 +850,11 @@ def ingest_client_folder_endpoint(
 
 
 @app.post(
-    "/clients/{client_code}/target-schema",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/target-schema",
+    dependencies=[Depends(require_client_id_access)],
 )
 def upload_target_schema(
-    client_code: str,
+    client_id: uuid.UUID,
     schema_file: UploadFile = File(
         ..., description="JSON file describing the target schema."
     ),
@@ -859,7 +862,7 @@ def upload_target_schema(
 ) -> dict[str, Any]:
     """Upload and persist a target-schema JSON file for a client."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
@@ -867,34 +870,34 @@ def upload_target_schema(
         content = schema_file.file.read(max_upload_size + 1)
         if len(content) > max_upload_size:
             raise HTTPException(413, "Schema file exceeds the size limit")
-        schema = TargetSchema.model_validate_json(content.decode("utf-8"))
-        schema.client_code = client_code
+        schema = TargetSchema.model_validate_json(content)
 
-        get_artifact_store().write_target_schema(client_code, schema)
+        get_artifact_store().write_target_schema(str(client.id), schema)
 
         return {
-            "client_code": client_code,
-            "schema_path": (f"target-schemas/{client_code}/target_schema.json"),
+            "client_id": str(client.id),
             "schema": schema.model_dump(mode="json"),
         }
 
 
 @app.get(
-    "/clients/{client_code}/target-schema",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/target-schema",
+    dependencies=[Depends(require_client_id_access)],
 )
 def get_target_schema(
-    client_code: str,
+    client_id: uuid.UUID,
     user: Any = Depends(require_auth),
-) -> TargetSchema:
+) -> dict[str, Any]:
     """Return the latest target schema for a client."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
     try:
-        return get_artifact_store().read_target_schema(client_code)
+        return get_artifact_store().read_target_schema(str(client.id)).model_dump(
+            mode="json"
+        )
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -932,22 +935,24 @@ def get_spreadsheet_profile_endpoint(
 @app.get("/evidence/search")
 def search_evidence_endpoint(
     query: str = Query(..., description="Plain-text query string."),
-    client_code: str | None = Query(None, description="Optional client filter."),
+    client_id: uuid.UUID | None = Query(None, description="Optional client filter."),
     top_k: int = Query(5, ge=1, le=100),
     user: Any = Depends(require_auth),
 ) -> list[dict[str, Any]]:
     """Search extracted evidence by full text within an authorized client."""
     with get_session() as session:
-        client_id = None
-        if client_code:
-            client = get_client_by_code(session, client_code)
+        evidence_client_id = None
+        if client_id:
+            client = get_client_by_id(session, client_id)
             if client is None:
                 raise HTTPException(status_code=404, detail="Client not found")
             require_client_membership(session, user, client.id)
-            client_id = client.id
+            evidence_client_id = client.id
         elif not AUTH_BYPASS_LOCAL and user.role.value != "admin":
-            raise HTTPException(422, "client_code is required")
-        items = search_evidence_by_text(session, query, client_id, top_k=top_k)
+            raise HTTPException(422, "client_id is required")
+        items = search_evidence_by_text(
+            session, query, evidence_client_id, top_k=top_k
+        )
         return [
             {
                 "id": str(item.id),
@@ -967,17 +972,17 @@ def search_evidence_endpoint(
 
 
 @app.post(
-    "/clients/{client_code}/rules",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/rules",
+    dependencies=[Depends(require_client_id_access)],
 )
 def create_business_rule_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     payload: dict[str, Any],
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Create a new business rule draft."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         rule = create_business_rule(
@@ -1018,11 +1023,11 @@ def approve_business_rule_endpoint(
 
 
 @app.get(
-    "/clients/{client_code}/rules",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/rules",
+    dependencies=[Depends(require_client_id_access)],
 )
 def list_business_rules_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     user: Any = Depends(require_auth),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
@@ -1030,7 +1035,7 @@ def list_business_rules_endpoint(
     from db_ops import list_business_rules
 
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         rules = list_business_rules(session, client.id)
@@ -1052,22 +1057,21 @@ def list_business_rules_endpoint(
 
 
 @app.post(
-    "/clients/{client_code}/mapping-specs",
-    dependencies=[Depends(require_client_code_access)],
+    "/clients/{client_id}/mapping-specs",
+    dependencies=[Depends(require_client_id_access)],
 )
 def create_mapping_spec_endpoint(
-    client_code: str,
+    client_id: uuid.UUID,
     payload: dict[str, Any],
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Create a new mapping specification draft against a supplied target schema."""
     with get_session() as session:
-        client = get_client_by_code(session, client_code)
+        client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
 
         target_schema = TargetSchema.model_validate(payload["target_schema"])
-        target_schema.client_code = client_code
 
         spec = create_mapping_spec(
             session,
@@ -1090,7 +1094,7 @@ def create_mapping_spec_endpoint(
 @app.get("/mapping-specs")
 def list_mapping_specs_endpoint(
     user: Any = Depends(require_auth),
-    client_code: str | None = Query(None),
+    client_id: uuid.UUID | None = Query(None),
     status: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
@@ -1102,8 +1106,8 @@ def list_mapping_specs_endpoint(
         statement = select(MappingSpec).order_by(
             cast(Any, MappingSpec.created_at).desc()
         )
-        if client_code:
-            client = get_client_by_code(session, client_code)
+        if client_id:
+            client = get_client_by_id(session, client_id)
             if client is None:
                 raise HTTPException(status_code=404, detail="Client not found")
             require_client_membership(session, user, client.id)
@@ -1328,11 +1332,12 @@ def get_generated_pipeline_py(
 ) -> PlainTextResponse:
     """Return the generated single-file Polars pipeline for human review."""
     try:
-        content = get_artifact_store().read_artifact(folder_id, "pipeline.py")
+        filename = get_generated_artifact_filename(folder_id, "pipeline")
+        content = get_artifact_store().read_artifact(folder_id, filename)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail="pipeline.py not found",
+            detail="generated pipeline not found",
         ) from None
     return PlainTextResponse(content.decode("utf-8"), media_type="text/x-python")
 
@@ -1347,11 +1352,12 @@ def get_generated_mapping_json(
 ) -> dict[str, Any]:
     """Return the generated mapping.json for human review."""
     try:
-        content = get_artifact_store().read_artifact(folder_id, "mapping.json")
+        filename = get_generated_artifact_filename(folder_id, "mapping")
+        content = get_artifact_store().read_artifact(folder_id, filename)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail="mapping.json not found",
+            detail="generated mapping not found",
         ) from None
     return cast(dict[str, Any], json.loads(content))
 
@@ -1366,16 +1372,17 @@ def get_generated_results_csv(
 ) -> Response:
     """Return the generated results.csv for human review."""
     try:
-        content = get_artifact_store().read_artifact(folder_id, "results.csv")
+        filename = get_generated_artifact_filename(folder_id, "results")
+        content = get_artifact_store().read_artifact(folder_id, filename)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail="results.csv not found",
+            detail="generated results not found",
         ) from None
     return Response(
         content=content,
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="results.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

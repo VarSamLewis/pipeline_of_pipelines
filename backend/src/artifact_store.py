@@ -23,13 +23,13 @@ class ArtifactStore(ObjectStore, ABC):
     @abstractmethod
     def write_target_schema(
         self,
-        client_code: str,
+        client_id: str,
         schema: TargetSchema,
     ) -> None:
         """Persist a client's target schema."""
 
     @abstractmethod
-    def read_target_schema(self, client_code: str) -> TargetSchema:
+    def read_target_schema(self, client_id: str) -> TargetSchema:
         """Retrieve a client's target schema."""
 
     @abstractmethod
@@ -92,21 +92,21 @@ class LocalArtifactStore(LocalObjectStore, ArtifactStore):
 
     def write_target_schema(
         self,
-        client_code: str,
+        client_id: str,
         schema: TargetSchema,
     ) -> None:
         path = (
             self.target_schemas_dir
-            / self._safe_segment(client_code)
+            / self._safe_segment(client_id)
             / "target_schema.json"
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
 
-    def read_target_schema(self, client_code: str) -> TargetSchema:
+    def read_target_schema(self, client_id: str) -> TargetSchema:
         path = (
             self.target_schemas_dir
-            / self._safe_segment(client_code)
+            / self._safe_segment(client_id)
             / "target_schema.json"
         )
         return TargetSchema.model_validate_json(path.read_text(encoding="utf-8"))
@@ -195,12 +195,12 @@ class GCSArtifactStore(ArtifactStore):
     def open(self, key: str) -> BinaryIO:
         return BytesIO(self.get(key))
 
-    def write_target_schema(self, client_code: str, schema: TargetSchema) -> None:
-        key = f"target-schemas/{self._safe_segment(client_code)}/target_schema.json"
+    def write_target_schema(self, client_id: str, schema: TargetSchema) -> None:
+        key = f"target-schemas/{self._safe_segment(client_id)}/target_schema.json"
         self.put(key, schema.model_dump_json(indent=2).encode())
 
-    def read_target_schema(self, client_code: str) -> TargetSchema:
-        key = f"target-schemas/{self._safe_segment(client_code)}/target_schema.json"
+    def read_target_schema(self, client_id: str) -> TargetSchema:
+        key = f"target-schemas/{self._safe_segment(client_id)}/target_schema.json"
         return TargetSchema.model_validate_json(self.get(key))
 
     def folder(self, spec_id: uuid.UUID) -> Path:

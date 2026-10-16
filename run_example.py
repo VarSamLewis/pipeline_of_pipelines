@@ -43,7 +43,7 @@ OBJECT_STORE_DIR = PROJECT_ROOT / "data" / "object-store"
 OUTPUT_FOLDERS_DIR = PROJECT_ROOT / "data" / "output-folders"
 TARGET_SCHEMAS_DIR = PROJECT_ROOT / "data" / "target-schemas"
 
-CLIENT_CODE = "packaging_client"
+CLIENT_NAME = "Packaging Client Ltd"
 DEFAULT_ROW_COUNT = 3000
 
 random.seed(42)
@@ -388,7 +388,6 @@ Compliance
 def write_target_schema() -> None:
     """Write the supplied target schema JSON."""
     schema = {
-        "client_code": CLIENT_CODE,
         "name": "ea_packaging_submission",
         "description": "UK Environment Agency EPR packaging data submission",
         "tables": [
@@ -547,31 +546,36 @@ from db_ops import (  # noqa: E402
     approve_mapping_spec,
     create_client,
     create_mapping_spec,
-    get_client_by_code,
     get_mapping_columns,
     get_session,
     ingest_client_folder,
 )
 from file_ops import LocalObjectStore, load_target_schema  # noqa: E402
 from mapping import propose_mapping_spec  # noqa: E402
-from models import BusinessRule, ExtractedEvidence, MappingColumn, RawFile  # noqa: E402
+from models import (  # noqa: E402
+    BusinessRule,
+    Client,
+    ExtractedEvidence,
+    MappingColumn,
+    RawFile,
+)
 from pipeline import load_target_schema_from_spec, run_validation_tests  # noqa: E402
+from sqlmodel import select  # noqa: E402
 
 
 def ensure_client() -> uuid.UUID:
     """Create the client if it does not exist."""
     with get_session() as session:
-        client = get_client_by_code(session, CLIENT_CODE)
+        client = session.exec(select(Client).where(Client.name == CLIENT_NAME)).first()
         if client is None:
             client = create_client(
                 session,
-                name="Packaging Client Ltd",
-                code=CLIENT_CODE,
+                name=CLIENT_NAME,
                 metadata={"sector": "packaging", "regulator": "EA"},
             )
-            print(f"Created client {client.id} ({CLIENT_CODE})", flush=True)
+            print(f"Created client {client.id} ({CLIENT_NAME})", flush=True)
         else:
-            print(f"Using existing client {client.id} ({CLIENT_CODE})", flush=True)
+            print(f"Using existing client {client.id} ({CLIENT_NAME})", flush=True)
         return client.id
 
 

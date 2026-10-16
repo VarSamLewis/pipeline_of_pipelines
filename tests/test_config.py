@@ -82,3 +82,17 @@ def test_production_settings_reject_unsafe_auth_configuration(
     """Production startup fails closed for session and auth settings."""
     with pytest.raises(ValueError):
         Settings.from_env(env, project_root=tmp_path)
+
+
+def test_production_settings_require_clerk_secret_key(tmp_path: Path) -> None:
+    """Production cannot advertise invitations without Clerk delivery credentials."""
+    env = {
+        "APP_ENVIRONMENT": "production",
+        "SESSION_SECRET_KEY": "test-secret",
+        "SESSION_COOKIE_SECURE": "true",
+        "BOOTSTRAP_ADMIN_EMAILS": "admin@example.com",
+        "BYOK_ENCRYPTION_KEY": "test-key",
+    }
+
+    with pytest.raises(ValueError, match="CLERK_SECRET_KEY"):
+        Settings.from_env(env, project_root=tmp_path)

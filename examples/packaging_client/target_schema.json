@@ -1,5 +1,4 @@
 {
-  "client_code": "packaging_client",
   "name": "ea_packaging_submission",
   "description": "UK Environment Agency EPR packaging data submission",
   "tables": [

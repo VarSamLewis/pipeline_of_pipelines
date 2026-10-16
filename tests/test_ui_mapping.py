@@ -80,10 +80,11 @@ def test_mapping_review_surfaces_catalog_warnings(
     assert "encoding_fallback" in response.text
     assert "preamble_detected" in response.text
     assert response.text.index("Parsing warnings") < response.text.index(
-        "Confirm &amp; run pipeline"
-        if "Confirm &amp; run pipeline" in response.text
-        else "Confirm & run pipeline"
+        "Approve mapping &amp; generate output"
+        if "Approve mapping &amp; generate output" in response.text
+        else "Approve mapping & generate output"
     )
+    assert '<label>Tests' not in response.text
 
 
 def test_mapping_confirmation_displays_execution_errors(monkeypatch) -> None:

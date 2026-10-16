@@ -43,6 +43,7 @@ class Settings:
     mapping_model: str
     embedding_model: str
     clerk_publishable_key: str
+    clerk_secret_key: str | None
     clerk_issuer: str
     clerk_audience: str
     clerk_jwks_url: str
@@ -54,6 +55,9 @@ class Settings:
     auth_bypass_local: bool
     pipeline_execution_timeout_seconds: int
     max_upload_size_bytes: int
+    max_source_files: int
+    max_total_upload_size_bytes: int
+    byok_encryption_key: str | None
     bootstrap_admin_emails: frozenset[str]
     gcs_bucket: str
 
@@ -92,6 +96,10 @@ class Settings:
                 raise ValueError("SESSION_COOKIE_SECURE must be true in production")
             if not bootstrap_admin_emails:
                 raise ValueError("BOOTSTRAP_ADMIN_EMAILS is required in production")
+            if not values.get("BYOK_ENCRYPTION_KEY"):
+                raise ValueError("BYOK_ENCRYPTION_KEY is required in production")
+            if not values.get("CLERK_SECRET_KEY"):
+                raise ValueError("CLERK_SECRET_KEY is required in production")
 
         return cls(
             project_root=root,
@@ -119,6 +127,7 @@ class Settings:
             mapping_model=values.get("MAPPING_MODEL", "gpt-4o-mini"),
             embedding_model=values.get("EMBEDDING_MODEL", "text-embedding-3-small"),
             clerk_publishable_key=values.get("CLERK_PUBLISHABLE_KEY", ""),
+            clerk_secret_key=values.get("CLERK_SECRET_KEY"),
             clerk_issuer=values.get("CLERK_ISSUER", ""),
             clerk_audience=values.get("CLERK_AUDIENCE", ""),
             clerk_jwks_url=values.get("CLERK_JWKS_URL", ""),
@@ -132,6 +141,11 @@ class Settings:
                 values.get("PIPELINE_EXECUTION_TIMEOUT_SECONDS", "120")
             ),
             max_upload_size_bytes=int(values.get("MAX_UPLOAD_SIZE_BYTES", "52428800")),
+            max_source_files=int(values.get("MAX_SOURCE_FILES", "10")),
+            max_total_upload_size_bytes=int(
+                values.get("MAX_TOTAL_UPLOAD_SIZE_BYTES", "104857600")
+            ),
+            byok_encryption_key=values.get("BYOK_ENCRYPTION_KEY"),
             bootstrap_admin_emails=bootstrap_admin_emails,
             gcs_bucket=values.get("GCS_BUCKET", ""),
         )

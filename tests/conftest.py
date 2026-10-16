@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import uuid
 from pathlib import Path
 
 import pytest
@@ -126,18 +125,11 @@ def mock_openai(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def unique_client_code() -> str:
-    """Return a unique client code for a test."""
-    return f"testclient-{uuid.uuid4().hex[:8]}"
-
-
-@pytest.fixture
-def simple_schema_file(tmp_path: Path, unique_client_code: str) -> Path:
+def simple_schema_file(tmp_path: Path) -> Path:
     """Create a simple target-schema JSON file."""
     import json
 
     schema = {
-        "client_code": unique_client_code,
         "name": "default",
         "description": "Simple schema for tests",
         "tables": [

@@ -124,7 +124,13 @@ resource "google_sql_user" "app" {
 }
 
 resource "google_secret_manager_secret" "runtime" {
-  for_each = toset(["database-url", "session-secret-key", "openai-api-key"])
+  for_each = toset([
+    "database-url",
+    "session-secret-key",
+    "openai-api-key",
+    "byok-encryption-key",
+    "clerk-secret-key",
+  ])
 
   secret_id = "${local.name}-${each.value}"
   replication {
@@ -146,6 +152,16 @@ resource "google_secret_manager_secret_version" "session_secret_key" {
 resource "google_secret_manager_secret_version" "openai_api_key" {
   secret      = google_secret_manager_secret.runtime["openai-api-key"].id
   secret_data = var.openai_api_key
+}
+
+resource "google_secret_manager_secret_version" "byok_encryption_key" {
+  secret      = google_secret_manager_secret.runtime["byok-encryption-key"].id
+  secret_data = var.byok_encryption_key
+}
+
+resource "google_secret_manager_secret_version" "clerk_secret_key" {
+  secret      = google_secret_manager_secret.runtime["clerk-secret-key"].id
+  secret_data = var.clerk_secret_key
 }
 
 resource "google_project_iam_member" "runtime" {
@@ -251,6 +267,14 @@ resource "google_cloud_run_v2_service" "app" {
         value = "52428800"
       }
       env {
+        name  = "MAX_SOURCE_FILES"
+        value = "10"
+      }
+      env {
+        name  = "MAX_TOTAL_UPLOAD_SIZE_BYTES"
+        value = "104857600"
+      }
+      env {
         name  = "CLERK_PUBLISHABLE_KEY"
         value = var.clerk_publishable_key
       }
@@ -281,9 +305,11 @@ resource "google_cloud_run_v2_service" "app" {
 
       dynamic "env" {
         for_each = {
-          DATABASE_URL       = google_secret_manager_secret.runtime["database-url"].secret_id
-          SESSION_SECRET_KEY = google_secret_manager_secret.runtime["session-secret-key"].secret_id
-          OPENAI_API_KEY     = google_secret_manager_secret.runtime["openai-api-key"].secret_id
+          DATABASE_URL        = google_secret_manager_secret.runtime["database-url"].secret_id
+          SESSION_SECRET_KEY  = google_secret_manager_secret.runtime["session-secret-key"].secret_id
+          OPENAI_API_KEY      = google_secret_manager_secret.runtime["openai-api-key"].secret_id
+          BYOK_ENCRYPTION_KEY = google_secret_manager_secret.runtime["byok-encryption-key"].secret_id
+          CLERK_SECRET_KEY    = google_secret_manager_secret.runtime["clerk-secret-key"].secret_id
         }
         content {
           name = env.key

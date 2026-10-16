@@ -6,26 +6,20 @@ import uuid
 from typing import Any
 
 from models import Client, IngestionBatch
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 
 def create_client(
     session: Session,
     name: str,
-    code: str,
     metadata: dict[str, Any] | None = None,
 ) -> Client:
     """Register a client in the caller-owned transaction."""
-    client = Client(name=name, code=code, meta=metadata or {})
+    client = Client(name=name, meta=metadata or {})
     session.add(client)
     session.flush()
     session.refresh(client)
     return client
-
-
-def get_client_by_code(session: Session, code: str) -> Client | None:
-    """Fetch a client by its short code."""
-    return session.exec(select(Client).where(Client.code == code)).first()
 
 
 def get_client_by_id(

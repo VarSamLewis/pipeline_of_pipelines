@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,6 +57,42 @@ def test_local_bypass_returns_admin_user() -> None:
     assert user is not None
     assert user.role == UserRole.ADMIN
     assert user.email == "local-dev@example.com"
+
+
+def test_send_clerk_invitation_uses_backend_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reviewer invitations are delegated to Clerk's server-side API."""
+    import auth_service
+
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        auth_service,
+        "get_settings",
+        lambda: SimpleNamespace(clerk_secret_key="sk_test_secret"),
+    )
+    monkeypatch.setattr(auth_service, "urlopen", fake_urlopen)
+
+    auth_service.send_clerk_invitation("reviewer@example.com")
+
+    request = captured["request"]
+    assert request.full_url == "https://api.clerk.com/v1/invitations"
+    assert request.get_header("Authorization") == "Bearer sk_test_secret"
+    assert request.data == b'{"email_address": "reviewer@example.com"}'
+    assert captured["timeout"] == 10
 
 
 def test_require_role_allows_equal_or_higher_role() -> None:

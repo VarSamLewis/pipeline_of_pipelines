@@ -34,11 +34,17 @@ from workflow import (
     approve_mapping_and_execute,
     approve_result,
     get_mapping_review,
+    get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
+    invite_organization_reviewer,
     list_clients,
     reject_mapping,
     reject_result,
+    revoke_organization_reviewer_invitation,
+)
+from workflow import (
+    save_organization_key as save_organization_key_record,
 )
 from workflow import (
     update_mapping_column_from_editor as save_mapping_column_from_editor,
@@ -74,7 +80,11 @@ def upload_page(request: Request, user: Any = Depends(require_auth)) -> Any:
     return templates.TemplateResponse(
         request,
         "upload.html",
-        {**_user_context(request, user), "clients": list_clients()},
+        {
+            **_user_context(request, user),
+            "clients": list_clients(),
+            "max_source_files": get_settings().max_source_files,
+        },
     )
 
 
@@ -83,7 +93,6 @@ def upload_submit(
     request: Request,
     client_select: str = Form(""),
     new_client_name: str = Form(""),
-    new_client_code: str = Form(""),
     source_files: list[UploadFile] = File(default_factory=list),
     target_schema: UploadFile = File(...),
     user: Any = Depends(require_auth),
@@ -94,10 +103,12 @@ def upload_submit(
 
     try:
         target_schema_bytes = target_schema.file.read()
+        settings = get_settings()
+        if len(target_schema_bytes) > settings.max_upload_size_bytes:
+            raise ValueError("Target schema exceeds the individual file limit")
         spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
-            new_client_code=new_client_code or None,
             source_uploads=valid_source_files,
             target_schema_bytes=target_schema_bytes,
         )
@@ -109,6 +120,67 @@ def upload_submit(
         )
 
     return _htmx_redirect(request, f"/mapping/{spec_id}")
+
+
+@router.get("/settings")
+def organization_settings_page(
+    request: Request,
+    user: Any = Depends(require_role("admin")),
+) -> Any:
+    """Render organization-level BYOK settings for the bootstrap admin."""
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            **_user_context(request, user),
+            "organizations": get_organization_key_settings(),
+        },
+    )
+
+
+@router.post("/settings/{client_id}/api-key")
+def save_organization_key_endpoint(
+    request: Request,
+    client_id: uuid.UUID,
+    api_key: str = Form(""),
+    user: Any = Depends(require_role("admin")),
+) -> Any:
+    """Save an encrypted organization API key without rendering it back."""
+    try:
+        save_organization_key_record(client_id, api_key)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return HTMLResponse("<span class='save-note'>Key saved</span>")
+
+
+@router.post("/settings/{client_id}/reviewers")
+def invite_reviewer(
+    request: Request,
+    client_id: uuid.UUID,
+    email: str = Form(""),
+    user: Any = Depends(require_role("admin")),
+) -> Any:
+    """Invite a colleague as an organization reviewer."""
+    try:
+        invite_organization_reviewer(client_id, email)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return HTMLResponse("<span class='save-note'>Reviewer invited</span>")
+
+
+@router.post("/settings/{client_id}/reviewers/{invitation_id}/revoke")
+def revoke_reviewer_invitation(
+    request: Request,
+    client_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+) -> Any:
+    """Revoke a pending reviewer invitation."""
+    try:
+        revoke_organization_reviewer_invitation(client_id, invitation_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return HTMLResponse("<span class='save-note'>Invitation revoked</span>")
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +244,6 @@ def update_mapping_column_from_editor(
     lookup_source_table: str = Form(""),
     lookup_key: str = Form(""),
     lookup_value: str = Form(""),
-    tests: str = Form(""),
     user: Any = Depends(require_role("reviewer")),
 ) -> Any:
     """Save one guided mapping edit after validating catalog selections."""
@@ -187,7 +258,6 @@ def update_mapping_column_from_editor(
             lookup_source_table=lookup_source_table,
             lookup_key=lookup_key,
             lookup_value=lookup_value,
-            tests=tests,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -199,9 +269,9 @@ def update_mapping_column_from_editor(
 def mapping_confirm(
     request: Request,
     spec_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_role("admin")),
 ) -> Any:
-    """Approve the mapping and run codegen + execution."""
+    """Approve the reviewed mapping, then generate and execute its pipeline."""
     try:
         run_id = approve_mapping_and_execute(spec_id)
     except (RuntimeError, ValueError) as exc:
@@ -306,7 +376,7 @@ def results_code_page(
 def results_confirm(
     request: Request,
     run_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_role("admin")),
 ) -> Any:
     """Confirm the results and finish the workflow."""
     try:

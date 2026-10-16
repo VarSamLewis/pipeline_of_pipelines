@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrlRequest
+from urllib.request import urlopen
 
 import jwt
 from config import get_settings
@@ -98,7 +102,7 @@ def authenticate_clerk_session(token: str) -> Any:
             external_user_id=external_id,
             email=email,
             name=name,
-            role=UserRole.ADMIN if is_bootstrap_admin else UserRole.CREATOR,
+            role=UserRole.ADMIN if is_bootstrap_admin else UserRole.REVIEWER,
             last_login_at=now,
         )
         session.add(user)
@@ -117,6 +121,29 @@ def authenticate_clerk_session(token: str) -> Any:
         session.commit()
         session.refresh(user)
         return user
+
+
+def send_clerk_invitation(email: str) -> None:
+    """Ask Clerk to email an account invitation for a reviewer."""
+    secret_key = get_settings().clerk_secret_key
+    if not secret_key:
+        raise RuntimeError("CLERK_SECRET_KEY is required to send invitations")
+    request = UrlRequest(
+        "https://api.clerk.com/v1/invitations",
+        data=json.dumps({"email_address": email}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {secret_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10):
+            pass
+    except HTTPError as exc:
+        raise RuntimeError(f"Clerk invitation request failed ({exc.code})") from exc
+    except URLError as exc:
+        raise RuntimeError("Could not reach Clerk to send invitation") from exc
 
 
 def _synthetic_local_user() -> Any:

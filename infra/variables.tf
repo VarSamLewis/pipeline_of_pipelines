@@ -45,10 +45,22 @@ variable "openai_api_key" {
   default     = ""
 }
 
+variable "byok_encryption_key" {
+  description = "Fernet key used to encrypt organization BYOK credentials."
+  type        = string
+  sensitive   = true
+}
+
 variable "clerk_publishable_key" {
   description = "Clerk browser publishable key."
   type        = string
   default     = ""
+}
+
+variable "clerk_secret_key" {
+  description = "Clerk backend secret key used to send account invitations."
+  type        = string
+  sensitive   = true
 }
 
 variable "clerk_issuer" {

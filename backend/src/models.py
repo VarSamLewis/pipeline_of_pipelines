@@ -120,7 +120,6 @@ class TargetSchema(BaseModel):
     latest version for a client.
     """
 
-    client_code: str = Field(..., description="Short code of the owning client.")
     name: str = Field(default="default", description="Schema name.")
     description: str | None = Field(default=None)
     tables: list[TargetSchemaTable] = Field(
@@ -289,10 +288,8 @@ class ProposedMapping(BaseModel):
 class PipelineOutputFolder(BaseModel):
     """Paths to the deliverables produced for a client batch.
 
-    A client-supplied folder + target schema produces an output folder containing:
-    - pipeline.py: single-file Polars transformation script
-    - mapping.json: human- and machine-readable mapping specification
-    - results.csv: CSV output from executing pipeline.py against the source data
+    A client-supplied folder + target schema produces an output folder containing
+    target-schema-prefixed pipeline, mapping, and results files.
     """
 
     folder_path: Path
@@ -338,7 +335,6 @@ class Client(SQLModel, table=True):
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
     name: str = SQLField(index=True)
-    code: str = SQLField(unique=True, index=True)
     meta: dict[str, Any] = SQLField(default={}, sa_column=Column("meta", JSON))
     created_at: datetime.datetime = SQLField(
         default_factory=datetime.datetime.utcnow,
@@ -362,9 +358,19 @@ class BetaInvitation(SQLModel, table=True):
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
     email: str = SQLField(index=True)
     client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True)
-    role: UserRole = SQLField(default=UserRole.CREATOR)
+    role: UserRole = SQLField(default=UserRole.REVIEWER)
     status: str = SQLField(default="pending", index=True)
     created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+    updated_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+
+
+class OrganizationApiKey(SQLModel, table=True):
+    """Encrypted organization-scoped API key for BYOK mapping operations."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True, unique=True)
+    encrypted_key: str = SQLField(sa_column=Column(Text))
+    key_suffix: str = SQLField(default="")
     updated_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
 
 

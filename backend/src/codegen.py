@@ -12,12 +12,13 @@ All outputs are shaped by the supplied TargetSchema.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
 import textwrap
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -218,6 +219,36 @@ def concat(*args: Any) -> pl.Expr:
 # ---------------------------------------------------------------------------
 
 
+def generated_artifact_filenames(
+    target_schema: TargetSchema,
+    client_name: str,
+    created_at: datetime | str | None = None,
+) -> dict[str, str]:
+    """Return stable, descriptive deliverable filenames for a target schema."""
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    if created_at is None:
+        timestamp = "undated"
+    else:
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        timestamp = created_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+    name = target_schema.name
+    if name == "default" and len(target_schema.tables) == 1:
+        name = target_schema.tables[0].name
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._-")
+    stem = stem or "pipeline_output"
+    client = re.sub(r"[^A-Za-z0-9._-]+", "_", client_name).strip("._-")
+    client = client or "client"
+    prefix = f"{client}__{stem}__{timestamp}"
+    return {
+        "pipeline": f"{prefix}_pipeline.py",
+        "mapping": f"{prefix}_mapping.json",
+        "results": f"{prefix}_results.csv",
+    }
+
+
 def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
     """Generate Python code for a single mapping column's transformation."""
     target_column = col["target_column"]
@@ -292,6 +323,7 @@ def _generate_transform_code(col: dict[str, Any], source_key: str) -> str:
 def generate_polars_script(
     mapping_spec: dict[str, Any],
     target_schema: TargetSchema,
+    mapping_filename: str,
 ) -> str:
     """Generate a unique standalone Polars pipeline script from a mapping spec.
 
@@ -435,12 +467,13 @@ from openpyxl.utils import range_boundaries
             args = parser.parse_args()
 
             pipeline_dir = Path(__file__).parent
-            mapping_spec = load_mapping_json(pipeline_dir / "mapping.json")
+            mapping_spec = load_mapping_json(pipeline_dir / __MAPPING_FILENAME__)
             source_dfs = load_source_dataframes(mapping_spec, args.source_folder)
             _OUTPUT_DIR = args.output_folder
             _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             build_target_tables()
     """)
+    main_body = main_body.replace("__MAPPING_FILENAME__", repr(mapping_filename))
 
     dtype_dict: dict[str, dict[str, str]] = {}
     for table in target_schema.tables:
@@ -471,9 +504,18 @@ def generate_polars_pipeline_script(
 ) -> GeneratedPipelineScript:
     """Generate a standalone single-file Polars pipeline script."""
     target_tables = sorted({c["target_table"] for c in mapping_spec["columns"]})
-    content = generate_polars_script(mapping_spec, target_schema)
+    filenames = generated_artifact_filenames(
+        target_schema,
+        mapping_spec.get("client_name", "client"),
+        mapping_spec.get("created_at"),
+    )
+    content = generate_polars_script(
+        mapping_spec,
+        target_schema,
+        filenames["mapping"],
+    )
     return GeneratedPipelineScript(
-        file_path=Path("pipeline.py"),
+        file_path=Path(filenames["pipeline"]),
         content=content,
         target_tables=target_tables,
     )
@@ -481,10 +523,17 @@ def generate_polars_pipeline_script(
 
 def generate_mapping_json(
     mapping_spec: dict[str, Any],
+    target_schema: TargetSchema,
 ) -> MappingFile:
     """Generate a human- and machine-readable mapping.json file."""
     return MappingFile(
-        file_path=Path("mapping.json"),
+        file_path=Path(
+            generated_artifact_filenames(
+                target_schema,
+                mapping_spec.get("client_name", "client"),
+                mapping_spec.get("created_at"),
+            )["mapping"]
+        ),
         content=mapping_spec,
     )
 
@@ -506,7 +555,7 @@ def generate_artifact_set(
     with get_session() as session:
         # single-file Polars pipeline
         pipeline = generate_polars_pipeline_script(mapping_spec, target_schema)
-        pipeline_path = output_folder / "pipeline.py"
+        pipeline_path = output_folder / pipeline.file_path
         pipeline_path.write_text(pipeline.content)
         artifacts.append(
             create_generated_artifact(
@@ -520,8 +569,8 @@ def generate_artifact_set(
         )
 
         # mapping.json
-        mapping_file = generate_mapping_json(mapping_spec)
-        mapping_path = output_folder / "mapping.json"
+        mapping_file = generate_mapping_json(mapping_spec, target_schema)
+        mapping_path = output_folder / mapping_file.file_path
         mapping_path.write_text(json.dumps(mapping_file.content, indent=2, default=str))
         artifacts.append(
             create_generated_artifact(
@@ -544,8 +593,7 @@ def generate_output_folder(
 ) -> PipelineOutputFolder:
     """Generate the complete client deliverable folder.
 
-    Writes pipeline.py, mapping.json, and one CSV per target table into
-    output_folder.
+    Writes descriptive pipeline, mapping, and CSV deliverables into output_folder.
     """
     from datetime import datetime
 
@@ -555,17 +603,23 @@ def generate_output_folder(
     mapping_spec = load_mapping_spec(spec_id)
     target_schema = load_target_schema_from_spec(mapping_spec)
 
-    # Write mapping.json
-    mapping_file = generate_mapping_json(mapping_spec)
-    mapping_path = output_folder / "mapping.json"
+    filenames = generated_artifact_filenames(
+        target_schema,
+        mapping_spec.get("client_name", "client"),
+        mapping_spec.get("created_at"),
+    )
+
+    # Write the mapping consumed by the generated pipeline.
+    mapping_file = generate_mapping_json(mapping_spec, target_schema)
+    mapping_path = output_folder / mapping_file.file_path
     mapping_path.write_text(json.dumps(mapping_file.content, indent=2, default=str))
 
     # Write pipeline.py
     pipeline = generate_polars_pipeline_script(mapping_spec, target_schema)
-    pipeline_path = output_folder / "pipeline.py"
+    pipeline_path = output_folder / pipeline.file_path
     pipeline_path.write_text(pipeline.content)
 
-    # Execute pipeline to produce results.csv
+    # Execute pipeline to produce a target-table CSV.
     execute_generated_pipeline(
         pipeline_path,
         output_folder,
@@ -575,14 +629,18 @@ def generate_output_folder(
 
     # Keep a stable result name for the review API when a single target exists.
     target_table_names = {c["target_table"] for c in mapping_spec["columns"]}
-    results_csv_path = output_folder / "results.csv"
+    results_csv_path = output_folder / filenames["results"]
     if len(target_table_names) == 1:
         (output_folder / f"{next(iter(target_table_names))}.csv").replace(
             results_csv_path
         )
 
     # Keep the generated artifacts plus one CSV per target table when needed.
-    allowed = {"pipeline.py", "mapping.json", "results.csv"}
+    allowed = {
+        pipeline.file_path.name,
+        mapping_file.file_path.name,
+        results_csv_path.name,
+    }
     target_tables = {f"{c['target_table']}.csv" for c in mapping_spec["columns"]}
     for path in output_folder.iterdir():
         if (
@@ -594,8 +652,8 @@ def generate_output_folder(
 
     return PipelineOutputFolder(
         folder_path=output_folder,
-        pipeline_py_path=output_folder / "pipeline.py",
-        mapping_json_path=output_folder / "mapping.json",
+        pipeline_py_path=pipeline_path,
+        mapping_json_path=mapping_path,
         results_csv_path=results_csv_path,
         generated_at=datetime.now(UTC),
     )

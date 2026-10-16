@@ -133,11 +133,11 @@ class LocalObjectStore(ObjectStore):
 
 
 def build_storage_key(
-    client_code: str,
+    client_id: str,
     ingestion_batch_id: str,
     original_filename: str,
     sha256: str,
 ) -> str:
     """Build a deterministic storage key for a raw file."""
     safe_name = original_filename.replace("/", "_")
-    return f"{client_code}/{ingestion_batch_id}/{sha256[:16]}_{safe_name}"
+    return f"{client_id}/{ingestion_batch_id}/{sha256[:16]}_{safe_name}"

@@ -1,5 +1,4 @@
 {
-  "client_code": "complexclient",
   "name": "default",
   "description": "Curated customer and order data for Global Retail onboarding",
   "tables": [

@@ -354,7 +354,6 @@ def generate(
     # Target schema
     # ------------------------------------------------------------------
     target_schema = {
-        "client_code": "complexclient",
         "name": "default",
         "description": "Curated customer and order data for Global Retail onboarding",
         "tables": [

@@ -62,7 +62,7 @@
 
 <div class="card">
   <h2>Mapping editor</h2>
-  <p class="muted">Review each target column below. Select a catalogued source, explain the transformation, and optionally refine the generated Polars expression.</p>
+  <p class="muted">Review each proposed target mapping below. Select a catalogued source, explain the transformation, and optionally refine the generated Polars expression.</p>
   {% for column in mapping_columns %}
   {% set source = column.source_columns[0] if column.source_columns else {} %}
   <form class="mapping-editor-row"
@@ -128,7 +128,6 @@
       </div>
     </details>
     <div class="mapping-editor-footer">
-      <label>Tests <input name="tests" value="{{ column.tests|join(', ') }}" placeholder="not_null, unique"></label>
       <button class="btn btn-primary btn-sm" type="submit">Save mapping</button>
       <span id="save-status-{{ column.id }}" aria-live="polite"></span>
     </div>
@@ -152,11 +151,11 @@
     style="display:inline;"
   >
     <button class="btn btn-success" type="submit">
-      Confirm & run pipeline
+      Approve mapping & generate output
     </button>
     <span id="mapping-progress" class="htmx-indicator progress-indicator" aria-live="polite">
       <span class="spinner" aria-hidden="true"></span>
-      Generating and running the pipeline...
+      Generating and running the approved pipeline...
     </span>
   </form>
 

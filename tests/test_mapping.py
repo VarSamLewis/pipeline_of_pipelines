@@ -21,7 +21,6 @@ def test_parse_llm_mapping_response_builds_proposed_mappings() -> None:
     """LLM JSON responses should convert into ProposedMapping objects."""
     spec_id = uuid.uuid4()
     target_schema = TargetSchema(
-        client_code="test",
         name="default",
         description="test",
         tables=[
@@ -83,7 +82,7 @@ def test_parse_llm_mapping_response_requires_target_fields() -> None:
         parse_llm_mapping_response(
             response,
             uuid.uuid4(),
-            TargetSchema(client_code="test", name="default", tables=[]),
+            TargetSchema(name="default", tables=[]),
         )
 
 
@@ -335,7 +334,6 @@ def test_validate_mapping_columns_accepts_catalog_ids() -> None:
     """Catalog-grounded references should resolve by stable IDs."""
     raw_file_id = uuid.uuid4()
     target_schema = TargetSchema(
-        client_code="test",
         tables=[
             {
                 "name": "records",
@@ -381,11 +379,33 @@ def test_validate_mapping_columns_accepts_catalog_ids() -> None:
     assert results[0]["validation_errors"] == []
 
 
+def test_validate_mapping_columns_rejects_incompatible_expression_cast() -> None:
+    """A target string identifier must not be explicitly cast to an integer."""
+    target_schema = TargetSchema(
+        tables=[
+            {
+                "name": "records",
+                "columns": [{"name": "site_id", "dtype": "String"}],
+            }
+        ],
+    )
+    mapping = ProposedMapping(
+        target_table="records",
+        target_column="site_id",
+        polars_expression="col('site_ref').cast(Int64)",
+    )
+
+    results = validate_mapping_columns([mapping], target_schema, [])
+
+    assert results[0]["validation_errors"] == [
+        "records.site_id casts to Int64, but the target schema requires String"
+    ]
+
+
 def test_validate_mapping_columns_rejects_cross_table_column_id() -> None:
     """A real column ID cannot be paired with the wrong source table ID."""
     raw_file_id = uuid.uuid4()
     target_schema = TargetSchema(
-        client_code="test",
         tables=[{"name": "records", "columns": [{"name": "customer_id"}]}],
     )
     mapping = ProposedMapping(
@@ -426,7 +446,6 @@ def test_validate_mapping_columns_rejects_cross_table_column_id() -> None:
 def test_check_target_schema_coverage_reports_missing_columns() -> None:
     """Coverage check should separate required and optional missing columns."""
     target_schema = TargetSchema(
-        client_code="test",
         name="default",
         tables=[
             {
@@ -458,7 +477,6 @@ def test_check_target_schema_coverage_reports_missing_columns() -> None:
 def test_build_mapping_prompt_includes_composite_keys() -> None:
     """The prompt should expose composite keys so the LLM can reference sources."""
     target_schema = TargetSchema(
-        client_code="test",
         name="default",
         tables=[
             {
@@ -559,7 +577,6 @@ def test_build_table_index_builds_correct_keys() -> None:
 def test_validate_lookup_key_not_in_lookup_table() -> None:
     """Validation should reject a lookup_key that doesn't exist in the lookup table."""
     target_schema = TargetSchema(
-        client_code="test",
         tables=[{"name": "out", "columns": [{"name": "material"}]}],
     )
     mapping = ProposedMapping(
@@ -611,7 +628,6 @@ def test_validate_lookup_key_not_in_lookup_table() -> None:
 def test_validate_lookup_value_not_in_lookup_table() -> None:
     """Validation should reject a lookup_value not in the lookup table."""
     target_schema = TargetSchema(
-        client_code="test",
         tables=[{"name": "out", "columns": [{"name": "material"}]}],
     )
     mapping = ProposedMapping(
@@ -663,7 +679,6 @@ def test_validate_lookup_value_not_in_lookup_table() -> None:
 def test_validate_lookup_accepts_valid_key() -> None:
     """Valid lookup keys should produce no errors."""
     target_schema = TargetSchema(
-        client_code="test",
         tables=[{"name": "out", "columns": [{"name": "material"}]}],
     )
     mapping = ProposedMapping(
@@ -714,7 +729,6 @@ def test_validate_lookup_accepts_valid_key() -> None:
 def test_validate_aggregation_group_key_not_found() -> None:
     """Validation should reject a group key that doesn't exist in the agg table."""
     target_schema = TargetSchema(
-        client_code="test",
         tables=[{"name": "out", "columns": [{"name": "total"}]}],
     )
     mapping = ProposedMapping(

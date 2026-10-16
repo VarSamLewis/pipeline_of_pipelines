@@ -13,6 +13,7 @@
     <div class="user">
       {% if user %}
         <span>{{ user.email }} ({{ user.role.value }})</span>
+        {% if user.role.value == "admin" %}<a href="/settings">Settings</a>{% endif %}
         <form action="/auth/logout" method="post" style="display:inline;">
           <button class="btn btn-sm" type="submit">Logout</button>
         </form>

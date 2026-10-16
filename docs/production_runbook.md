@@ -28,9 +28,10 @@ so it does not require an OpenAI key.
    remote Terraform state backend.
 2. Set `project_id`, `region`, `container_image`, Clerk values, and
    `bootstrap_admin_emails` in `infra/terraform.tfvars`.
-3. Provide `TF_VAR_postgres_password`, `TF_VAR_session_secret_key`, and any
-   platform `TF_VAR_openai_api_key` through the CI secret store. Do not put
-   those values in `terraform.tfvars` or source control.
+3. Provide `TF_VAR_postgres_password`, `TF_VAR_session_secret_key`,
+   `TF_VAR_byok_encryption_key`, `TF_VAR_clerk_secret_key`, and any platform
+   `TF_VAR_openai_api_key` through the CI secret store. Do not put those values
+   in `terraform.tfvars` or source control.
 4. Create a Clerk JWT template named by `CLERK_JWT_TEMPLATE`. It must include
    a verified `email` claim and use `CLERK_AUDIENCE`.
 5. Configure the Clerk hosted sign-in return URL as
@@ -51,14 +52,15 @@ so it does not require an OpenAI key.
 1. Sign in to Clerk using an email in `bootstrap_admin_emails`.
 2. The verified Clerk identity is provisioned as a platform admin without an
    invitation.
-3. Create a client and use `POST /admin/invitations` to invite each operator.
+3. Create an organization, save its API key in Settings, and use Settings to
+   invite each reviewer. Clerk sends the account email invitation.
 4. Remove bootstrap emails from Terraform after durable administrators have
    been provisioned if the initial bootstrap access is no longer required.
 
 ## Required Controls
 
-- Set `APP_ENVIRONMENT=production`; startup rejects missing session secrets,
-  insecure cookies, auth bypass, and an empty bootstrap-admin allowlist.
+- Set `APP_ENVIRONMENT=production`; startup rejects missing session and Clerk
+  secrets, insecure cookies, auth bypass, and an empty bootstrap-admin allowlist.
 - Keep `AUTH_BYPASS_LOCAL=false` and `SESSION_COOKIE_SECURE=true`.
 - Verify the Cloud Run service account has only the Terraform-assigned GCS,
   Cloud SQL, Secret Manager, logging, monitoring, and Vertex permissions.

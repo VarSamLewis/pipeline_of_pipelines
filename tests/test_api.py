@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -19,10 +20,10 @@ def client_with_schema(
     simple_schema_file: Path,
 ) -> dict:
     """Register a target schema for the test client."""
-    code = registered_client["code"]
+    client_id = registered_client["id"]
     with open(simple_schema_file, "rb") as f:
         response = client.post(
-            f"/clients/{code}/target-schema",
+            f"/clients/{client_id}/target-schema",
             files={"schema_file": ("target_schema.json", f, "application/json")},
         )
     assert response.status_code == 200, response.text
@@ -37,9 +38,9 @@ def ingested_batch(
     mock_openai: None,
 ) -> dict:
     """Ingest the simple data folder."""
-    code = registered_client["code"]
+    client_id = registered_client["id"]
     response = client.post(
-        f"/clients/{code}/ingest-folder",
+        f"/clients/{client_id}/ingest-folder",
         data={"folder_path": str(simple_data_folder)},
     )
     assert response.status_code == 200, response.text
@@ -47,9 +48,9 @@ def ingested_batch(
 
 
 def test_create_client(registered_client: dict) -> None:
-    """Client creation should return a code and id."""
-    assert registered_client["code"].startswith("testclient-")
-    assert "id" in registered_client
+    """Client creation should return a UUID without exposing a code."""
+    assert uuid.UUID(registered_client["id"])
+    assert "code" not in registered_client
 
 
 def test_output_folder_override_is_rejected(client: TestClient) -> None:
@@ -94,7 +95,7 @@ def test_manage_beta_invitation(
         "/admin/invitations",
         json={
             "email": "operator@example.com",
-            "client_code": registered_client["code"],
+            "client_id": registered_client["id"],
             "role": "reviewer",
         },
     )
@@ -128,7 +129,7 @@ def test_ingest_folder(
     """Folder ingestion should register raw files and evidence."""
     assert len(ingested_batch["raw_file_ids"]) >= 1
     batch_response = client.get(
-        f"/clients/{registered_client['code']}/batches/{ingested_batch['ingestion_batch_id']}"
+        f"/clients/{registered_client['id']}/batches/{ingested_batch['ingestion_batch_id']}"
     )
     assert batch_response.status_code == 200
     batch = batch_response.json()
@@ -143,14 +144,14 @@ def test_full_propose_approve_execute_flow(
     ingested_batch: dict,
 ) -> None:
     """End-to-end: propose, approve, generate output folder, and verify CSV."""
-    code = registered_client["code"]
+    client_id = registered_client["id"]
 
-    schema_response = client.get(f"/clients/{code}/target-schema")
+    schema_response = client.get(f"/clients/{client_id}/target-schema")
     assert schema_response.status_code == 200
     schema = schema_response.json()
 
     spec_response = client.post(
-        f"/clients/{code}/mapping-specs",
+        f"/clients/{client_id}/mapping-specs",
         json={
             "source_raw_file_ids": ingested_batch["raw_file_ids"],
             "target_schema": schema,
@@ -182,9 +183,10 @@ def test_full_propose_approve_execute_flow(
     output_response = client.post(f"/mapping-specs/{spec_id}/output-folder")
     assert output_response.status_code == 200, output_response.text
     folder = output_response.json()
-    assert folder["pipeline_py_path"].endswith("pipeline.py")
-    assert folder["mapping_json_path"].endswith("mapping.json")
-    assert folder["results_csv_path"].endswith("results.csv")
+    filename_prefix = r".+__records__\d{8}T\d{6}Z"
+    assert re.search(filename_prefix + r"_pipeline\.py$", folder["pipeline_py_path"])
+    assert re.search(filename_prefix + r"_mapping\.json$", folder["mapping_json_path"])
+    assert re.search(filename_prefix + r"_results\.csv$", folder["results_csv_path"])
     assert set(Path(folder["folder_path"]).glob("*")) == {
         Path(folder["pipeline_py_path"]),
         Path(folder["mapping_json_path"]),
@@ -204,7 +206,7 @@ def test_full_propose_approve_execute_flow(
     pipeline_response = client.get(f"/output-folders/{spec_id}/pipeline.py")
     assert pipeline_response.status_code == 200
     assert "def build_target_tables()" in pipeline_response.text
-    assert "mapping.json" in pipeline_response.text
+    assert "_mapping.json" in pipeline_response.text
 
     csv_response = client.get(f"/output-folders/{spec_id}/results.csv")
     assert csv_response.status_code == 200
@@ -223,10 +225,10 @@ def client() -> TestClient:
 
 
 @pytest.fixture
-def registered_client(client: TestClient, unique_client_code: str) -> dict:
+def registered_client(client: TestClient) -> dict:
     """Create a client and return its record."""
     response = client.post(
-        "/clients", json={"name": "Test Client", "code": unique_client_code}
+        "/clients", json={"name": "Test Client"}
     )
     assert response.status_code == 200, response.text
     return response.json()

@@ -30,7 +30,6 @@ def test_artifact_store_recovers_all_keys_after_process_restart(
     spec_id = uuid.uuid4()
     run_id = uuid.uuid4()
     schema = TargetSchema(
-        client_code="acme",
         name="default",
         tables=[],
     )
@@ -162,7 +161,6 @@ def test_client_persistence_has_one_implementation_owner() -> None:
     function_names = {
         "create_client",
         "create_ingestion_batch",
-        "get_client_by_code",
         "get_client_by_id",
         "get_ingestion_batch",
     }

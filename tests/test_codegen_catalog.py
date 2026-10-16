@@ -5,12 +5,33 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
-from codegen import generate_polars_pipeline_script
+from codegen import generate_polars_pipeline_script, generated_artifact_filenames
 from models import TargetSchema
 from parser import discover_source_tables
+
+
+def test_generated_artifact_filenames_include_client_and_timestamp() -> None:
+    """Deliverables identify their client, target, and mapping creation time."""
+    schema = TargetSchema(
+        name="submission",
+        tables=[],
+    )
+
+    filenames = generated_artifact_filenames(
+        schema,
+        "Acme Client",
+        datetime(2026, 10, 11, 12, 34, 56, tzinfo=UTC),
+    )
+
+    assert filenames == {
+        "pipeline": "Acme_Client__submission__20261011T123456Z_pipeline.py",
+        "mapping": "Acme_Client__submission__20261011T123456Z_mapping.json",
+        "results": "Acme_Client__submission__20261011T123456Z_results.csv",
+    }
 
 
 def _run_generated_pipeline(
@@ -25,9 +46,11 @@ def _run_generated_pipeline(
     output_dir.mkdir()
     source_dir.mkdir(exist_ok=True)
     script = generate_polars_pipeline_script(mapping_spec, target_schema)
-    pipeline_path = pipeline_dir / "pipeline.py"
+    pipeline_path = pipeline_dir / script.file_path
     pipeline_path.write_text(script.content, encoding="utf-8")
-    (pipeline_dir / "mapping.json").write_text(
+    mapping_name = script.file_path.name.replace("_pipeline.py", "_mapping.json")
+    mapping_path = pipeline_dir / mapping_name
+    mapping_path.write_text(
         json.dumps(mapping_spec),
         encoding="utf-8",
     )
@@ -66,7 +89,6 @@ def test_generated_pipeline_honours_csv_catalog_settings(tmp_path: Path) -> None
     )
     table = catalog.tables[0]
     schema = TargetSchema(
-        client_code="test",
         tables=[
             {
                 "name": "records",
@@ -143,7 +165,6 @@ def test_generated_pipeline_disambiguates_identical_sheet_names(
         )
     chosen = catalogs[1].tables[0]
     schema = TargetSchema(
-        client_code="test",
         tables=[
             {
                 "name": "records",
@@ -176,4 +197,3 @@ def test_generated_pipeline_disambiguates_identical_sheet_names(
 
     result = pl.read_csv(output_dir / "records.csv")
     assert result.to_dicts() == [{"selected_value": "chosen"}]
-

@@ -19,6 +19,7 @@ from db_ops import (
 )
 from mapping import _normalize_polars_expression
 from models import MappingColumn, TargetSchema
+from repositories.clients import get_client_by_id
 
 
 def _column_to_dict(column: MappingColumn) -> dict[str, Any]:
@@ -123,6 +124,9 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
         spec = get_mapping_spec(session, spec_id)
         if spec is None:
             raise ValueError(f"Mapping spec not found: {spec_id}")
+        client = get_client_by_id(session, spec.client_id)
+        if client is None:
+            raise ValueError(f"Client not found for mapping spec: {spec_id}")
         columns = get_mapping_columns(session, spec_id)
         source_catalogs = []
         for raw_file_id in spec.source_raw_file_ids:
@@ -149,6 +153,7 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
         return {
             "id": str(spec.id),
             "client_id": str(spec.client_id),
+            "client_name": client.name,
             "version": spec.version,
             "status": spec.status.value,
             "source_raw_file_ids": [
@@ -158,6 +163,7 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
             "source_catalogs": source_catalogs,
             "description": spec.description,
             "approved_by": spec.approved_by,
+            "created_at": spec.created_at.isoformat(),
             "columns": [_column_to_dict(column) for column in columns],
         }
 
