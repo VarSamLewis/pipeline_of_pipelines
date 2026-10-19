@@ -36,6 +36,9 @@ so it does not require an OpenAI key.
    a verified `email` claim and use `CLERK_AUDIENCE`.
 5. Configure the Clerk hosted sign-in return URL as
    `https://<service-host>/auth/callback` after the Cloud Run URL is known.
+6. Complete the GitHub OIDC bootstrap in `infra/README.md`, then configure
+   protected `development` and `production` GitHub Environments. Production
+   deployments require GitHub Environment reviewer approval.
 
 ## Deploy
 
@@ -46,6 +49,8 @@ so it does not require an OpenAI key.
 3. Run `terraform plan` and review all infrastructure and IAM changes.
 4. Run `terraform apply`.
 5. Confirm `GET /health` returns `{"status":"ok"}` from Cloud Run.
+6. Thereafter, merge to `develop` for development deployment or `main` for a
+   production deployment through the GitHub Actions OIDC workflows.
 
 ## Bootstrap Access
 

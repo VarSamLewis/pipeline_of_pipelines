@@ -8,6 +8,7 @@
 {% for organization in organizations %}
 <div class="card">
   <h2>{{ organization.name }}</h2>
+  <p><a href="/organizations/{{ organization.id }}/files">View organization files</a></p>
   <p class="muted">
     {% if organization.key_suffix %}OpenAI-compatible key saved: ending in {{ organization.key_suffix }}{% else %}No API key saved.{% endif %}
   </p>

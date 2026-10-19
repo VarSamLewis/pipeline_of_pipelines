@@ -3,6 +3,7 @@ project_id      = "your-gcp-project-id"
 region          = "us-central1"
 environment     = "dev"
 project_name    = "pipeline"
+github_repository = "your-github-org/your-repository"
 container_image = "us-central1-docker.pkg.dev/your-gcp-project-id/pipeline-dev/app:tag"
 
 # Supply via TF_VAR_* variables or a secure CI secret store, not this file.

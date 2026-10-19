@@ -99,6 +99,12 @@ variable "bootstrap_admin_emails" {
   default     = []
 }
 
+variable "github_repository" {
+  description = "GitHub repository allowed to deploy through workload identity, owner/name."
+  type        = string
+  default     = ""
+}
+
 variable "min_instances" {
   description = "Cloud Run minimum API instances."
   type        = number

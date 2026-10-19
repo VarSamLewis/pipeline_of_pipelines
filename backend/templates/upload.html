@@ -29,6 +29,14 @@
         <input id="new_client_name" name="new_client_name" placeholder="e.g. Acme Ltd" type="text">
       </div>
     </div>
+    {% if clients %}
+    <p class="muted">
+      Browse organization files:
+      {% for client in clients %}
+        <a href="/organizations/{{ client.id }}/files">{{ client.name }}</a>{% if not loop.last %}, {% endif %}
+      {% endfor %}
+    </p>
+    {% endif %}
 
     <div class="form-group">
       <label for="source_files">Source files</label>

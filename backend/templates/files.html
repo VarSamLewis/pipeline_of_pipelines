@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}{{ library.organization.name }} files - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<p><a href="/upload">Back to upload</a></p>
+<h1>{{ library.organization.name }} files</h1>
+
+<div class="card">
+  <h2>Target schema</h2>
+  {% if library.target_schema %}
+  <p>{{ library.target_schema.name }} with {{ library.target_schema.table_count }} table{% if library.target_schema.table_count != 1 %}s{% endif %}.</p>
+  {% else %}
+  <p class="muted">No target schema has been uploaded.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Uploaded source files</h2>
+  {% if library.source_files %}
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr></thead>
+    <tbody>
+    {% for file in library.source_files %}
+      <tr><td>{{ file.name }}</td><td>{{ file.mime_type }}</td><td>{{ file.size_bytes }} bytes</td><td>{{ file.status }}</td><td>{{ file.uploaded_at }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No source files have been uploaded.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Mappings and generated files</h2>
+  {% if library.mappings %}
+    {% for mapping in library.mappings %}
+    <section class="mapping-card">
+      <div class="card-header">
+        <div><strong>Mapping {{ mapping.id }}</strong><br><span class="muted">{{ mapping.description or "No description" }} · {{ mapping.created_at }}</span></div>
+        <div><span class="badge">{{ mapping.status }}</span>{% if mapping.execution_status %} <span class="badge">{{ mapping.execution_status }}</span>{% endif %}</div>
+      </div>
+      <p><a href="/mapping/{{ mapping.id }}">Review mapping</a></p>
+      {% if mapping.files %}
+      <ul>
+        {% for file in mapping.files %}
+        <li>
+          {% if file.artifact_type == "pipeline" %}<a href="/output-folders/{{ mapping.id }}/pipeline.py">{{ file.name }}</a>
+          {% elif file.artifact_type == "mapping" %}<a href="/output-folders/{{ mapping.id }}/mapping.json">{{ file.name }}</a>
+          {% elif file.artifact_type == "results" %}<a href="/output-folders/{{ mapping.id }}/results.csv">{{ file.name }}</a>
+          {% else %}{{ file.name }}{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No generated files yet.</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+  {% else %}
+  <p class="muted">No mappings have been created.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -34,6 +34,7 @@ from workflow import (
     approve_mapping_and_execute,
     approve_result,
     get_mapping_review,
+    get_organization_file_library,
     get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
@@ -120,6 +121,24 @@ def upload_submit(
         )
 
     return _htmx_redirect(request, f"/mapping/{spec_id}")
+
+
+@router.get("/organizations/{client_id}/files")
+def organization_files_page(
+    request: Request,
+    client_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Render the authorized file inventory for one organization."""
+    try:
+        library = get_organization_file_library(client_id, user)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return templates.TemplateResponse(
+        request,
+        "files.html",
+        {**_user_context(request, user), "library": library},
+    )
 
 
 @router.get("/settings")

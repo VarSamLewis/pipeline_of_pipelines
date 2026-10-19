@@ -28,6 +28,68 @@ resource "google_service_account" "runtime" {
   display_name = "${local.name} Cloud Run runtime"
 }
 
+resource "google_service_account" "github_deployer" {
+  count = var.github_repository == "" ? 0 : 1
+
+  account_id   = "${var.project_name}-${var.environment}-gh"
+  display_name = "${local.name} GitHub Actions deployer"
+}
+
+resource "google_iam_workload_identity_pool" "github" {
+  count = var.github_repository == "" ? 0 : 1
+
+  workload_identity_pool_id = "${local.name}-github"
+  display_name              = "${local.name} GitHub Actions"
+  description               = "GitHub Actions identities permitted to deploy ${local.name}"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github" {
+  count = var.github_repository == "" ? 0 : 1
+
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github[0].workload_identity_pool_id
+  workload_identity_pool_provider_id = "github"
+  display_name                       = "GitHub Actions OIDC"
+  attribute_condition                = "assertion.repository == '${var.github_repository}'"
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+    "attribute.ref"        = "assertion.ref"
+  }
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+resource "google_service_account_iam_member" "github_deployer" {
+  count = var.github_repository == "" ? 0 : 1
+
+  service_account_id = google_service_account.github_deployer[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github[0].name}/attribute.repository/${var.github_repository}"
+}
+
+resource "google_project_iam_member" "github_deployer" {
+  for_each = var.github_repository == "" ? toset([]) : toset([
+    "roles/artifactregistry.admin",
+    "roles/cloudbuild.builds.editor",
+    "roles/compute.networkAdmin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/iam.serviceAccountUser",
+    "roles/iam.workloadIdentityPoolAdmin",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/run.admin",
+    "roles/secretmanager.admin",
+    "roles/servicenetworking.networksAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/sqladmin.admin",
+    "roles/storage.admin",
+  ])
+
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.github_deployer[0].email}"
+}
+
 resource "google_artifact_registry_repository" "app" {
   location      = var.region
   repository_id = local.name

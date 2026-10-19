@@ -4,7 +4,55 @@ This Terraform stack deploys the API to Cloud Run with a private-IP Cloud SQL
 PostgreSQL database, Cloud Storage for pipeline artifacts, Artifact Registry,
 Secret Manager, and a least-privilege Cloud Run service account.
 
-## Deploy
+## GitHub Actions OIDC Bootstrap
+
+The deployment workflows authenticate with GitHub OIDC; they do not store a GCP
+service-account key. This requires one administrator-performed bootstrap per
+environment before the workflows can deploy.
+
+1. Create a protected GCS bucket for Terraform state outside this stack. Enable
+   versioning and restrict it to deployment administrators and the GitHub
+   deployer service account.
+2. Edit `environments/dev.tfvars` and `environments/prod.tfvars` with each
+   environment's GCP project, GitHub repository, Clerk configuration, and admin
+   email. These tracked files are deliberately non-secret.
+3. Run the initial `terraform init`, `terraform plan`, and `terraform apply`
+   with a privileged administrator identity. This creates the Workload Identity
+   Pool, OIDC provider, and GitHub deployer service account.
+4. Record the `github_workload_identity_provider` and
+   `github_deployer_service_account` Terraform outputs.
+5. Create GitHub Environments named `development` and `production`. Require
+   reviewers for `production` in GitHub Environment protection rules.
+6. Configure each environment with these GitHub Variables:
+
+   ```text
+   ARTIFACT_REPOSITORY
+   BOOTSTRAP_ADMIN_EMAILS       # Terraform list syntax, e.g. ["admin@example.com"]
+   GCP_DEPLOYER_SERVICE_ACCOUNT
+   GCP_PROJECT_ID
+   GCP_REGION
+   GCP_WORKLOAD_IDENTITY_PROVIDER
+   TF_STATE_BUCKET
+   ```
+
+7. Configure each environment with these GitHub Secrets:
+
+   ```text
+   BYOK_ENCRYPTION_KEY
+   CLERK_SECRET_KEY
+   OPENAI_API_KEY
+   POSTGRES_PASSWORD
+   SESSION_SECRET_KEY
+   ```
+
+`develop` triggers `deploy-dev.yml` and deploys the `dev` stack. `main`
+triggers `deploy-prod.yml`; GitHub Environment approval gates production before
+any cloud command runs.
+
+The workflows use `environments/dev.tfvars` and `environments/prod.tfvars`.
+The immutable container image is the only value overridden by the workflow.
+
+## Manual Deploy
 
 1. Authenticate Terraform to the target GCP project and ensure the deploying
    principal can enable APIs, administer Cloud SQL and Secret Manager, create
@@ -16,8 +64,9 @@ Secret Manager, and a least-privilege Cloud Run service account.
    Set `container_image` to the resulting Artifact Registry URI.
 4. Copy `terraform.tfvars.example` to `terraform.tfvars` and set non-secret
    values. Supply secret inputs as `TF_VAR_postgres_password`,
-   `TF_VAR_session_secret_key`, and `TF_VAR_openai_api_key` through a secure
-   CI secret store.
+   `TF_VAR_session_secret_key`, `TF_VAR_byok_encryption_key`,
+   `TF_VAR_clerk_secret_key`, and optional `TF_VAR_openai_api_key` through a
+   secure CI secret store.
 5. Run `terraform init`, `terraform plan`, then `terraform apply` from this
    directory.
 6. Configure Clerk to return from hosted sign-in to

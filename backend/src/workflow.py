@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from auth_service import send_clerk_invitation
+from auth_service import require_client_membership, send_clerk_invitation
 from byok import (
     get_organization_api_key,
     get_organization_api_key_suffix,
@@ -57,6 +57,7 @@ from models import (
     MappingSpec,
     MappingSpecStatus,
     PipelineOutputFolder,
+    RawFile,
     TargetSchema,
     UserRole,
     ValidationResult,
@@ -109,6 +110,90 @@ def list_clients() -> list[Client]:
     """Return clients for workflow entry-point selection."""
     with get_session() as session:
         return list(session.exec(select(Client).order_by(Client.name)).all())
+
+
+def get_organization_file_library(
+    client_id: uuid.UUID,
+    user: Any,
+) -> dict[str, Any]:
+    """Return the authorized inventory of an organization's workflow files."""
+    with get_session() as session:
+        client = get_client_by_id(session, client_id)
+        if client is None:
+            raise ValueError("Organization not found")
+        require_client_membership(session, user, client.id)
+        raw_files = list(
+            session.exec(
+                select(RawFile)
+                .where(RawFile.client_id == client.id)
+                .order_by(RawFile.uploaded_at.desc())
+            ).all()
+        )
+        specs = list(
+            session.exec(
+                select(MappingSpec)
+                .where(MappingSpec.client_id == client.id)
+                .order_by(MappingSpec.created_at.desc())
+            ).all()
+        )
+        runs = list(
+            session.exec(
+                select(ExecutionRun)
+                .where(ExecutionRun.client_id == client.id)
+                .order_by(ExecutionRun.started_at.desc())
+            ).all()
+        )
+
+    latest_runs: dict[uuid.UUID, ExecutionRun] = {}
+    for run in runs:
+        latest_runs.setdefault(run.mapping_spec_id, run)
+    store = get_artifact_store()
+    mappings = []
+    for spec in specs:
+        files = []
+        for filename in store.list_artifacts(spec.id):
+            artifact_type = None
+            if filename.endswith("_pipeline.py") or filename == "pipeline.py":
+                artifact_type = "pipeline"
+            elif filename.endswith("_mapping.json") or filename == "mapping.json":
+                artifact_type = "mapping"
+            elif filename.endswith("_results.csv") or filename == "results.csv":
+                artifact_type = "results"
+            files.append({"name": filename, "artifact_type": artifact_type})
+        run = latest_runs.get(spec.id)
+        mappings.append(
+            {
+                "id": spec.id,
+                "status": spec.status.value,
+                "description": spec.description,
+                "created_at": spec.created_at,
+                "execution_status": run.status.value if run else None,
+                "files": files,
+            }
+        )
+
+    try:
+        schema = store.read_target_schema(str(client.id))
+    except FileNotFoundError:
+        target_schema = None
+    else:
+        target_schema = {"name": schema.name, "table_count": len(schema.tables)}
+
+    return {
+        "organization": {"id": client.id, "name": client.name},
+        "target_schema": target_schema,
+        "source_files": [
+            {
+                "name": raw_file.original_filename,
+                "mime_type": raw_file.mime_type,
+                "size_bytes": raw_file.size_bytes,
+                "status": raw_file.status.value,
+                "uploaded_at": raw_file.uploaded_at,
+            }
+            for raw_file in raw_files
+        ],
+        "mappings": mappings,
+    }
 
 
 def get_organization_key_settings() -> list[dict[str, Any]]:

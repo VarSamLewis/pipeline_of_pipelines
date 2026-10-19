@@ -101,3 +101,52 @@ def test_mapping_confirmation_displays_execution_errors(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "Pipeline execution exceeded the configured time limit" in response.text
+
+
+def test_organization_files_page_lists_workflow_files(monkeypatch) -> None:
+    """The organization library groups source and generated workflow files."""
+    import ui
+    from app import app
+
+    organization_id = uuid.uuid4()
+    mapping_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "get_organization_file_library",
+        lambda client_id, user: {
+            "organization": {"id": organization_id, "name": "Acme"},
+            "target_schema": {"name": "records", "table_count": 1},
+            "source_files": [
+                {
+                    "name": "orders.csv",
+                    "mime_type": "text/csv",
+                    "size_bytes": 42,
+                    "status": "parsed",
+                    "uploaded_at": "2026-01-01",
+                }
+            ],
+            "mappings": [
+                {
+                    "id": mapping_id,
+                    "status": "approved",
+                    "description": "Orders mapping",
+                    "created_at": "2026-01-01",
+                    "execution_status": "success",
+                    "files": [
+                        {"name": "records_pipeline.py", "artifact_type": "pipeline"},
+                        {"name": "records_mapping.json", "artifact_type": "mapping"},
+                        {"name": "records_results.csv", "artifact_type": "results"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    response = TestClient(app).get(f"/organizations/{organization_id}/files")
+
+    assert response.status_code == 200
+    assert "Acme files" in response.text
+    assert "orders.csv" in response.text
+    assert f"/output-folders/{mapping_id}/pipeline.py" in response.text
+    assert f"/output-folders/{mapping_id}/mapping.json" in response.text
+    assert f"/output-folders/{mapping_id}/results.csv" in response.text
