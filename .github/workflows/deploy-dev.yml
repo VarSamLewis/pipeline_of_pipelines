@@ -52,10 +52,11 @@ jobs:
               *) sleep 10 ;;
             esac
           done
-          image_base="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app"
-          digest="$(gcloud builds describe "$build_id" --format='value(results.images[0].digest)')"
-          printf 'TF_VAR_container_image=%s@%s\n' "$image_base" "$digest" >> "$GITHUB_ENV"
       - uses: hashicorp/setup-terraform@v3
       - name: Deploy infrastructure
         working-directory: infra
-        run: terraform init -input=false -backend-config=environments/dev.backend.hcl && terraform apply -input=false -auto-approve -var-file="environments/dev.tfvars" -var="container_image=$TF_VAR_container_image"
+        run: |
+          digest="$(gcloud builds list --filter="substitutions._IMAGE_TAG=$GITHUB_SHA AND status=SUCCESS" --sort-by='~createTime' --limit=1 --format='value(results.images[0].digest)')"
+          test -n "$digest"
+          terraform init -input=false -backend-config=environments/dev.backend.hcl
+          terraform apply -input=false -auto-approve -var-file="environments/dev.tfvars" -var="container_image=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app@$digest"
