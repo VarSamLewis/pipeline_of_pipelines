@@ -52,6 +52,8 @@ jobs:
               *) sleep 10 ;;
             esac
           done
+          # Cloud Run can lag Artifact Registry immediately after a successful push.
+          sleep 120
       - uses: hashicorp/setup-terraform@v3
       - name: Deploy infrastructure
         working-directory: infra
