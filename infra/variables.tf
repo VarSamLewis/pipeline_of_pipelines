@@ -53,12 +53,6 @@ variable "container_image" {
   type        = string
 }
 
-variable "deployment_nonce" {
-  description = "Optional revision label used to force a new Cloud Run deployment retry."
-  type        = string
-  default     = ""
-}
-
 variable "postgres_password" {
   description = "Password for the application Cloud SQL user. Supply outside source control."
   type        = string

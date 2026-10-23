@@ -309,10 +309,7 @@ resource "google_cloud_run_v2_service" "app" {
   template {
     service_account = google_service_account.runtime.email
     timeout         = "300s"
-    labels = merge(
-      local.labels,
-      var.deployment_nonce == "" ? {} : { "deployment-nonce" = var.deployment_nonce },
-    )
+    labels          = local.labels
 
     scaling {
       min_instance_count = var.min_instances

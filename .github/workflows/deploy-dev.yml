@@ -52,17 +52,9 @@ jobs:
               *) sleep 10 ;;
             esac
           done
+          # Cloud Run can take several minutes to resolve a newly pushed image tag.
+          sleep 420
       - uses: hashicorp/setup-terraform@v3
       - name: Deploy infrastructure
         working-directory: infra
-        run: |
-          terraform init -input=false -backend-config=environments/dev.backend.hcl
-          for attempt in {1..5}; do
-            if terraform apply -input=false -auto-approve -var-file="environments/dev.tfvars" -var="container_image=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app:$GITHUB_SHA" -var="deployment_nonce=$GITHUB_SHA-$attempt"; then
-              exit 0
-            fi
-            if [ "$attempt" -eq 5 ]; then
-              exit 1
-            fi
-            sleep 60
-          done
+        run: terraform init -input=false -backend-config=environments/dev.backend.hcl && terraform apply -input=false -auto-approve -var-file="environments/dev.tfvars" -var="container_image=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app:$GITHUB_SHA"
