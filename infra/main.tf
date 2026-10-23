@@ -83,6 +83,7 @@ resource "google_project_iam_member" "github_deployer" {
     "roles/secretmanager.admin",
     "roles/servicenetworking.networksAdmin",
     "roles/serviceusage.serviceUsageAdmin",
+    "roles/serviceusage.serviceUsageConsumer",
     "roles/cloudsql.admin",
     "roles/storage.admin",
   ])
