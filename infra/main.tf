@@ -267,6 +267,13 @@ resource "google_artifact_registry_repository_iam_member" "cloud_run" {
   member     = "serviceAccount:service-${data.google_project.current.number}@serverless-robot-prod.iam.gserviceaccount.com"
 }
 
+resource "google_artifact_registry_repository_iam_member" "runtime" {
+  location   = google_artifact_registry_repository.app.location
+  repository = google_artifact_registry_repository.app.name
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 resource "google_project_iam_member" "cloud_build" {
   project = var.project_id
   role    = "roles/cloudbuild.builds.builder"
@@ -433,6 +440,7 @@ resource "google_cloud_run_v2_service" "app" {
     google_secret_manager_secret_iam_member.runtime,
     google_project_iam_member.cloud_run_vpc_access,
     google_artifact_registry_repository_iam_member.cloud_run,
+    google_artifact_registry_repository_iam_member.runtime,
   ]
 }
 

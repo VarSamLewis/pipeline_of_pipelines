@@ -249,7 +249,7 @@ def login(request: Request) -> RedirectResponse:
         return RedirectResponse(url="/upload")
     if not CLERK_SIGN_IN_URL:
         raise HTTPException(500, "CLERK_SIGN_IN_URL is not configured")
-    callback_url = str(request.url_for("auth_callback"))
+    callback_url = str(request.url_for("auth_callback").replace(scheme="https"))
     return RedirectResponse(
         url=str(URL(CLERK_SIGN_IN_URL).include_query_params(redirect_url=callback_url))
     )
