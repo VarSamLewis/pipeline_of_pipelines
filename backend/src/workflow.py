@@ -12,7 +12,7 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 from auth_service import require_client_membership, send_clerk_invitation
@@ -127,27 +127,27 @@ def get_organization_file_library(
             session.exec(
                 select(RawFile)
                 .where(RawFile.client_id == client.id)
-                .order_by(RawFile.uploaded_at.desc())
+                .order_by(cast(Any, RawFile.uploaded_at).desc())
             ).all()
         )
         specs = list(
             session.exec(
                 select(MappingSpec)
                 .where(MappingSpec.client_id == client.id)
-                .order_by(MappingSpec.created_at.desc())
+                .order_by(cast(Any, MappingSpec.created_at).desc())
             ).all()
         )
         runs = list(
             session.exec(
                 select(ExecutionRun)
                 .where(ExecutionRun.client_id == client.id)
-                .order_by(ExecutionRun.started_at.desc())
+                .order_by(cast(Any, ExecutionRun.started_at).desc())
             ).all()
         )
 
     latest_runs: dict[uuid.UUID, ExecutionRun] = {}
-    for run in runs:
-        latest_runs.setdefault(run.mapping_spec_id, run)
+    for execution_run in runs:
+        latest_runs.setdefault(execution_run.mapping_spec_id, execution_run)
     store = get_artifact_store()
     mappings = []
     for spec in specs:
@@ -161,14 +161,14 @@ def get_organization_file_library(
             elif filename.endswith("_results.csv") or filename == "results.csv":
                 artifact_type = "results"
             files.append({"name": filename, "artifact_type": artifact_type})
-        run = latest_runs.get(spec.id)
+        latest_run = latest_runs.get(spec.id)
         mappings.append(
             {
                 "id": spec.id,
                 "status": spec.status.value,
                 "description": spec.description,
                 "created_at": spec.created_at,
-                "execution_status": run.status.value if run else None,
+                "execution_status": latest_run.status.value if latest_run else None,
                 "files": files,
             }
         )
@@ -787,7 +787,7 @@ def get_result_review(run_id: uuid.UUID) -> dict[str, Any]:
     csv_names = store.list_artifacts(spec_id, suffix=".csv")
     pipeline_name = get_generated_artifact_filename(spec_id, "pipeline")
     mapping_name = get_generated_artifact_filename(spec_id, "mapping")
-    results_name = get_generated_artifact_filename(spec_id, "results")
+    results_name: str | None = get_generated_artifact_filename(spec_id, "results")
     if results_name not in csv_names:
         results_name = None
     if results_name is None and csv_names:

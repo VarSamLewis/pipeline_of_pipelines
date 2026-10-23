@@ -461,7 +461,7 @@ def _expression_output_cast_dtype(expression: str | None) -> str | None:
         "float": "Float64",
         "bool": "Boolean",
     }
-    dtype = casts[-1]
+    dtype = cast(str, casts[-1])
     return aliases.get(dtype.lower(), dtype)
 
 
