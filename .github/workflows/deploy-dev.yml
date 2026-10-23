@@ -53,7 +53,7 @@ jobs:
             esac
           done
           image_base="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app"
-          digest="$(gcloud artifacts docker images describe "$image_base:$GITHUB_SHA" --format='value(image_summary.digest)')"
+          digest="$(gcloud builds describe "$build_id" --format='value(results.images[0].digest)')"
           printf 'TF_VAR_container_image=%s@%s\n' "$image_base" "$digest" >> "$GITHUB_ENV"
       - uses: hashicorp/setup-terraform@v3
       - name: Deploy infrastructure
