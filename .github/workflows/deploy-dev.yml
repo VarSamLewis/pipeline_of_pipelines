@@ -57,8 +57,4 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - name: Deploy infrastructure
         working-directory: infra
-        run: |
-          digest="$(gcloud builds list --filter="substitutions._IMAGE_TAG=$GITHUB_SHA AND status=SUCCESS" --sort-by='~createTime' --limit=1 --format='value(results.images[0].digest)')"
-          test -n "$digest"
-          terraform init -input=false -backend-config=environments/dev.backend.hcl
-          terraform apply -input=false -auto-approve -var-file="environments/dev.tfvars" -var="container_image=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app@$digest"
+        run: terraform init -input=false -backend-config=environments/dev.backend.hcl && terraform apply -input=false -auto-approve -var-file="environments/dev.tfvars" -var="container_image=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app:$GITHUB_SHA"
