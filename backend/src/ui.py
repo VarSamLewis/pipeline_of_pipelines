@@ -162,11 +162,12 @@ def save_organization_key_endpoint(
     request: Request,
     client_id: uuid.UUID,
     api_key: str = Form(""),
+    provider_base_url: str = Form(""),
     user: Any = Depends(require_role("admin")),
 ) -> Any:
     """Save an encrypted organization API key without rendering it back."""
     try:
-        save_organization_key_record(client_id, api_key)
+        save_organization_key_record(client_id, api_key, provider_base_url)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
     return HTMLResponse("<span class='save-note'>Key saved</span>")

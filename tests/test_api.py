@@ -42,6 +42,10 @@ def ingested_batch(
     response = client.post(
         f"/clients/{client_id}/ingest-folder",
         data={"folder_path": str(simple_data_folder)},
+        headers={
+            "X-OpenAI-Api-Key": "test-byok-key",
+            "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+        },
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -163,7 +167,10 @@ def test_full_propose_approve_execute_flow(
 
     propose_response = client.post(
         f"/mapping-specs/{spec_id}/propose",
-        headers={"X-OpenAI-Api-Key": "test-byok-key"},
+        headers={
+            "X-OpenAI-Api-Key": "test-byok-key",
+            "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+        },
     )
     assert propose_response.status_code == 200, propose_response.text
     proposed = propose_response.json()

@@ -371,6 +371,7 @@ class OrganizationApiKey(SQLModel, table=True):
     client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True, unique=True)
     encrypted_key: str = SQLField(sa_column=Column(Text))
     key_suffix: str = SQLField(default="")
+    provider_base_url: str = SQLField(default="")
     updated_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
 
 

@@ -17,7 +17,6 @@ import re
 import uuid
 from typing import Any, cast
 
-from config import get_settings
 from models import (
     BusinessRule,
     ExtractedEvidence,
@@ -204,6 +203,7 @@ def _gather_targeted_evidence(
     source_catalogs: list[dict[str, Any]],
     search_evidence_by_text: Any,
     api_key: str | None,
+    base_url: str | None,
     top_k_per_query: int = 5,
     max_total: int = 40,
 ) -> list[ExtractedEvidence]:
@@ -258,6 +258,7 @@ def _gather_targeted_evidence(
             client_id,
             top_k=top_k_per_query,
             api_key=api_key,
+            base_url=base_url,
         )
         for item in results:
             if item.id in seen_ids:
@@ -372,11 +373,12 @@ def call_mapping_llm(
     temperature: float = 0.2,
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible chat completion endpoint to propose mappings."""
-    settings = get_settings()
-    api_key = api_key or settings.openai_api_key
-    base_url = base_url or settings.openai_base_url
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set and no api_key was provided")
+        raise RuntimeError("An organization API key is required for mapping proposals")
+    if not base_url:
+        raise RuntimeError(
+            "An organization provider URL is required for mapping proposals"
+        )
 
     from openai import OpenAI
 
@@ -567,12 +569,14 @@ def propose_mapping_spec(
     ]
     raw_files = [rf for rf in raw_files if rf is not None]
 
-    settings = get_settings()
-    api_key = api_key or settings.openai_api_key
-    base_url = base_url or settings.openai_base_url
     if not api_key:
         raise RuntimeError(
             "No organization API key is configured. Ask an administrator to add one."
+        )
+    if not base_url:
+        raise RuntimeError(
+            "No organization provider URL is configured. "
+            "Ask an administrator to add one."
         )
 
     source_catalogs: list[dict[str, Any]] = []
@@ -597,6 +601,7 @@ def propose_mapping_spec(
         source_catalogs,
         search_evidence_by_text,
         api_key,
+        base_url,
         top_k_per_query=max(1, top_k_evidence // 2),
         max_total=top_k_evidence * 4,
     )

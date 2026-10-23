@@ -59,11 +59,10 @@ postgresql+psycopg://postgres:postgres@localhost:5432/pipeline
 
 ## Running the server
 
-An OpenAI API key is required for embeddings and mapping proposals.
+Organizations add their own OpenAI-compatible API key through Settings before
+uploading files or proposing mappings.
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="https://api.openai.com/v1"
 python -m uvicorn app:app --app-dir backend/src --reload
 ```
 
@@ -195,15 +194,8 @@ DATABASE_URL="postgresql+psycopg://user:pass@host:5432/dbname" \
   python -m uvicorn app:app --app-dir backend/src
 ```
 
-Set the OpenAI key and optional base URL:
-
-```bash
-export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="https://api.openai.com/v1"
-```
-
 There is no heuristic fallback: both ingestion (embeddings) and `/propose`
-require an LLM API key.
+require an organization API key.
 
 ## Design principles
 

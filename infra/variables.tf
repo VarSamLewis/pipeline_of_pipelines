@@ -21,6 +21,33 @@ variable "project_name" {
   default     = "pipeline"
 }
 
+variable "artifact_bucket_name" {
+  description = "Globally unique Cloud Storage bucket for raw uploads and generated artifacts."
+  type        = string
+  default     = ""
+}
+
+variable "terraform_state_bucket_name" {
+  description = "Globally unique Cloud Storage bucket used for this environment's Terraform state."
+  type        = string
+}
+
+variable "serverless_vpc_subnet_cidr" {
+  description = "Unused /26-or-larger subnet reserved for Cloud Run Direct VPC Egress."
+  type        = string
+}
+
+variable "secret_ids" {
+  description = "Secret Manager secret IDs keyed by their application purpose."
+  type        = map(string)
+  default = {
+    "database-url"        = "database-url"
+    "session-secret-key"  = "session-secret-key"
+    "byok-encryption-key" = "byok-encryption-key"
+    "clerk-secret-key"    = "clerk-secret-key"
+  }
+}
+
 variable "container_image" {
   description = "Immutable container image URI deployed to Cloud Run."
   type        = string
@@ -36,13 +63,6 @@ variable "session_secret_key" {
   description = "Starlette session signing secret. Supply outside source control."
   type        = string
   sensitive   = true
-}
-
-variable "openai_api_key" {
-  description = "Optional platform OpenAI API key. Supply outside source control."
-  type        = string
-  sensitive   = true
-  default     = ""
 }
 
 variable "byok_encryption_key" {

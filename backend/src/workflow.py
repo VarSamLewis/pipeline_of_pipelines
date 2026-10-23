@@ -19,6 +19,7 @@ from auth_service import require_client_membership, send_clerk_invitation
 from byok import (
     get_organization_api_key,
     get_organization_api_key_suffix,
+    get_organization_provider_base_url,
     save_organization_api_key,
 )
 from codegen import (
@@ -205,6 +206,9 @@ def get_organization_key_settings() -> list[dict[str, Any]]:
                 "id": client.id,
                 "name": client.name,
                 "key_suffix": get_organization_api_key_suffix(session, client.id),
+                "provider_base_url": get_organization_provider_base_url(
+                    session, client.id
+                ),
                 "pending_invitations": [
                     {"id": invitation.id, "email": invitation.email}
                     for invitation in session.exec(
@@ -219,12 +223,16 @@ def get_organization_key_settings() -> list[dict[str, Any]]:
         ]
 
 
-def save_organization_key(client_id: uuid.UUID, api_key: str) -> None:
+def save_organization_key(
+    client_id: uuid.UUID,
+    api_key: str,
+    provider_base_url: str,
+) -> None:
     """Save a BYOK credential for an existing organization."""
     with get_session() as session:
         if get_client_by_id(session, client_id) is None:
             raise ValueError("Organization not found")
-        save_organization_api_key(session, client_id, api_key)
+        save_organization_api_key(session, client_id, api_key, provider_base_url)
 
 
 def invite_organization_reviewer(client_id: uuid.UUID, email: str) -> None:
@@ -360,12 +368,11 @@ def ingest_and_propose(
 
     with get_session() as session:
         client = get_or_create_client(session, existing_client_id, new_client_name)
-        api_key = (
-            get_organization_api_key(session, client.id) or settings.openai_api_key
-        )
-        if not api_key:
+        api_key = get_organization_api_key(session, client.id)
+        base_url = get_organization_provider_base_url(session, client.id)
+        if not api_key or not base_url:
             raise RuntimeError(
-                "No organization API key is configured. "
+                "No organization provider credentials are configured. "
                 "Ask an administrator to add one."
             )
         batch = create_ingestion_batch(
@@ -401,7 +408,14 @@ def ingest_and_propose(
             file_type = detect_file_type(raw_file.original_filename)
             data = object_store.get(raw_file.storage_key)
             try:
-                _parse_raw_file(session, raw_file, data, file_type, api_key=api_key)
+                _parse_raw_file(
+                    session,
+                    raw_file,
+                    data,
+                    file_type,
+                    api_key=api_key,
+                    base_url=base_url,
+                )
                 update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
             except Exception as exc:
                 update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
@@ -421,7 +435,7 @@ def ingest_and_propose(
             target_schema=target_schema,
             model=model or settings.mapping_model,
             api_key=api_key,
-            base_url=settings.openai_base_url,
+            base_url=base_url,
             top_k_evidence=10,
         )
         update_mapping_spec_status(session, spec.id, MappingSpecStatus.PROPOSED)
@@ -433,6 +447,7 @@ def propose_mapping(
     *,
     model: str | None = None,
     api_key: str | None = None,
+    base_url: str | None = None,
     top_k_evidence: int = 10,
 ) -> dict[str, Any]:
     """Propose columns for an existing draft mapping specification."""
@@ -443,13 +458,16 @@ def propose_mapping(
             raise ValueError("Mapping spec not found")
         target_schema = TargetSchema.model_validate(spec.target_schema_json)
         organization_api_key = get_organization_api_key(session, spec.client_id)
+        organization_base_url = get_organization_provider_base_url(
+            session, spec.client_id
+        )
         propose_mapping_spec(
             session,
             spec_id,
             target_schema=target_schema,
             model=model or settings.mapping_model,
-            api_key=api_key or organization_api_key or settings.openai_api_key,
-            base_url=settings.openai_base_url,
+            api_key=api_key or organization_api_key,
+            base_url=base_url or organization_base_url,
             top_k_evidence=top_k_evidence,
         )
     return get_mapping_review(spec_id)

@@ -779,9 +779,16 @@ def get_raw_file(
 )
 def parse_raw_file(
     raw_file_id: uuid.UUID,
+    byok_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
+    byok_base_url: str | None = Header(default=None, alias="X-OpenAI-Base-Url"),
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Parse a raw file into structured facts, profiles, and evidence."""
+    from byok import (
+        get_organization_api_key,
+        get_organization_provider_base_url,
+        validate_provider_base_url,
+    )
     from db_ops import _parse_raw_file, update_raw_file_status
     from models import FileStatus
 
@@ -789,13 +796,35 @@ def parse_raw_file(
         raw_file = get_raw_file_by_id(session, raw_file_id)
         if raw_file is None:
             raise HTTPException(status_code=404, detail="Raw file not found")
+        if bool(byok_api_key) != bool(byok_base_url):
+            raise HTTPException(
+                422, "BYOK key and provider URL must be supplied together"
+            )
+        if byok_base_url:
+            try:
+                byok_base_url = validate_provider_base_url(byok_base_url)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        api_key = byok_api_key or get_organization_api_key(session, raw_file.client_id)
+        base_url = byok_base_url or get_organization_provider_base_url(
+            session, raw_file.client_id
+        )
+        if not api_key or not base_url:
+            raise HTTPException(422, "Organization provider credentials are required")
 
         object_store = get_object_store()
         file_bytes = object_store.get(raw_file.storage_key)
         file_type = detect_file_type(raw_file.original_filename, file_bytes)
 
         try:
-            _parse_raw_file(session, raw_file, file_bytes, file_type)
+            _parse_raw_file(
+                session,
+                raw_file,
+                file_bytes,
+                file_type,
+                api_key=api_key,
+                base_url=base_url,
+            )
             update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
         except Exception as exc:
             update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
@@ -822,15 +851,38 @@ def ingest_client_folder_endpoint(
         ..., description="Absolute or relative path to the client folder."
     ),
     label: str | None = Form(None, description="Optional batch label."),
+    byok_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
+    byok_base_url: str | None = Header(default=None, alias="X-OpenAI-Base-Url"),
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
     """Ingest a local client folder during local development only."""
     if get_settings().app_environment != "local":
         raise HTTPException(403, "Server-path ingestion is only available locally")
+    from byok import (
+        get_organization_api_key,
+        get_organization_provider_base_url,
+        validate_provider_base_url,
+    )
+
     with get_session() as session:
         client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
+        if bool(byok_api_key) != bool(byok_base_url):
+            raise HTTPException(
+                422, "BYOK key and provider URL must be supplied together"
+            )
+        if byok_base_url:
+            try:
+                byok_base_url = validate_provider_base_url(byok_base_url)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        api_key = byok_api_key or get_organization_api_key(session, client.id)
+        base_url = byok_base_url or get_organization_provider_base_url(
+            session, client.id
+        )
+        if not api_key or not base_url:
+            raise HTTPException(422, "Organization provider credentials are required")
 
         object_store = get_object_store()
         result = ingest_client_folder(
@@ -839,6 +891,8 @@ def ingest_client_folder_endpoint(
             folder_path=folder_path,
             object_store=object_store,
             label=label,
+            api_key=api_key,
+            base_url=base_url,
         )
         return {
             "client_id": str(result.client_id),
@@ -937,21 +991,44 @@ def search_evidence_endpoint(
     query: str = Query(..., description="Plain-text query string."),
     client_id: uuid.UUID | None = Query(None, description="Optional client filter."),
     top_k: int = Query(5, ge=1, le=100),
+    byok_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
+    byok_base_url: str | None = Header(default=None, alias="X-OpenAI-Base-Url"),
     user: Any = Depends(require_auth),
 ) -> list[dict[str, Any]]:
     """Search extracted evidence by full text within an authorized client."""
+    from byok import (
+        get_organization_api_key,
+        get_organization_provider_base_url,
+        validate_provider_base_url,
+    )
+
+    if client_id is None:
+        raise HTTPException(422, "client_id is required")
+    if bool(byok_api_key) != bool(byok_base_url):
+        raise HTTPException(422, "BYOK key and provider URL must be supplied together")
+    if byok_base_url:
+        try:
+            byok_base_url = validate_provider_base_url(byok_base_url)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     with get_session() as session:
-        evidence_client_id = None
-        if client_id:
-            client = get_client_by_id(session, client_id)
-            if client is None:
-                raise HTTPException(status_code=404, detail="Client not found")
-            require_client_membership(session, user, client.id)
-            evidence_client_id = client.id
-        elif not AUTH_BYPASS_LOCAL and user.role.value != "admin":
-            raise HTTPException(422, "client_id is required")
+        client = get_client_by_id(session, client_id)
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        require_client_membership(session, user, client.id)
+        api_key = byok_api_key or get_organization_api_key(session, client.id)
+        base_url = byok_base_url or get_organization_provider_base_url(
+            session, client.id
+        )
+        if not api_key or not base_url:
+            raise HTTPException(422, "Organization provider credentials are required")
         items = search_evidence_by_text(
-            session, query, evidence_client_id, top_k=top_k
+            session,
+            query,
+            client.id,
+            top_k=top_k,
+            api_key=api_key,
+            base_url=base_url,
         )
         return [
             {
@@ -1162,25 +1239,35 @@ def propose_mapping_spec_endpoint(
     spec_id: uuid.UUID,
     payload: dict[str, Any] | None = None,
     byok_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
+    byok_base_url: str | None = Header(default=None, alias="X-OpenAI-Base-Url"),
     user: Any = Depends(require_role("reviewer")),
 ) -> dict[str, Any]:
-    """Ask the configured LLM to propose mappings for a draft specification.
+    """Ask the organization's provider to propose mappings for a draft specification.
 
-    A caller may provide an OpenAI-compatible key in ``X-OpenAI-Api-Key``.
-    It remains request-scoped and is never persisted. Provider URLs are owned
-    by server configuration, preventing keys from being sent to arbitrary hosts.
+    A caller may provide request-scoped OpenAI-compatible credentials using
+    ``X-OpenAI-Api-Key`` and ``X-OpenAI-Base-Url``.
     """
     payload = payload or {}
     if "api_key" in payload or "base_url" in payload:
         raise HTTPException(
             422,
-            "Use X-OpenAI-Api-Key for BYOK; provider URL is server configured",
+            "Use X-OpenAI-Api-Key and X-OpenAI-Base-Url for request-scoped BYOK",
         )
+    if bool(byok_api_key) != bool(byok_base_url):
+        raise HTTPException(422, "BYOK key and provider URL must be supplied together")
+    if byok_base_url:
+        from byok import validate_provider_base_url
+
+        try:
+            byok_base_url = validate_provider_base_url(byok_base_url)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     try:
         mapping = propose_mapping(
             spec_id,
             model=payload.get("model"),
             api_key=byok_api_key,
+            base_url=byok_base_url,
             top_k_evidence=payload.get("top_k_evidence", 10),
         )
     except ValueError as exc:

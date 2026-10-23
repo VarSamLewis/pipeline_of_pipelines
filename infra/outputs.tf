@@ -1,6 +1,6 @@
 output "cloud_run_url" {
   description = "Public URL for the API service. Configure it as Clerk's callback host."
-  value       = google_cloud_run_v2_service.app.uri
+  value       = google_cloud_run_v2_service.app.urls[0]
 }
 
 output "artifact_registry_repository" {

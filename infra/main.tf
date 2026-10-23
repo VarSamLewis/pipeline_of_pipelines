@@ -7,6 +7,7 @@ locals {
   }
   required_apis = toset([
     "artifactregistry.googleapis.com",
+    "cloudbuild.googleapis.com",
     "compute.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
@@ -81,7 +82,7 @@ resource "google_project_iam_member" "github_deployer" {
     "roles/secretmanager.admin",
     "roles/servicenetworking.networksAdmin",
     "roles/serviceusage.serviceUsageAdmin",
-    "roles/sqladmin.admin",
+    "roles/cloudsql.admin",
     "roles/storage.admin",
   ])
 
@@ -101,7 +102,7 @@ resource "google_artifact_registry_repository" "app" {
 }
 
 resource "google_storage_bucket" "artifacts" {
-  name                        = "${var.project_id}-${local.name}-artifacts"
+  name                        = var.artifact_bucket_name != "" ? var.artifact_bucket_name : "${var.project_id}-${local.name}-artifacts"
   location                    = var.region
   uniform_bucket_level_access = true
   force_destroy               = false
@@ -121,9 +122,29 @@ resource "google_storage_bucket" "artifacts" {
   }
 }
 
+resource "google_storage_bucket" "terraform_state" {
+  name                        = var.terraform_state_bucket_name
+  location                    = var.region
+  uniform_bucket_level_access = true
+  force_destroy               = false
+  labels                      = local.labels
+
+  versioning {
+    enabled = true
+  }
+}
+
 resource "google_compute_network" "main" {
   name                    = "${local.name}-vpc"
   auto_create_subnetworks = false
+}
+
+resource "google_compute_subnetwork" "serverless" {
+  name                     = "${local.name}-serverless"
+  region                   = var.region
+  network                  = google_compute_network.main.id
+  ip_cidr_range            = var.serverless_vpc_subnet_cidr
+  private_ip_google_access = true
 }
 
 resource "google_compute_global_address" "private_services" {
@@ -147,6 +168,7 @@ resource "google_sql_database_instance" "main" {
   deletion_protection = true
 
   settings {
+    edition           = "ENTERPRISE"
     tier              = "db-custom-1-3840"
     availability_type = var.environment == "prod" ? "REGIONAL" : "ZONAL"
     disk_type         = "PD_SSD"
@@ -186,15 +208,9 @@ resource "google_sql_user" "app" {
 }
 
 resource "google_secret_manager_secret" "runtime" {
-  for_each = toset([
-    "database-url",
-    "session-secret-key",
-    "openai-api-key",
-    "byok-encryption-key",
-    "clerk-secret-key",
-  ])
+  for_each = var.secret_ids
 
-  secret_id = "${local.name}-${each.value}"
+  secret_id = each.value
   replication {
     auto {}
   }
@@ -209,11 +225,6 @@ resource "google_secret_manager_secret_version" "database_url" {
 resource "google_secret_manager_secret_version" "session_secret_key" {
   secret      = google_secret_manager_secret.runtime["session-secret-key"].id
   secret_data = var.session_secret_key
-}
-
-resource "google_secret_manager_secret_version" "openai_api_key" {
-  secret      = google_secret_manager_secret.runtime["openai-api-key"].id
-  secret_data = var.openai_api_key
 }
 
 resource "google_secret_manager_secret_version" "byok_encryption_key" {
@@ -245,7 +256,19 @@ resource "google_artifact_registry_repository_iam_member" "cloud_build" {
   location   = google_artifact_registry_repository.app.location
   repository = google_artifact_registry_repository.app.name
   role       = "roles/artifactregistry.writer"
-  member     = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
+  member     = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "cloud_build" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.builder"
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_project_iam_member" "cloud_run_vpc_access" {
+  project = var.project_id
+  role    = "roles/compute.networkUser"
+  member  = "serviceAccount:service-${data.google_project.current.number}@serverless-robot-prod.iam.gserviceaccount.com"
 }
 
 resource "google_storage_bucket_iam_member" "runtime" {
@@ -271,10 +294,19 @@ resource "google_cloud_run_v2_service" "app" {
   template {
     service_account = google_service_account.runtime.email
     timeout         = "300s"
+    labels          = local.labels
 
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
+    }
+
+    vpc_access {
+      egress = "PRIVATE_RANGES_ONLY"
+      network_interfaces {
+        network    = google_compute_network.main.id
+        subnetwork = google_compute_subnetwork.serverless.id
+      }
     }
 
     volumes {
@@ -369,7 +401,6 @@ resource "google_cloud_run_v2_service" "app" {
         for_each = {
           DATABASE_URL        = google_secret_manager_secret.runtime["database-url"].secret_id
           SESSION_SECRET_KEY  = google_secret_manager_secret.runtime["session-secret-key"].secret_id
-          OPENAI_API_KEY      = google_secret_manager_secret.runtime["openai-api-key"].secret_id
           BYOK_ENCRYPTION_KEY = google_secret_manager_secret.runtime["byok-encryption-key"].secret_id
           CLERK_SECRET_KEY    = google_secret_manager_secret.runtime["clerk-secret-key"].secret_id
         }
@@ -389,5 +420,14 @@ resource "google_cloud_run_v2_service" "app" {
   depends_on = [
     google_project_iam_member.runtime,
     google_secret_manager_secret_iam_member.runtime,
+    google_project_iam_member.cloud_run_vpc_access,
   ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "public_invoker" {
+  project  = var.project_id
+  location = google_cloud_run_v2_service.app.location
+  name     = google_cloud_run_v2_service.app.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

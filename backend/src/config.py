@@ -38,8 +38,6 @@ class Settings:
     static_dir: Path
     templates_dir: Path
     database_url: str
-    openai_api_key: str | None
-    openai_base_url: str | None
     mapping_model: str
     embedding_model: str
     clerk_publishable_key: str
@@ -122,8 +120,6 @@ class Settings:
                 values.get("TEMPLATES_DIR", root / "backend" / "templates")
             ).resolve(),
             database_url=values.get("DATABASE_URL", DEFAULT_DATABASE_URL),
-            openai_api_key=values.get("OPENAI_API_KEY"),
-            openai_base_url=values.get("OPENAI_BASE_URL"),
             mapping_model=values.get("MAPPING_MODEL", "gpt-4o-mini"),
             embedding_model=values.get("EMBEDDING_MODEL", "text-embedding-3-small"),
             clerk_publishable_key=values.get("CLERK_PUBLISHABLE_KEY", ""),

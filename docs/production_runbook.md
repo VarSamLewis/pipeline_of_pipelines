@@ -29,9 +29,8 @@ so it does not require an OpenAI key.
 2. Set `project_id`, `region`, `container_image`, Clerk values, and
    `bootstrap_admin_emails` in `infra/terraform.tfvars`.
 3. Provide `TF_VAR_postgres_password`, `TF_VAR_session_secret_key`,
-   `TF_VAR_byok_encryption_key`, `TF_VAR_clerk_secret_key`, and any platform
-   `TF_VAR_openai_api_key` through the CI secret store. Do not put those values
-   in `terraform.tfvars` or source control.
+   `TF_VAR_byok_encryption_key` and `TF_VAR_clerk_secret_key` through the CI
+   secret store. Do not put those values in `terraform.tfvars` or source control.
 4. Create a Clerk JWT template named by `CLERK_JWT_TEMPLATE`. It must include
    a verified `email` claim and use `CLERK_AUDIENCE`.
 5. Configure the Clerk hosted sign-in return URL as
@@ -70,8 +69,10 @@ so it does not require an OpenAI key.
 - Verify the Cloud Run service account has only the Terraform-assigned GCS,
   Cloud SQL, Secret Manager, logging, monitoring, and Vertex permissions.
 - Client memberships limit tenant data access; audit-log access is admin-only.
-- Use `X-OpenAI-Api-Key` only for request-scoped BYOK. It is not persisted;
-  provider URLs remain server configured.
+- Organizations save their own provider key through Settings. The platform only
+  stores `BYOK_ENCRYPTION_KEY` in Secret Manager, which encrypts organization
+  keys held in PostgreSQL. API clients can use request-scoped BYOK by supplying
+  both `X-OpenAI-Api-Key` and `X-OpenAI-Base-Url`.
 
 ## Verification
 

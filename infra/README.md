@@ -10,20 +10,39 @@ The deployment workflows authenticate with GitHub OIDC; they do not store a GCP
 service-account key. This requires one administrator-performed bootstrap per
 environment before the workflows can deploy.
 
-1. Create a protected GCS bucket for Terraform state outside this stack. Enable
-   versioning and restrict it to deployment administrators and the GitHub
-   deployer service account.
+1. Set `terraform_state_bucket_name` in the environment tfvars. Terraform
+   creates this versioned bucket in the same GCP project as the application.
 2. Edit `environments/dev.tfvars` and `environments/prod.tfvars` with each
-   environment's GCP project, GitHub repository, Clerk configuration, and admin
-   email. These tracked files are deliberately non-secret.
-3. Run the initial `terraform init`, `terraform plan`, and `terraform apply`
-   with a privileged administrator identity. This creates the Workload Identity
-   Pool, OIDC provider, and GitHub deployer service account.
-4. Record the `github_workload_identity_provider` and
+   environment's GCP project, artifact bucket name, Secret Manager secret IDs,
+   GitHub repository, Clerk configuration, and admin email. These tracked files
+   are deliberately non-secret.
+3. Edit `environments/dev.backend.hcl` and
+   `environments/prod.backend.hcl` with their corresponding Terraform state
+   bucket names. Terraform backends must use separate files because Terraform
+   initializes the backend before it reads tfvars.
+4. Bootstrap each state bucket once with local state, then migrate state:
+
+   Export the required `TF_VAR_postgres_password`, `TF_VAR_session_secret_key`,
+   `TF_VAR_byok_encryption_key`, and `TF_VAR_clerk_secret_key` values first.
+
+   ```bash
+   terraform -chdir=infra init -backend=false
+   terraform -chdir=infra apply -var-file=environments/dev.tfvars \
+     -target=google_storage_bucket.terraform_state
+   terraform -chdir=infra init -migrate-state \
+     -backend-config=environments/dev.backend.hcl
+   ```
+
+   Repeat with the production configuration. After migration, normal Terraform
+   commands and GitHub Actions use the managed GCS backend.
+5. Run the initial full `terraform plan` and `terraform apply` with a
+   privileged administrator identity. This creates the Workload Identity Pool,
+   OIDC provider, and GitHub deployer service account.
+6. Record the `github_workload_identity_provider` and
    `github_deployer_service_account` Terraform outputs.
-5. Create GitHub Environments named `development` and `production`. Require
+7. Create GitHub Environments named `development` and `production`. Require
    reviewers for `production` in GitHub Environment protection rules.
-6. Configure each environment with these GitHub Variables:
+8. Configure each environment with these GitHub Variables:
 
    ```text
    ARTIFACT_REPOSITORY
@@ -32,15 +51,13 @@ environment before the workflows can deploy.
    GCP_PROJECT_ID
    GCP_REGION
    GCP_WORKLOAD_IDENTITY_PROVIDER
-   TF_STATE_BUCKET
    ```
 
-7. Configure each environment with these GitHub Secrets:
+9. Configure each environment with these GitHub Secrets:
 
    ```text
    BYOK_ENCRYPTION_KEY
    CLERK_SECRET_KEY
-   OPENAI_API_KEY
    POSTGRES_PASSWORD
    SESSION_SECRET_KEY
    ```
@@ -49,8 +66,9 @@ environment before the workflows can deploy.
 triggers `deploy-prod.yml`; GitHub Environment approval gates production before
 any cloud command runs.
 
-The workflows use `environments/dev.tfvars` and `environments/prod.tfvars`.
-The immutable container image is the only value overridden by the workflow.
+The workflows use `environments/dev.tfvars` and `environments/prod.tfvars`,
+with their matching backend files. The immutable container image is the only
+value overridden by the workflow.
 
 ## Manual Deploy
 
@@ -65,8 +83,7 @@ The immutable container image is the only value overridden by the workflow.
 4. Copy `terraform.tfvars.example` to `terraform.tfvars` and set non-secret
    values. Supply secret inputs as `TF_VAR_postgres_password`,
    `TF_VAR_session_secret_key`, `TF_VAR_byok_encryption_key`,
-   `TF_VAR_clerk_secret_key`, and optional `TF_VAR_openai_api_key` through a
-   secure CI secret store.
+   `TF_VAR_clerk_secret_key` through a secure CI secret store.
 5. Run `terraform init`, `terraform plan`, then `terraform apply` from this
    directory.
 6. Configure Clerk to return from hosted sign-in to

@@ -4,12 +4,20 @@ region          = "us-central1"
 environment     = "dev"
 project_name    = "pipeline"
 github_repository = "your-github-org/your-repository"
+artifact_bucket_name = "your-gcp-project-id-pipeline-dev-artifacts"
+terraform_state_bucket_name = "your-gcp-project-id-pipeline-dev-tf-state"
+serverless_vpc_subnet_cidr = "10.8.0.0/26"
+secret_ids = {
+  "database-url"        = "pipeline-dev-database-url"
+  "session-secret-key"  = "pipeline-dev-session-secret-key"
+  "byok-encryption-key" = "pipeline-dev-byok-encryption-key"
+  "clerk-secret-key"    = "pipeline-dev-clerk-secret-key"
+}
 container_image = "us-central1-docker.pkg.dev/your-gcp-project-id/pipeline-dev/app:tag"
 
 # Supply via TF_VAR_* variables or a secure CI secret store, not this file.
 # postgres_password  = "..."
 # session_secret_key = "..."
-# openai_api_key     = "..."
 # byok_encryption_key = "..."
 # clerk_secret_key   = "sk_..."
 clerk_publishable_key = "pk_..."

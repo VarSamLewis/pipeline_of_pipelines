@@ -52,8 +52,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 _settings = get_settings()
 DEFAULT_DATABASE_URL = _settings.database_url
-OPENAI_API_KEY = _settings.openai_api_key
-OPENAI_BASE_URL = _settings.openai_base_url
 
 
 def get_embedding(
@@ -63,15 +61,16 @@ def get_embedding(
     model: str | None = None,
 ) -> list[float]:
     """Generate an embedding vector for a text chunk using OpenAI."""
-    api_key = api_key or OPENAI_API_KEY
     if not api_key:
         raise RuntimeError(
-            "OPENAI_API_KEY is not set. Embeddings are required for the knowledge base."
+            "An organization API key is required for embeddings."
         )
 
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=base_url or OPENAI_BASE_URL)
+    if not base_url:
+        raise RuntimeError("An organization provider URL is required for embeddings.")
+    client = OpenAI(api_key=api_key, base_url=base_url)
     response = client.embeddings.create(
         model=model or _settings.embedding_model,
         input=content,
@@ -101,11 +100,19 @@ def create_pgvector_extension(engine: Engine | None = None) -> None:
 
 
 def create_tables(engine: Engine | None = None) -> None:
-    """Create all SQLModel tables in the database."""
+    """Create all SQLModel tables and apply lightweight additive upgrades."""
     if engine is None:
         engine = get_engine()
     create_pgvector_extension(engine)
     SQLModel.metadata.create_all(engine)
+    with engine.connect() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE organizationapikey "
+                "ADD COLUMN IF NOT EXISTS provider_base_url VARCHAR NOT NULL DEFAULT ''"
+            )
+        )
+        connection.commit()
 
 
 def get_session(engine: Engine | None = None) -> Session:
@@ -196,6 +203,8 @@ def ingest_client_folder(
     folder_path: str,
     object_store: ObjectStore,
     label: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> FolderIngestionResult:
     """Ingest an entire client folder of heterogeneous files as one batch."""
     from pathlib import Path
@@ -260,7 +269,14 @@ def ingest_client_folder(
         raw_file_ids.append(raw_file.id)
 
         try:
-            _parse_raw_file(session, raw_file, file_bytes, file_type)
+            _parse_raw_file(
+                session,
+                raw_file,
+                file_bytes,
+                file_type,
+                api_key=api_key,
+                base_url=base_url,
+            )
             update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
             parsed_count += 1
         except Exception as exc:
@@ -286,6 +302,7 @@ def _parse_raw_file(
     file_bytes: bytes,
     file_type: str,
     api_key: str | None = None,
+    base_url: str | None = None,
 ) -> None:
     """Parse a raw file and store profiles/evidence."""
     if file_type in {"csv", "xlsx"}:
@@ -314,7 +331,7 @@ def _parse_raw_file(
 
     chunks = extract_evidence_chunks(parsed, str(raw_file.id))
     for chunk in chunks:
-        embedding = get_embedding(chunk["content"], api_key=api_key)
+        embedding = get_embedding(chunk["content"], api_key=api_key, base_url=base_url)
         create_extracted_evidence(
             session=session,
             client_id=raw_file.client_id,
@@ -411,9 +428,10 @@ def search_evidence_by_text(
     client_id: uuid.UUID | None,
     top_k: int = 5,
     api_key: str | None = None,
+    base_url: str | None = None,
 ) -> Sequence[ExtractedEvidence]:
     """Embed a text query and search extracted evidence by vector similarity."""
-    query_embedding = get_embedding(query, api_key=api_key)
+    query_embedding = get_embedding(query, api_key=api_key, base_url=base_url)
     return search_evidence(session, query_embedding, client_id, top_k=top_k)
 
 
