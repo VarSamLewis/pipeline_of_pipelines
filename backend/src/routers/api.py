@@ -90,6 +90,7 @@ from repositories.clients import (
     get_ingestion_batch,
 )
 from sqlalchemy import desc
+from starlette.datastructures import URL
 from workflow import (
     approve_mapping,
     approve_result,
@@ -248,7 +249,10 @@ def login(request: Request) -> RedirectResponse:
         return RedirectResponse(url="/upload")
     if not CLERK_SIGN_IN_URL:
         raise HTTPException(500, "CLERK_SIGN_IN_URL is not configured")
-    return RedirectResponse(url=CLERK_SIGN_IN_URL)
+    callback_url = str(request.url_for("auth_callback"))
+    return RedirectResponse(
+        url=str(URL(CLERK_SIGN_IN_URL).include_query_params(redirect_url=callback_url))
+    )
 
 
 @app.get("/auth/callback")
