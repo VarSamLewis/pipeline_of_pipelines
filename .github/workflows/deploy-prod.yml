@@ -40,7 +40,9 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - name: Build image
         run: |
-          build_id="$(gcloud builds submit --async --format='value(id)' --config cloudbuild.yaml --substitutions=_REGION="$REGION",_REPOSITORY="$REPOSITORY",_IMAGE_TAG="$GITHUB_SHA")"
+          region="$(printf '%s' "$REGION" | tr -d '\r\n')"
+          repository="$(printf '%s' "$REPOSITORY" | tr -d '\r\n')"
+          build_id="$(gcloud builds submit --async --format='value(id)' --config cloudbuild.yaml --substitutions=_REGION="$region",_REPOSITORY="$repository",_IMAGE_TAG="$GITHUB_SHA")"
           while true; do
             status="$(gcloud builds describe "$build_id" --format='value(status)')"
             case "$status" in
@@ -52,9 +54,12 @@ jobs:
               *) sleep 10 ;;
             esac
           done
-          # Cloud Run can take several minutes to resolve a newly pushed image tag.
-          sleep 420
       - uses: hashicorp/setup-terraform@v3
       - name: Deploy infrastructure
         working-directory: infra
-        run: terraform init -input=false -backend-config=environments/prod.backend.hcl && terraform apply -input=false -auto-approve -var-file="environments/prod.tfvars" -var="container_image=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/app:$GITHUB_SHA"
+        run: |
+          region="$(printf '%s' "$REGION" | tr -d '\r\n')"
+          project_id="$(printf '%s' "$PROJECT_ID" | tr -d '\r\n')"
+          repository="$(printf '%s' "$REPOSITORY" | tr -d '\r\n')"
+          terraform init -input=false -backend-config=environments/prod.backend.hcl
+          terraform apply -input=false -auto-approve -var-file="environments/prod.tfvars" -var="container_image=$region-docker.pkg.dev/$project_id/$repository/app:$GITHUB_SHA"
