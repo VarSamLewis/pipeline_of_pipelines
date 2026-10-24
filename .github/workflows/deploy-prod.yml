@@ -27,7 +27,7 @@ jobs:
       TF_VAR_session_secret_key: ${{ secrets.SESSION_SECRET_KEY }}
       TF_VAR_byok_encryption_key: ${{ secrets.BYOK_ENCRYPTION_KEY }}
       TF_VAR_clerk_secret_key: ${{ secrets.CLERK_SECRET_KEY }}
-      TF_VAR_bootstrap_admin_emails: ${{ vars.BOOTSTRAP_ADMIN_EMAILS }}
+      BOOTSTRAP_ADMIN_EMAILS: ${{ vars.BOOTSTRAP_ADMIN_EMAILS }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -62,5 +62,10 @@ jobs:
           region="$(printf '%s' "$REGION" | tr -d '\r\n')"
           project_id="$(printf '%s' "$PROJECT_ID" | tr -d '\r\n')"
           repository="$(printf '%s' "$REPOSITORY" | tr -d '\r\n')"
+          bootstrap_admin_emails="$(printf '%s' "$BOOTSTRAP_ADMIN_EMAILS" | tr -d '\r\n')"
+          test -n "$bootstrap_admin_emails"
+          if [[ "$bootstrap_admin_emails" != \[* ]]; then
+            bootstrap_admin_emails="[\"$bootstrap_admin_emails\"]"
+          fi
           terraform init -input=false -backend-config=environments/prod.backend.hcl
-          terraform apply -input=false -auto-approve -var-file="environments/prod.tfvars" -var="container_image=$region-docker.pkg.dev/$project_id/$repository/app:$GITHUB_SHA"
+          terraform apply -input=false -auto-approve -var-file="environments/prod.tfvars" -var="container_image=$region-docker.pkg.dev/$project_id/$repository/app:$GITHUB_SHA" -var="bootstrap_admin_emails=$bootstrap_admin_emails"
