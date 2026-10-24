@@ -27,6 +27,7 @@ jobs:
       TF_VAR_session_secret_key: ${{ secrets.SESSION_SECRET_KEY }}
       TF_VAR_byok_encryption_key: ${{ secrets.BYOK_ENCRYPTION_KEY }}
       TF_VAR_clerk_secret_key: ${{ secrets.CLERK_SECRET_KEY }}
+      TF_VAR_bootstrap_admin_emails: ${{ vars.BOOTSTRAP_ADMIN_EMAILS }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
