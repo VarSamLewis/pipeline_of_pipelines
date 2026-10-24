@@ -26,7 +26,7 @@ clerk_audience         = "pipeline-dev-api"
 clerk_jwks_url         = "https://possible-tapir-2586.clerk.accounts.dev/.well-known/jwks.json"
 clerk_sign_in_url      = "https://possible-tapir-2586.accounts.dev/sign-in"
 clerk_jwt_template     = "pipeline-beta"
-bootstrap_admin_emails = ["admin@example.com"]
+bootstrap_admin_emails = ["samlewis1999.sl@gmail.com"]
 
 min_instances = 0
 max_instances = 3
