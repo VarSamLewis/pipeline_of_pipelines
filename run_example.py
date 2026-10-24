@@ -557,6 +557,7 @@ from models import (  # noqa: E402
     Client,
     ExtractedEvidence,
     MappingColumn,
+    Organization,
     RawFile,
 )
 from pipeline import load_target_schema_from_spec, run_validation_tests  # noqa: E402
@@ -568,9 +569,17 @@ def ensure_client() -> uuid.UUID:
     with get_session() as session:
         client = session.exec(select(Client).where(Client.name == CLIENT_NAME)).first()
         if client is None:
+            organization = session.exec(
+                select(Organization).where(Organization.name == "Example organization")
+            ).first()
+            if organization is None:
+                organization = Organization(name="Example organization")
+                session.add(organization)
+                session.flush()
             client = create_client(
                 session,
                 name=CLIENT_NAME,
+                organization_id=organization.id,
                 metadata={"sector": "packaging", "regulator": "EA"},
             )
             print(f"Created client {client.id} ({CLIENT_NAME})", flush=True)

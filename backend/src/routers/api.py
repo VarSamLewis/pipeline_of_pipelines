@@ -393,7 +393,7 @@ def list_invitations(
         {
             "id": str(invitation.id),
             "email": invitation.email,
-            "client_id": str(invitation.client_id),
+            "organization_id": str(invitation.organization_id),
             "role": invitation.role.value,
             "status": invitation.status,
             "created_at": invitation.created_at.isoformat(),
@@ -408,35 +408,38 @@ def create_invitation(
     payload: dict[str, Any],
     user: Any = Depends(require_role("admin")),
 ) -> dict[str, Any]:
-    """Create or update a pending client invitation for a verified Clerk email."""
+    """Create or update a pending organization invitation for a Clerk email."""
     from models import BetaInvitation, UserRole
     from sqlmodel import select
 
     email = payload.get("email")
-    client_id = payload.get("client_id")
+    organization_id = payload.get("organization_id")
     if not isinstance(email, str) or not email.strip():
         raise HTTPException(422, "email is required")
     try:
-        client_id = uuid.UUID(client_id)
+        organization_id = uuid.UUID(organization_id)
     except (TypeError, ValueError) as exc:
-        raise HTTPException(422, "client_id is required") from exc
+        raise HTTPException(422, "organization_id is required") from exc
     role = UserRole.REVIEWER
     email = email.strip().lower()
     now = datetime.now(UTC).replace(tzinfo=None)
 
     with get_session() as session:
-        client = get_client_by_id(session, client_id)
-        if client is None:
-            raise HTTPException(404, "Client not found")
+        from models import Organization
+
+        if session.get(Organization, organization_id) is None:
+            raise HTTPException(404, "Organization not found")
         invitation = session.exec(
             select(BetaInvitation).where(
                 BetaInvitation.email == email,
-                BetaInvitation.client_id == client.id,
+                BetaInvitation.organization_id == organization_id,
                 BetaInvitation.status == "pending",
             )
         ).first()
         if invitation is None:
-            invitation = BetaInvitation(email=email, client_id=client.id, role=role)
+            invitation = BetaInvitation(
+                email=email, organization_id=organization_id, role=role
+            )
         else:
             invitation.role = role
             invitation.updated_at = now
@@ -450,13 +453,17 @@ def create_invitation(
             invitation.id,
             user.id,
             user.email,
-            {"email": email, "client_id": str(client.id), "role": role.value},
+            {
+                "email": email,
+                "organization_id": str(organization_id),
+                "role": role.value,
+            },
         )
         session.refresh(invitation)
         result = {
             "id": str(invitation.id),
             "email": invitation.email,
-            "client_id": str(invitation.client_id),
+            "organization_id": str(invitation.organization_id),
             "role": invitation.role.value,
             "status": invitation.status,
         }
@@ -503,23 +510,31 @@ def create_client_endpoint(
     payload: dict[str, Any],
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
-    """Register a new client/tenant."""
+    """Register a new retrieval client inside an organization."""
+    organization_id = payload.get("organization_id")
+    try:
+        organization_id = uuid.UUID(organization_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "organization_id is required") from exc
     with get_session() as session:
+        from models import OrganizationMembership
+        from sqlmodel import select
+
+        membership = session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first()
+        if membership is None:
+            raise HTTPException(403, "Organization membership required")
         client = create_client(
             session,
             name=payload["name"],
+            organization_id=organization_id,
             metadata=payload.get("metadata", {}),
         )
-        from models import ClientMembership, UserRole
-
-        if not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
-            session.add(
-                ClientMembership(
-                    user_id=user.id,
-                    client_id=client.id,
-                    role=user.role,
-                )
-            )
         write_audit_log(
             session,
             "client_created",
@@ -542,18 +557,19 @@ def list_clients_endpoint(
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """List all clients."""
-    from models import Client, ClientMembership, UserRole
+    from models import Client, OrganizationMembership
     from sqlmodel import select
 
     with get_session() as session:
         statement = select(Client).order_by(cast(Any, Client.created_at).desc())
-        if not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+        if not AUTH_BYPASS_LOCAL:
             statement = statement.join(
-                ClientMembership,
-                cast(Any, ClientMembership.client_id) == Client.id,
+                OrganizationMembership,
+                cast(Any, OrganizationMembership.organization_id)
+                == Client.organization_id,
             ).where(
-                ClientMembership.user_id == user.id,
-                cast(Any, ClientMembership.revoked_at).is_(None),
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
             )
         statement = statement.limit(limit)
         clients = session.exec(statement).all()
@@ -809,9 +825,14 @@ def parse_raw_file(
                 byok_base_url = validate_provider_base_url(byok_base_url)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
-        api_key = byok_api_key or get_organization_api_key(session, raw_file.client_id)
+        client = get_client_by_id(session, raw_file.client_id)
+        if client is None or client.organization_id is None:
+            raise HTTPException(404, "Client not found")
+        api_key = byok_api_key or get_organization_api_key(
+            session, client.organization_id
+        )
         base_url = byok_base_url or get_organization_provider_base_url(
-            session, raw_file.client_id
+            session, client.organization_id
         )
         if not api_key or not base_url:
             raise HTTPException(422, "Organization provider credentials are required")
@@ -881,9 +902,13 @@ def ingest_client_folder_endpoint(
                 byok_base_url = validate_provider_base_url(byok_base_url)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
-        api_key = byok_api_key or get_organization_api_key(session, client.id)
+        if client.organization_id is None:
+            raise HTTPException(404, "Client not found")
+        api_key = byok_api_key or get_organization_api_key(
+            session, client.organization_id
+        )
         base_url = byok_base_url or get_organization_provider_base_url(
-            session, client.id
+            session, client.organization_id
         )
         if not api_key or not base_url:
             raise HTTPException(422, "Organization provider credentials are required")
@@ -1020,9 +1045,13 @@ def search_evidence_endpoint(
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
         require_client_membership(session, user, client.id)
-        api_key = byok_api_key or get_organization_api_key(session, client.id)
+        if client.organization_id is None:
+            raise HTTPException(404, "Client not found")
+        api_key = byok_api_key or get_organization_api_key(
+            session, client.organization_id
+        )
         base_url = byok_base_url or get_organization_provider_base_url(
-            session, client.id
+            session, client.organization_id
         )
         if not api_key or not base_url:
             raise HTTPException(422, "Organization provider credentials are required")
@@ -1180,7 +1209,7 @@ def list_mapping_specs_endpoint(
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """List mapping specs, optionally filtered by client or status."""
-    from models import ClientMembership, MappingSpec, UserRole
+    from models import Client, MappingSpec, OrganizationMembership
     from sqlmodel import select
 
     with get_session() as session:
@@ -1193,13 +1222,16 @@ def list_mapping_specs_endpoint(
                 raise HTTPException(status_code=404, detail="Client not found")
             require_client_membership(session, user, client.id)
             statement = statement.where(MappingSpec.client_id == client.id)
-        elif not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+        elif not AUTH_BYPASS_LOCAL:
             statement = statement.join(
-                ClientMembership,
-                cast(Any, ClientMembership.client_id) == MappingSpec.client_id,
+                Client, cast(Any, Client.id) == MappingSpec.client_id
+            ).join(
+                OrganizationMembership,
+                cast(Any, OrganizationMembership.organization_id)
+                == Client.organization_id,
             ).where(
-                ClientMembership.user_id == user.id,
-                cast(Any, ClientMembership.revoked_at).is_(None),
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
             )
         if status:
             statement = statement.where(MappingSpec.status == status)
@@ -1540,7 +1572,7 @@ def list_execution_runs_endpoint(
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict[str, Any]]:
     """List execution runs, optionally filtered by spec or status."""
-    from models import ClientMembership, ExecutionRun, UserRole
+    from models import Client, ExecutionRun, OrganizationMembership
     from sqlmodel import select
 
     with get_session() as session:
@@ -1553,13 +1585,16 @@ def list_execution_runs_endpoint(
                 raise HTTPException(404, "Mapping spec not found")
             require_client_membership(session, user, spec.client_id)
             statement = statement.where(ExecutionRun.mapping_spec_id == spec_id)
-        elif not AUTH_BYPASS_LOCAL and user.role != UserRole.ADMIN:
+        elif not AUTH_BYPASS_LOCAL:
             statement = statement.join(
-                ClientMembership,
-                cast(Any, ClientMembership.client_id) == ExecutionRun.client_id,
+                Client, cast(Any, Client.id) == ExecutionRun.client_id
+            ).join(
+                OrganizationMembership,
+                cast(Any, OrganizationMembership.organization_id)
+                == Client.organization_id,
             ).where(
-                ClientMembership.user_id == user.id,
-                cast(Any, ClientMembership.revoked_at).is_(None),
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
             )
         if status:
             statement = statement.where(ExecutionRun.status == status)

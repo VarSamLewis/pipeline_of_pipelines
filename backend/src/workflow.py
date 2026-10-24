@@ -57,6 +57,8 @@ from models import (
     MappingColumn,
     MappingSpec,
     MappingSpecStatus,
+    Organization,
+    OrganizationMembership,
     PipelineOutputFolder,
     RawFile,
     TargetSchema,
@@ -88,12 +90,15 @@ def get_or_create_client(
     session: Any,
     existing_client_id: uuid.UUID | None,
     new_client_name: str | None,
+    organization_id: uuid.UUID,
 ) -> Client:
     """Resolve a client from an existing id or create a new one."""
     if existing_client_id:
         client = get_client_by_id(session, existing_client_id)
         if client is None:
             raise ValueError("Selected client not found")
+        if client.organization_id != organization_id:
+            raise ValueError("Selected client belongs to another organization")
         return client
 
     if not new_client_name:
@@ -103,14 +108,85 @@ def get_or_create_client(
     return create_client(
         session,
         name=new_client_name,
+        organization_id=organization_id,
         metadata={},
     )
 
 
-def list_clients() -> list[Client]:
-    """Return clients for workflow entry-point selection."""
+def create_organization(name: str, user: Any) -> Organization:
+    """Create an application-managed organization for its initial administrator."""
+    name = name.strip()
+    if not name:
+        raise ValueError("Organization name is required")
     with get_session() as session:
-        return list(session.exec(select(Client).order_by(Client.name)).all())
+        organization = Organization(name=name)
+        session.add(organization)
+        session.flush()
+        session.add(
+            OrganizationMembership(
+                organization_id=organization.id,
+                user_id=user.id,
+                role=UserRole.ADMIN,
+            )
+        )
+        session.commit()
+        session.refresh(organization)
+        return organization
+
+
+def list_organizations(user: Any) -> list[Organization]:
+    """Return organizations visible to a user."""
+    with get_session() as session:
+        statement = (
+            select(Organization)
+            .join(OrganizationMembership)
+            .where(
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+            .order_by(Organization.name)
+        )
+        return list(session.exec(statement).all())
+
+
+def list_clients(organization_id: uuid.UUID, user: Any) -> list[Client]:
+    """Return the selected organization's retrieval clients."""
+    with get_session() as session:
+        membership = session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first()
+        if membership is None:
+            raise ValueError("Organization membership required")
+        return list(
+            session.exec(
+                select(Client)
+                .where(Client.organization_id == organization_id)
+                .order_by(Client.name)
+            ).all()
+        )
+
+
+def list_visible_clients(user: Any) -> list[Client]:
+    """Return clients in organizations the user can access."""
+    with get_session() as session:
+        return list(
+            session.exec(
+                select(Client)
+                .join(
+                    OrganizationMembership,
+                    OrganizationMembership.organization_id == Client.organization_id,
+                )
+                .where(
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
+                .order_by(Client.name)
+            ).all()
+        )
 
 
 def get_organization_file_library(
@@ -197,29 +273,35 @@ def get_organization_file_library(
     }
 
 
-def get_organization_key_settings() -> list[dict[str, Any]]:
+def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any]]:
     """Return organizations and non-sensitive BYOK status for the settings page."""
     with get_session() as session:
-        clients = list(session.exec(select(Client).order_by(Client.name)).all())
+        organizations = (
+            list_organizations(user)
+            if user is not None
+            else list(
+                session.exec(select(Organization).order_by(Organization.name)).all()
+            )
+        )
         return [
             {
-                "id": client.id,
-                "name": client.name,
-                "key_suffix": get_organization_api_key_suffix(session, client.id),
+                "id": organization.id,
+                "name": organization.name,
+                "key_suffix": get_organization_api_key_suffix(session, organization.id),
                 "provider_base_url": get_organization_provider_base_url(
-                    session, client.id
+                    session, organization.id
                 ),
                 "pending_invitations": [
                     {"id": invitation.id, "email": invitation.email}
                     for invitation in session.exec(
                         select(BetaInvitation).where(
-                            BetaInvitation.client_id == client.id,
+                            BetaInvitation.organization_id == organization.id,
                             BetaInvitation.status == "pending",
                         )
                     ).all()
                 ],
             }
-            for client in clients
+            for organization in organizations
         ]
 
 
@@ -227,25 +309,44 @@ def save_organization_key(
     client_id: uuid.UUID,
     api_key: str,
     provider_base_url: str,
+    user: Any | None = None,
 ) -> None:
     """Save a BYOK credential for an existing organization."""
     with get_session() as session:
-        if get_client_by_id(session, client_id) is None:
+        if session.get(Organization, client_id) is None:
             raise ValueError("Organization not found")
+        if user is not None and session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == client_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first() is None:
+            raise ValueError("Organization membership required")
         save_organization_api_key(session, client_id, api_key, provider_base_url)
 
 
-def invite_organization_reviewer(client_id: uuid.UUID, email: str) -> None:
+def invite_organization_reviewer(
+    organization_id: uuid.UUID, email: str, user: Any | None = None
+) -> None:
     """Create or refresh a pending reviewer invitation for an organization."""
     email = email.strip().lower()
     if not email:
         raise ValueError("Email is required")
     with get_session() as session:
-        if get_client_by_id(session, client_id) is None:
+        if session.get(Organization, organization_id) is None:
             raise ValueError("Organization not found")
+        if user is not None and session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first() is None:
+            raise ValueError("Organization membership required")
         invitation = session.exec(
             select(BetaInvitation).where(
-                BetaInvitation.client_id == client_id,
+                BetaInvitation.organization_id == organization_id,
                 BetaInvitation.email == email,
                 BetaInvitation.status == "pending",
             )
@@ -253,7 +354,7 @@ def invite_organization_reviewer(client_id: uuid.UUID, email: str) -> None:
         if invitation is None:
             send_clerk_invitation(email)
             invitation = BetaInvitation(
-                client_id=client_id,
+                organization_id=organization_id,
                 email=email,
                 role=UserRole.REVIEWER,
             )
@@ -265,18 +366,27 @@ def invite_organization_reviewer(client_id: uuid.UUID, email: str) -> None:
 
 
 def revoke_organization_reviewer_invitation(
-    client_id: uuid.UUID,
+    organization_id: uuid.UUID,
     invitation_id: uuid.UUID,
+    user: Any | None = None,
 ) -> None:
     """Revoke one pending organization reviewer invitation."""
     with get_session() as session:
         invitation = session.get(BetaInvitation, invitation_id)
         if (
             invitation is None
-            or invitation.client_id != client_id
+            or invitation.organization_id != organization_id
             or invitation.status != "pending"
         ):
             raise ValueError("Pending reviewer invitation not found")
+        if user is not None and session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first() is None:
+            raise ValueError("Organization membership required")
         invitation.status = "revoked"
         invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(invitation)
@@ -328,6 +438,8 @@ def _store_raw_file(
 def ingest_and_propose(
     existing_client_id: uuid.UUID | None,
     new_client_name: str | None,
+    organization_id: uuid.UUID,
+    user: Any,
     source_uploads: list[Any],
     target_schema_bytes: bytes,
     model: str | None = None,
@@ -367,9 +479,20 @@ def ingest_and_propose(
     object_store = get_object_store()
 
     with get_session() as session:
-        client = get_or_create_client(session, existing_client_id, new_client_name)
-        api_key = get_organization_api_key(session, client.id)
-        base_url = get_organization_provider_base_url(session, client.id)
+        membership = session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first()
+        if membership is None:
+            raise ValueError("Organization membership required")
+        client = get_or_create_client(
+            session, existing_client_id, new_client_name, organization_id
+        )
+        api_key = get_organization_api_key(session, organization_id)
+        base_url = get_organization_provider_base_url(session, organization_id)
         if not api_key or not base_url:
             raise RuntimeError(
                 "No organization provider credentials are configured. "
@@ -456,10 +579,13 @@ def propose_mapping(
         spec = get_mapping_spec(session, spec_id)
         if spec is None:
             raise ValueError("Mapping spec not found")
+        client = get_client_by_id(session, spec.client_id)
+        if client is None or client.organization_id is None:
+            raise ValueError("Client organization not found")
         target_schema = TargetSchema.model_validate(spec.target_schema_json)
-        organization_api_key = get_organization_api_key(session, spec.client_id)
+        organization_api_key = get_organization_api_key(session, client.organization_id)
         organization_base_url = get_organization_provider_base_url(
-            session, spec.client_id
+            session, client.organization_id
         )
         propose_mapping_spec(
             session,

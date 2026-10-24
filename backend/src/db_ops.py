@@ -24,6 +24,7 @@ from models import (
     AuditLog,
     BusinessRule,
     BusinessRuleStatus,
+    Client,
     ExtractedEvidence,
     FileStatus,
     FolderIngestionResult,
@@ -31,10 +32,14 @@ from models import (
     MappingColumn,
     MappingSpec,
     MappingSpecStatus,
+    Organization,
+    OrganizationApiKey,
+    OrganizationMembership,
     RawFile,
     SpreadsheetProfile,
     TargetSchema,
     User,
+    UserRole,
 )
 from parser import (
     discover_source_tables,
@@ -112,7 +117,67 @@ def create_tables(engine: Engine | None = None) -> None:
                 "ADD COLUMN IF NOT EXISTS provider_base_url VARCHAR NOT NULL DEFAULT ''"
             )
         )
+        connection.execute(
+            text("ALTER TABLE client ADD COLUMN IF NOT EXISTS organization_id UUID")
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE betainvitation "
+                "ADD COLUMN IF NOT EXISTS organization_id UUID"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE organizationapikey "
+                "ADD COLUMN IF NOT EXISTS organization_id UUID"
+            )
+        )
+        connection.execute(
+            text(
+                "DO $$ BEGIN "
+                "IF EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'organizationapikey' "
+                "AND column_name = 'client_id') "
+                "THEN ALTER TABLE organizationapikey "
+                "ALTER COLUMN client_id DROP NOT NULL; "
+                "END IF; END $$"
+            )
+        )
+        connection.execute(
+            text(
+                "DO $$ BEGIN "
+                "IF EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'betainvitation' AND column_name = 'client_id') "
+                "THEN ALTER TABLE betainvitation ALTER COLUMN client_id DROP NOT NULL; "
+                "END IF; END $$"
+            )
+        )
         connection.commit()
+    with Session(engine) as session:
+        legacy_clients = list(
+            session.exec(select(Client).where(Client.organization_id.is_(None))).all()
+        )
+        if legacy_clients:
+            organization = Organization(name="Legacy organization")
+            session.add(organization)
+            session.flush()
+            for client in legacy_clients:
+                client.organization_id = organization.id
+                session.add(client)
+            for user in session.exec(select(User).where(User.role == UserRole.ADMIN)):
+                session.add(
+                    OrganizationMembership(
+                        organization_id=organization.id,
+                        user_id=user.id,
+                        role=UserRole.ADMIN,
+                    )
+                )
+            for key in session.exec(
+                select(OrganizationApiKey).where(OrganizationApiKey.organization_id.is_(None))
+            ):
+                key.organization_id = organization.id
+                session.add(key)
+            session.commit()
 
 
 def get_session(engine: Engine | None = None) -> Session:

@@ -330,10 +330,32 @@ class FolderIngestionResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class Client(SQLModel, table=True):
-    """A tenant/client onboarded into the platform."""
+class Organization(SQLModel, table=True):
+    """Application-managed authorization tenant containing users and clients."""
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    name: str = SQLField(index=True, unique=True)
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+
+
+class OrganizationMembership(SQLModel, table=True):
+    """A user's role within an organization."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    organization_id: uuid.UUID = SQLField(foreign_key="organization.id", index=True)
+    user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True)
+    role: UserRole = SQLField(default=UserRole.CREATOR)
+    revoked_at: datetime.datetime | None = SQLField(default=None)
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+
+
+class Client(SQLModel, table=True):
+    """A retrieval and data-context boundary owned by an organization."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    organization_id: uuid.UUID | None = SQLField(
+        default=None, foreign_key="organization.id", index=True
+    )
     name: str = SQLField(index=True)
     meta: dict[str, Any] = SQLField(default={}, sa_column=Column("meta", JSON))
     created_at: datetime.datetime = SQLField(
@@ -341,23 +363,14 @@ class Client(SQLModel, table=True):
     )
 
 
-class ClientMembership(SQLModel, table=True):
-    """A user's role within a client tenant."""
-
-    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True)
-    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True)
-    role: UserRole = SQLField(default=UserRole.CREATOR)
-    revoked_at: datetime.datetime | None = SQLField(default=None)
-    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
-
-
 class BetaInvitation(SQLModel, table=True):
     """A pending invitation that authorizes Clerk account provisioning."""
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
     email: str = SQLField(index=True)
-    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True)
+    organization_id: uuid.UUID | None = SQLField(
+        default=None, foreign_key="organization.id", index=True
+    )
     role: UserRole = SQLField(default=UserRole.REVIEWER)
     status: str = SQLField(default="pending", index=True)
     created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
@@ -368,7 +381,9 @@ class OrganizationApiKey(SQLModel, table=True):
     """Encrypted organization-scoped API key for BYOK mapping operations."""
 
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
-    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True, unique=True)
+    organization_id: uuid.UUID = SQLField(
+        foreign_key="organization.id", index=True, unique=True
+    )
     encrypted_key: str = SQLField(sa_column=Column(Text))
     key_suffix: str = SQLField(default="")
     provider_base_url: str = SQLField(default="")

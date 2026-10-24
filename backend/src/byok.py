@@ -50,7 +50,7 @@ def _fernet() -> Fernet:
 
 def save_organization_api_key(
     session: Session,
-    client_id: uuid.UUID,
+    organization_id: uuid.UUID,
     api_key: str,
     provider_base_url: str,
 ) -> None:
@@ -60,10 +60,12 @@ def save_organization_api_key(
         raise ValueError("API key is required")
     provider_base_url = validate_provider_base_url(provider_base_url)
     record = session.exec(
-        select(OrganizationApiKey).where(OrganizationApiKey.client_id == client_id)
+        select(OrganizationApiKey).where(
+            OrganizationApiKey.organization_id == organization_id
+        )
     ).first()
     if record is None:
-        record = OrganizationApiKey(client_id=client_id, encrypted_key="")
+        record = OrganizationApiKey(organization_id=organization_id, encrypted_key="")
     record.encrypted_key = _fernet().encrypt(api_key.encode("utf-8")).decode("utf-8")
     record.key_suffix = api_key[-4:]
     record.provider_base_url = provider_base_url
@@ -72,10 +74,14 @@ def save_organization_api_key(
     session.commit()
 
 
-def get_organization_api_key(session: Session, client_id: uuid.UUID) -> str | None:
+def get_organization_api_key(
+    session: Session, organization_id: uuid.UUID
+) -> str | None:
     """Decrypt an organization's key only for the outbound provider request."""
     record = session.exec(
-        select(OrganizationApiKey).where(OrganizationApiKey.client_id == client_id)
+        select(OrganizationApiKey).where(
+            OrganizationApiKey.organization_id == organization_id
+        )
     ).first()
     if record is None:
         return None
@@ -86,12 +92,13 @@ def get_organization_api_key(session: Session, client_id: uuid.UUID) -> str | No
 
 
 def get_organization_provider_base_url(
-    session: Session,
-    client_id: uuid.UUID,
+    session: Session, organization_id: uuid.UUID
 ) -> str | None:
     """Return an organization's validated OpenAI-compatible endpoint."""
     record = session.exec(
-        select(OrganizationApiKey).where(OrganizationApiKey.client_id == client_id)
+        select(OrganizationApiKey).where(
+            OrganizationApiKey.organization_id == organization_id
+        )
     ).first()
     if record is None or not record.provider_base_url:
         return None
@@ -99,11 +106,12 @@ def get_organization_provider_base_url(
 
 
 def get_organization_api_key_suffix(
-    session: Session,
-    client_id: uuid.UUID,
+    session: Session, organization_id: uuid.UUID
 ) -> str | None:
     """Return only the non-sensitive key suffix for settings UI display."""
     record = session.exec(
-        select(OrganizationApiKey).where(OrganizationApiKey.client_id == client_id)
+        select(OrganizationApiKey).where(
+            OrganizationApiKey.organization_id == organization_id
+        )
     ).first()
     return record.key_suffix if record else None

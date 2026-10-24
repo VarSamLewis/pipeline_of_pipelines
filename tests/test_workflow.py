@@ -6,7 +6,13 @@ import uuid
 
 from conftest import requires_postgres
 from db_ops import create_mapping_spec, get_session
-from models import BetaInvitation, ClientMembership, TargetSchema, UserRole
+from models import (
+    BetaInvitation,
+    Organization,
+    OrganizationMembership,
+    TargetSchema,
+    UserRole,
+)
 from sqlmodel import select
 from workflow import (
     get_or_create_client,
@@ -22,10 +28,15 @@ pytestmark = requires_postgres
 def _mapping_spec() -> tuple[uuid.UUID, uuid.UUID]:
     """Create an isolated organization and draft mapping spec."""
     with get_session() as session:
-        organization = get_or_create_client(session, None, f"Test {uuid.uuid4()}")
+        organization = Organization(name=f"Test organization {uuid.uuid4()}")
+        session.add(organization)
+        session.flush()
+        client = get_or_create_client(
+            session, None, f"Test client {uuid.uuid4()}", organization.id
+        )
         spec = create_mapping_spec(
             session,
-            client_id=organization.id,
+            client_id=client.id,
             source_raw_file_ids=[],
             target_schema=TargetSchema(name="test", tables=[]),
             description="test",
@@ -161,14 +172,14 @@ def test_clerk_authentication_accepts_reviewer_invitation(monkeypatch) -> None:
     with get_session() as session:
         invitation = session.exec(
             select(BetaInvitation).where(
-                BetaInvitation.client_id == organization_id,
+                BetaInvitation.organization_id == organization_id,
                 BetaInvitation.email == "reviewer@example.com",
             )
         ).one()
         membership = session.exec(
-            select(ClientMembership).where(
-                ClientMembership.user_id == user.id,
-                ClientMembership.client_id == organization_id,
+            select(OrganizationMembership).where(
+                OrganizationMembership.user_id == user.id,
+                OrganizationMembership.organization_id == organization_id,
             )
         ).one()
     assert invitation.status == "accepted"

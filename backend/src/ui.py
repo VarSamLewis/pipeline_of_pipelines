@@ -33,13 +33,15 @@ from fastapi.templating import Jinja2Templates
 from workflow import (
     approve_mapping_and_execute,
     approve_result,
+    create_organization,
     get_mapping_review,
     get_organization_file_library,
     get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
     invite_organization_reviewer,
-    list_clients,
+    list_organizations,
+    list_visible_clients,
     reject_mapping,
     reject_result,
     revoke_organization_reviewer_invitation,
@@ -83,7 +85,8 @@ def upload_page(request: Request, user: Any = Depends(require_auth)) -> Any:
         "upload.html",
         {
             **_user_context(request, user),
-            "clients": list_clients(),
+            "organizations": list_organizations(user),
+            "clients": list_visible_clients(user),
             "max_source_files": get_settings().max_source_files,
         },
     )
@@ -93,6 +96,7 @@ def upload_page(request: Request, user: Any = Depends(require_auth)) -> Any:
 def upload_submit(
     request: Request,
     client_select: str = Form(""),
+    organization_select: str = Form(""),
     new_client_name: str = Form(""),
     source_files: list[UploadFile] = File(default_factory=list),
     target_schema: UploadFile = File(...),
@@ -100,6 +104,13 @@ def upload_submit(
 ) -> Any:
     """Ingest files, extract evidence, and propose a mapping."""
     existing_client_id = uuid.UUID(client_select) if client_select else None
+    if not organization_select:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": "Select an organization"},
+        )
+    organization_id = uuid.UUID(organization_select)
     valid_source_files = [f for f in source_files if f.filename]
 
     try:
@@ -110,6 +121,8 @@ def upload_submit(
         spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
+            organization_id=organization_id,
+            user=user,
             source_uploads=valid_source_files,
             target_schema_bytes=target_schema_bytes,
         )
@@ -152,7 +165,7 @@ def organization_settings_page(
         "settings.html",
         {
             **_user_context(request, user),
-            "organizations": get_organization_key_settings(),
+            "organizations": get_organization_key_settings(user),
         },
     )
 
@@ -167,10 +180,28 @@ def save_organization_key_endpoint(
 ) -> Any:
     """Save an encrypted organization API key without rendering it back."""
     try:
-        save_organization_key_record(client_id, api_key, provider_base_url)
+        save_organization_key_record(client_id, api_key, provider_base_url, user)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
     return HTMLResponse("<span class='save-note'>Key saved</span>")
+
+
+@router.post("/settings/organizations")
+def create_organization_endpoint(
+    request: Request,
+    name: str = Form(""),
+    user: Any = Depends(require_role("admin")),
+) -> Any:
+    """Create an organization before configuring its members and credentials."""
+    try:
+        create_organization(name, user)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, "/settings")
 
 
 @router.post("/settings/{client_id}/reviewers")
@@ -182,7 +213,7 @@ def invite_reviewer(
 ) -> Any:
     """Invite a colleague as an organization reviewer."""
     try:
-        invite_organization_reviewer(client_id, email)
+        invite_organization_reviewer(client_id, email, user)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
     return HTMLResponse("<span class='save-note'>Reviewer invited</span>")
@@ -197,7 +228,7 @@ def revoke_reviewer_invitation(
 ) -> Any:
     """Revoke a pending reviewer invitation."""
     try:
-        revoke_organization_reviewer_invitation(client_id, invitation_id)
+            revoke_organization_reviewer_invitation(client_id, invitation_id, user)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return HTMLResponse("<span class='save-note'>Invitation revoked</span>")

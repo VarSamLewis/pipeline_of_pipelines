@@ -64,7 +64,7 @@ def _verified_claims(token: str) -> Mapping[str, Any]:
 def authenticate_clerk_session(token: str) -> Any:
     """Verify a Clerk JWT and provision only identities with pending invitations."""
     from db_ops import get_session
-    from models import BetaInvitation, ClientMembership, User, UserRole
+    from models import BetaInvitation, OrganizationMembership, User, UserRole
 
     claims = _verified_claims(token)
     external_id = claims["sub"]
@@ -109,9 +109,9 @@ def authenticate_clerk_session(token: str) -> Any:
         session.flush()
         for invitation in invitations:
             session.add(
-                ClientMembership(
+                OrganizationMembership(
                     user_id=user.id,
-                    client_id=invitation.client_id,
+                    organization_id=invitation.organization_id,
                     role=invitation.role,
                 )
             )
@@ -211,16 +211,19 @@ def require_client_membership(
     user: Any,
     client_id: uuid.UUID,
 ) -> None:
-    """Raise 403 unless the user has an active membership for the client."""
-    from models import ClientMembership, UserRole
+    """Raise 403 unless the user belongs to the client's organization."""
+    from models import Client, OrganizationMembership
 
-    if AUTH_BYPASS_LOCAL or user.role == UserRole.ADMIN:
+    if AUTH_BYPASS_LOCAL:
         return
+    client = session.get(Client, client_id)
+    if client is None or client.organization_id is None:
+        raise HTTPException(404, "Client not found")
     membership = session.exec(
-        select(ClientMembership).where(
-            ClientMembership.user_id == user.id,
-            ClientMembership.client_id == client_id,
-            cast(Any, ClientMembership.revoked_at).is_(None),
+        select(OrganizationMembership).where(
+            OrganizationMembership.user_id == user.id,
+            OrganizationMembership.organization_id == client.organization_id,
+            cast(Any, OrganizationMembership.revoked_at).is_(None),
         )
     ).first()
     if membership is None:

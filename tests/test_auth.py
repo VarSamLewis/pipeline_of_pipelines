@@ -43,8 +43,12 @@ class FakeMembershipResult:
 class FakeMembershipSession:
     """Minimal session that returns the configured active membership result."""
 
-    def __init__(self, membership: object | None) -> None:
+    def __init__(self, membership: object | None, organization_id: uuid.UUID) -> None:
         self.membership = membership
+        self.organization_id = organization_id
+
+    def get(self, _: object, __: object) -> SimpleNamespace:
+        return SimpleNamespace(organization_id=self.organization_id)
 
     def exec(self, _: object) -> FakeMembershipResult:
         return FakeMembershipResult(self.membership)
@@ -138,7 +142,9 @@ def test_client_membership_allows_active_member(
         email="member@example.com",
         role=UserRole.REVIEWER,
     )
-    require_client_membership(FakeMembershipSession(object()), user, uuid.uuid4())
+    require_client_membership(
+        FakeMembershipSession(object(), uuid.uuid4()), user, uuid.uuid4()
+    )
 
 
 def test_client_membership_rejects_missing_or_revoked_member(
@@ -155,14 +161,16 @@ def test_client_membership_rejects_missing_or_revoked_member(
         role=UserRole.REVIEWER,
     )
     with pytest.raises(HTTPException) as exc_info:
-        require_client_membership(FakeMembershipSession(None), user, uuid.uuid4())
+        require_client_membership(
+            FakeMembershipSession(None, uuid.uuid4()), user, uuid.uuid4()
+        )
     assert exc_info.value.status_code == 403
 
 
-def test_client_membership_allows_admin_without_membership(
+def test_client_membership_rejects_admin_without_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Admins can manage every tenant without explicit memberships."""
+    """Admins remain constrained to their organization memberships."""
     import auth_service
     from models import User
 
@@ -172,7 +180,11 @@ def test_client_membership_allows_admin_without_membership(
         email="admin@example.com",
         role=UserRole.ADMIN,
     )
-    require_client_membership(FakeMembershipSession(None), user, uuid.uuid4())
+    with pytest.raises(HTTPException) as exc_info:
+        require_client_membership(
+            FakeMembershipSession(None, uuid.uuid4()), user, uuid.uuid4()
+        )
+    assert exc_info.value.status_code == 403
 
 
 def test_require_auth_rejects_anonymous_request() -> None:

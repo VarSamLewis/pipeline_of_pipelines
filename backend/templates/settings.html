@@ -5,6 +5,15 @@
 {% block content %}
 <h1>Organization settings</h1>
 <p class="muted">API keys are encrypted at rest and are never shown again after saving.</p>
+<div class="card">
+  <h2>Create organization</h2>
+  <form hx-post="/settings/organizations" hx-target="#organization-status" hx-swap="innerHTML">
+    <label for="organization-name">Organization name</label>
+    <input id="organization-name" name="name" type="text" required>
+    <button class="btn btn-primary" type="submit">Create organization</button>
+    <span id="organization-status" aria-live="polite"></span>
+  </form>
+</div>
 {% for organization in organizations %}
 <div class="card">
   <h2>{{ organization.name }}</h2>
@@ -44,6 +53,6 @@
   {% endif %}
 </div>
 {% else %}
-<p class="muted">Create an organization before adding a key.</p>
+<p class="muted">Create an organization above to add provider credentials.</p>
 {% endfor %}
 {% endblock %}

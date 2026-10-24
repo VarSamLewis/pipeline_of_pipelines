@@ -14,11 +14,20 @@
     hx-indicator="#upload-progress"
   >
     <div class="form-group">
-      <label for="client_select">Organization</label>
+      <label for="organization_select">Organization</label>
+      <select id="organization_select" name="organization_select" onchange="filterClients()" required>
+        <option value="">-- Select organization --</option>
+        {% for organization in organizations %}
+          <option value="{{ organization.id }}">{{ organization.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="client_select">Client context</label>
       <select id="client_select" name="client_select" onchange="toggleNewClient(this)">
-        <option value="">-- Create new organization --</option>
+        <option value="">-- Create new client context --</option>
         {% for client in clients %}
-          <option value="{{ client.id }}">{{ client.name }}</option>
+          <option value="{{ client.id }}" data-organization="{{ client.organization_id }}">{{ client.name }}</option>
         {% endfor %}
       </select>
     </div>
@@ -73,6 +82,15 @@ function toggleNewClient(select) {
     fields.style.display = 'none';
     fields.querySelectorAll('input').forEach(i => i.required = false);
   }
+}
+function filterClients() {
+  const organizationId = document.getElementById('organization_select').value;
+  const clientSelect = document.getElementById('client_select');
+  clientSelect.value = '';
+  clientSelect.querySelectorAll('option[data-organization]').forEach(option => {
+    option.hidden = option.dataset.organization !== organizationId;
+  });
+  toggleNewClient(clientSelect);
 }
 </script>
 {% endblock %}

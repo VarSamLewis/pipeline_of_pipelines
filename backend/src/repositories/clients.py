@@ -12,10 +12,11 @@ from sqlmodel import Session
 def create_client(
     session: Session,
     name: str,
+    organization_id: uuid.UUID,
     metadata: dict[str, Any] | None = None,
 ) -> Client:
     """Register a client in the caller-owned transaction."""
-    client = Client(name=name, meta=metadata or {})
+    client = Client(name=name, organization_id=organization_id, meta=metadata or {})
     session.add(client)
     session.flush()
     session.refresh(client)
