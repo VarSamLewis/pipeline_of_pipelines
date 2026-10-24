@@ -24,7 +24,7 @@ clerk_publishable_key  = "pk_test_cG9zc2libGUtdGFwaXItMjU4Ni5jbGVyay5hY2NvdW50cy
 clerk_issuer           = "https://possible-tapir-2586.clerk.accounts.dev"
 clerk_audience         = "pipeline-dev-api"
 clerk_jwks_url         = "https://possible-tapir-2586.clerk.accounts.dev/.well-known/jwks.json"
-clerk_sign_in_url      = "https://possible-tapir-2586.clerk.accounts.dev/sign-in"
+clerk_sign_in_url      = "https://possible-tapir-2586.accounts.dev/sign-in"
 clerk_jwt_template     = "pipeline-beta"
 bootstrap_admin_emails = ["admin@example.com"]
 
