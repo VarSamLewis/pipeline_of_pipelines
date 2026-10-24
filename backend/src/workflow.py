@@ -178,7 +178,8 @@ def list_visible_clients(user: Any) -> list[Client]:
                 select(Client)
                 .join(
                     OrganizationMembership,
-                    OrganizationMembership.organization_id == Client.organization_id,
+                    cast(Any, OrganizationMembership.organization_id)
+                    == Client.organization_id,
                 )
                 .where(
                     OrganizationMembership.user_id == user.id,

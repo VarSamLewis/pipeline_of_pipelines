@@ -155,7 +155,9 @@ def create_tables(engine: Engine | None = None) -> None:
         connection.commit()
     with Session(engine) as session:
         legacy_clients = list(
-            session.exec(select(Client).where(Client.organization_id.is_(None))).all()
+            session.exec(
+                select(Client).where(cast(Any, Client.organization_id).is_(None))
+            ).all()
         )
         if legacy_clients:
             organization = Organization(name="Legacy organization")
@@ -173,7 +175,9 @@ def create_tables(engine: Engine | None = None) -> None:
                     )
                 )
             for key in session.exec(
-                select(OrganizationApiKey).where(OrganizationApiKey.organization_id.is_(None))
+                select(OrganizationApiKey).where(
+                    cast(Any, OrganizationApiKey.organization_id).is_(None)
+                )
             ):
                 key.organization_id = organization.id
                 session.add(key)
