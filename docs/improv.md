@@ -3,8 +3,8 @@ UI
 - Done - Remove Reviewers from settings page
 - Done - Client context on homepage - should just be client
 - Done - Add panel to see client files
-- Make runs a seperate page and show all prev runs within an org
-- Revamp entire UI
+- Done - Make runs a seperate page and show all prev runs within an org
+- Revamp entire to panel format UI
 
 Applications
 Seperate roles
@@ -18,7 +18,7 @@ Data Storage
 Infra
 
 - Improve docker build step in CICD
-- Sepeate cloud run instance
+- Seperate cloud run instance
 - Remove seperate envs
 - Cost optimisation
 - Scale up DB server???
