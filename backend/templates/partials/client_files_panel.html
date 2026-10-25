@@ -1,0 +1,38 @@
+<div class="client-files-panel">
+  <div class="card-header">
+    <div>
+      <h2>{{ library.client.name }}</h2>
+      <p class="muted">Client file summary</p>
+    </div>
+    <a class="btn btn-sm" href="/clients/{{ library.client.id }}/files">View all files</a>
+  </div>
+
+  <div class="client-file-summary">
+    <div>
+      <strong>Target schema</strong>
+      {% if library.target_schema %}
+      <span>{{ library.target_schema.name }} ({{ library.target_schema.table_count }} tables)</span>
+      {% else %}
+      <span class="muted">Not uploaded</span>
+      {% endif %}
+    </div>
+    <div>
+      <strong>Mappings</strong>
+      <span>{{ library.mappings | length }}</span>
+    </div>
+  </div>
+
+  <h3>Recent source files</h3>
+  {% if library.source_files %}
+  <ul class="client-file-list">
+    {% for file in library.source_files[:5] %}
+    <li>
+      <strong>{{ file.name }}</strong>
+      <span class="muted">{{ file.mime_type }} · {{ file.size_bytes }} bytes · {{ file.status }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No source files have been uploaded for this client.</p>
+  {% endif %}
+</div>

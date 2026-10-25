@@ -53,6 +53,40 @@ def test_upload_uses_client_terminology(monkeypatch) -> None:
     assert 'label for="client_select">Client<' in response.text
     assert "Client context" not in response.text
     assert "New client name" in response.text
+    assert "Select a client to view its files." in response.text
+
+
+def test_client_files_panel_shows_authorized_summary(monkeypatch) -> None:
+    """The upload panel renders a selected client's file summary."""
+    import ui
+    from app import app
+
+    client_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "get_client_file_library",
+        lambda requested_client_id, user: {
+            "client": {"id": requested_client_id, "name": "Acme"},
+            "target_schema": {"name": "records", "table_count": 2},
+            "source_files": [
+                {
+                    "name": "orders.csv",
+                    "mime_type": "text/csv",
+                    "size_bytes": 42,
+                    "status": "parsed",
+                }
+            ],
+            "mappings": [{"id": uuid.uuid4()}],
+        },
+    )
+
+    response = TestClient(app).get(f"/clients/{client_id}/files/panel")
+
+    assert response.status_code == 200
+    assert "Acme" in response.text
+    assert "orders.csv" in response.text
+    assert "records (2 tables)" in response.text
+    assert f"/clients/{client_id}/files" in response.text
 
 
 def test_mapping_review_surfaces_catalog_warnings(

@@ -152,6 +152,24 @@ def client_files_page(
     )
 
 
+@router.get("/clients/{client_id}/files/panel")
+def client_files_panel(
+    request: Request,
+    client_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Render a compact authorized client-file summary for the upload page."""
+    try:
+        library = get_client_file_library(client_id, user)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return templates.TemplateResponse(
+        request,
+        "partials/client_files_panel.html",
+        {**_user_context(request, user), "library": library},
+    )
+
+
 @router.get("/settings")
 def organization_settings_page(
     request: Request,

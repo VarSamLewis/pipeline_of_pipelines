@@ -38,14 +38,9 @@
         <input id="new_client_name" name="new_client_name" placeholder="e.g. Acme Ltd" type="text">
       </div>
     </div>
-    {% if clients %}
-    <p class="muted">
-      Browse client files:
-      {% for client in clients %}
-        <a href="/clients/{{ client.id }}/files">{{ client.name }}</a>{% if not loop.last %}, {% endif %}
-      {% endfor %}
-    </p>
-    {% endif %}
+    <div id="client-files-panel" class="client-files-panel-placeholder">
+      <p class="muted">Select a client to view its files.</p>
+    </div>
 
     <div class="form-group">
       <label for="source_files">Source files</label>
@@ -78,10 +73,23 @@ function toggleNewClient(select) {
   if (select.value === '') {
     fields.style.display = 'block';
     fields.querySelectorAll('input').forEach(i => i.required = true);
+    clearClientFiles('Create the client by completing an upload.');
   } else {
     fields.style.display = 'none';
     fields.querySelectorAll('input').forEach(i => i.required = false);
+    loadClientFiles(select.value);
   }
+}
+function clearClientFiles(message) {
+  document.getElementById('client-files-panel').innerHTML = `<p class="muted">${message}</p>`;
+}
+async function loadClientFiles(clientId) {
+  const panel = document.getElementById('client-files-panel');
+  panel.innerHTML = '<p class="muted">Loading client files...</p>';
+  const response = await fetch(`/clients/${clientId}/files/panel`);
+  panel.innerHTML = response.ok
+    ? await response.text()
+    : '<p class="muted">Client files could not be loaded.</p>';
 }
 function filterClients() {
   const organizationId = document.getElementById('organization_select').value;
@@ -92,6 +100,9 @@ function filterClients() {
     option.hidden = option.dataset.organization !== organizationId;
   });
   toggleNewClient(clientSelect);
+  clearClientFiles(
+    organizationId ? 'Select a client to view its files.' : 'Select an organization first.'
+  );
 }
 </script>
 {% endblock %}
