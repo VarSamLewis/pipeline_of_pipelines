@@ -7,9 +7,11 @@ UI
 - Revamp entire to panel format UI
 
 Applications
-Seperate roles
-Clean code base
-
+- Seperate roles - platform admin (just me), users (can see all clients), org admins (can edit api keys)   
+- Clean code base
+- Enforce organisation membership on UI routes, so invited users only access their organisation’s data.
+- Provide reliable access revocation, including existing sessions.
+ 
 Data Storage
 
 - In cloud storage bucket create a clients/{client_name}/{file_name}\_timestamp.extension
