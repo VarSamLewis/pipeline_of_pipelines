@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "backend" / "src"))
 
 from auth_service import get_current_user, require_client_membership, require_role
 from fastapi import HTTPException
-from models import UserRole
+from models import PlatformRole
 
 
 class FakeRequest:
@@ -59,7 +59,7 @@ def test_local_bypass_returns_admin_user() -> None:
     request = FakeRequest()
     user = get_current_user(request)
     assert user is not None
-    assert user.role == UserRole.ADMIN
+    assert user.platform_role == PlatformRole.PLATFORM_ADMIN
     assert user.email == "local-dev@example.com"
 
 
@@ -99,31 +99,31 @@ def test_send_clerk_invitation_uses_backend_api(
     assert captured["timeout"] == 10
 
 
-def test_require_role_allows_equal_or_higher_role() -> None:
-    """require_role permits users whose role meets or exceeds the requirement."""
+def test_require_role_allows_platform_admin() -> None:
+    """Platform administrators satisfy platform-admin dependencies."""
     from models import User
 
     admin_user = User(
         id=uuid.uuid4(),
         external_user_id="admin-1",
         email="admin@example.com",
-        role=UserRole.ADMIN,
+        platform_role=PlatformRole.PLATFORM_ADMIN,
     )
-    checker = require_role("reviewer")
+    checker = require_role("admin")
     assert checker(admin_user) == admin_user
 
 
-def test_require_role_rejects_insufficient_role() -> None:
-    """require_role rejects users below the required role level."""
+def test_require_role_rejects_standard_user_for_platform_admin() -> None:
+    """Standard users cannot satisfy platform-admin dependencies."""
     from models import User
 
     creator_user = User(
         id=uuid.uuid4(),
         external_user_id="creator-1",
         email="creator@example.com",
-        role=UserRole.CREATOR,
+        platform_role=PlatformRole.USER,
     )
-    checker = require_role("approver")
+    checker = require_role("admin")
     with pytest.raises(HTTPException) as exc_info:
         checker(creator_user)
     assert exc_info.value.status_code == 403
@@ -140,7 +140,7 @@ def test_client_membership_allows_active_member(
     user = User(
         external_user_id="member-1",
         email="member@example.com",
-        role=UserRole.REVIEWER,
+        platform_role=PlatformRole.USER,
     )
     require_client_membership(
         FakeMembershipSession(object(), uuid.uuid4()), user, uuid.uuid4()
@@ -158,7 +158,7 @@ def test_client_membership_rejects_missing_or_revoked_member(
     user = User(
         external_user_id="former-member-1",
         email="former@example.com",
-        role=UserRole.REVIEWER,
+        platform_role=PlatformRole.USER,
     )
     with pytest.raises(HTTPException) as exc_info:
         require_client_membership(
@@ -178,7 +178,7 @@ def test_client_membership_rejects_admin_without_membership(
     user = User(
         external_user_id="admin-1",
         email="admin@example.com",
-        role=UserRole.ADMIN,
+        platform_role=PlatformRole.PLATFORM_ADMIN,
     )
     with pytest.raises(HTTPException) as exc_info:
         require_client_membership(

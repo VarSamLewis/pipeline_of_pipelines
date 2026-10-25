@@ -238,7 +238,7 @@ def save_organization_key_endpoint(
 def create_organization_endpoint(
     request: Request,
     name: str = Form(""),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_role("admin")),
 ) -> Any:
     """Create an organization before configuring its members and credentials."""
     try:

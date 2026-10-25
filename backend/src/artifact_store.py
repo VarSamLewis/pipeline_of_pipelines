@@ -177,6 +177,10 @@ class GCSArtifactStore(ArtifactStore):
     def _artifact_key(spec_id: uuid.UUID, filename: str) -> str:
         if Path(filename).name != filename:
             raise ValueError("Artifact filename must not contain a path")
+        return f"mappings/{spec_id}/artifacts/{filename}"
+
+    @staticmethod
+    def _legacy_artifact_key(spec_id: uuid.UUID, filename: str) -> str:
         return f"output-folders/{spec_id}/{filename}"
 
     def put(self, key: str, data: bytes) -> str:
@@ -196,17 +200,21 @@ class GCSArtifactStore(ArtifactStore):
         return BytesIO(self.get(key))
 
     def write_target_schema(self, client_id: str, schema: TargetSchema) -> None:
-        key = f"target-schemas/{self._safe_segment(client_id)}/target_schema.json"
+        key = f"clients/{self._safe_segment(client_id)}/schemas/current/schema.json"
         self.put(key, schema.model_dump_json(indent=2).encode())
 
     def read_target_schema(self, client_id: str) -> TargetSchema:
-        key = f"target-schemas/{self._safe_segment(client_id)}/target_schema.json"
+        key = f"clients/{self._safe_segment(client_id)}/schemas/current/schema.json"
+        if not self.exists(key):
+            key = f"target-schemas/{self._safe_segment(client_id)}/target_schema.json"
         return TargetSchema.model_validate_json(self.get(key))
 
     def folder(self, spec_id: uuid.UUID) -> Path:
-        folder = self.work_dir / "output-folders" / str(spec_id)
+        folder = self.work_dir / "mappings" / str(spec_id)
         folder.mkdir(parents=True, exist_ok=True)
-        prefix = f"output-folders/{spec_id}/"
+        prefix = f"mappings/{spec_id}/artifacts/"
+        if not list(self.bucket.list_blobs(prefix=prefix)):
+            prefix = f"output-folders/{spec_id}/"
         for blob in self.bucket.list_blobs(prefix=prefix):
             name = blob.name.removeprefix(prefix)
             if Path(name).name != name:
@@ -219,7 +227,10 @@ class GCSArtifactStore(ArtifactStore):
         return self.folder(spec_id) / filename
 
     def read_artifact(self, spec_id: uuid.UUID, filename: str) -> bytes:
-        return self.get(self._artifact_key(spec_id, filename))
+        key = self._artifact_key(spec_id, filename)
+        if not self.exists(key):
+            key = self._legacy_artifact_key(spec_id, filename)
+        return self.get(key)
 
     def write_artifact(self, spec_id: uuid.UUID, filename: str, data: bytes) -> None:
         self.put(self._artifact_key(spec_id, filename), data)
@@ -229,7 +240,9 @@ class GCSArtifactStore(ArtifactStore):
         spec_id: uuid.UUID,
         suffix: str | None = None,
     ) -> list[str]:
-        prefix = f"output-folders/{spec_id}/"
+        prefix = f"mappings/{spec_id}/artifacts/"
+        if not list(self.bucket.list_blobs(prefix=prefix)):
+            prefix = f"output-folders/{spec_id}/"
         return sorted(
             name
             for blob in self.bucket.list_blobs(prefix=prefix)
@@ -239,13 +252,16 @@ class GCSArtifactStore(ArtifactStore):
         )
 
     def write_log(self, run_id: uuid.UUID, data: bytes) -> None:
-        self.put(f"execution-logs/{run_id}.json", data)
+        self.put(f"runs/{run_id}/logs/execution.json", data)
 
     def read_log(self, run_id: uuid.UUID) -> bytes:
-        return self.get(f"execution-logs/{run_id}.json")
+        key = f"runs/{run_id}/logs/execution.json"
+        if not self.exists(key):
+            key = f"execution-logs/{run_id}.json"
+        return self.get(key)
 
     def sync_folder(self, spec_id: uuid.UUID) -> None:
-        folder = self.work_dir / "output-folders" / str(spec_id)
+        folder = self.work_dir / "mappings" / str(spec_id)
         if not folder.exists():
             return
         for path in folder.iterdir():

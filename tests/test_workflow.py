@@ -10,8 +10,9 @@ from models import (
     BetaInvitation,
     Organization,
     OrganizationMembership,
+    OrganizationRole,
+    PlatformRole,
     TargetSchema,
-    UserRole,
 )
 from sqlmodel import select
 from workflow import (
@@ -168,7 +169,7 @@ def test_clerk_authentication_accepts_reviewer_invitation(monkeypatch) -> None:
 
     user = auth_service.authenticate_clerk_session("test-token")
 
-    assert user.role == UserRole.REVIEWER
+    assert user.platform_role == PlatformRole.USER
     with get_session() as session:
         invitation = session.exec(
             select(BetaInvitation).where(
@@ -183,4 +184,4 @@ def test_clerk_authentication_accepts_reviewer_invitation(monkeypatch) -> None:
             )
         ).one()
     assert invitation.status == "accepted"
-    assert membership.role == UserRole.REVIEWER
+    assert membership.role == OrganizationRole.MEMBER

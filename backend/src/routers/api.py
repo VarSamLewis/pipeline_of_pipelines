@@ -313,7 +313,7 @@ def me(user: Any = Depends(require_auth)) -> dict[str, Any]:
         "id": str(user.id),
         "email": user.email,
         "name": user.name,
-        "role": user.role.value,
+        "platform_role": user.platform_role.value,
     }
 
 
@@ -334,7 +334,7 @@ def list_users(
                 "id": str(u.id),
                 "email": u.email,
                 "name": u.name,
-                "role": u.role.value,
+                "platform_role": u.platform_role.value,
                 "last_login_at": (
                     u.last_login_at.isoformat() if u.last_login_at else None
                 ),
@@ -350,17 +350,17 @@ def set_user_role(
     user: Any = Depends(require_role("admin")),
 ) -> dict[str, Any]:
     """Update a provisioned user's platform role (admin only)."""
-    from models import User, UserRole
+    from models import PlatformRole, User
 
     try:
-        role = UserRole(payload["role"])
+        role = PlatformRole(payload["platform_role"])
     except (KeyError, ValueError) as exc:
         raise HTTPException(422, "Invalid role") from exc
     with get_session() as session:
         updated = session.get(User, user_id)
         if updated is None:
             raise HTTPException(404, "User not found")
-        updated.role = role
+        updated.platform_role = role
         session.add(updated)
         session.commit()
         session.refresh(updated)
@@ -368,7 +368,7 @@ def set_user_role(
         "id": str(updated.id),
         "email": updated.email,
         "name": updated.name,
-        "role": updated.role.value,
+        "platform_role": updated.platform_role.value,
     }
 
 
@@ -409,7 +409,7 @@ def create_invitation(
     user: Any = Depends(require_role("admin")),
 ) -> dict[str, Any]:
     """Create or update a pending organization invitation for a Clerk email."""
-    from models import BetaInvitation, UserRole
+    from models import BetaInvitation, OrganizationRole
     from sqlmodel import select
 
     email = payload.get("email")
@@ -420,7 +420,7 @@ def create_invitation(
         organization_id = uuid.UUID(organization_id)
     except (TypeError, ValueError) as exc:
         raise HTTPException(422, "organization_id is required") from exc
-    role = UserRole.REVIEWER
+    role = OrganizationRole.MEMBER
     email = email.strip().lower()
     now = datetime.now(UTC).replace(tzinfo=None)
 
@@ -747,8 +747,17 @@ def upload_raw_file(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+        from models import Organization
+
+        organization = session.get(Organization, client.organization_id)
+        if organization is None:
+            raise HTTPException(404, "Client organization not found")
         storage_key = build_storage_key(
-            str(client.id), str(batch.id), file.filename or "unknown", sha256
+            organization.name,
+            str(organization.id),
+            client.name,
+            str(client.id),
+            file.filename or "unknown",
         )
         object_store = get_object_store()
         object_store.put(storage_key, contents)

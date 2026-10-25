@@ -12,7 +12,7 @@ from typing import Any
 
 import polars as pl
 from db_ops import get_session
-from models import TargetSchema
+from models import ExecutionStatus, TargetSchema
 
 # ---------------------------------------------------------------------------
 # Validation and quality
@@ -128,26 +128,48 @@ def compute_quality_profile(df: pl.DataFrame) -> dict[str, Any]:
 def record_execution_run(
     client_id: uuid.UUID,
     spec_id: uuid.UUID,
+    organization_id: uuid.UUID,
     target_environment: str,
 ) -> uuid.UUID:
     """Create an ExecutionRun record and return its UUID."""
     from datetime import datetime
 
-    from models import ExecutionRun, ExecutionStatus
+    from models import ExecutionRun
 
     run = ExecutionRun(
         client_id=client_id,
+        organization_id=organization_id,
         mapping_spec_id=spec_id,
         target_environment=target_environment,
-        status=ExecutionStatus.SUCCESS,
+        status=ExecutionStatus.RUNNING,
         started_at=datetime.now(UTC),
-        finished_at=datetime.now(UTC),
     )
     with get_session() as session:
         session.add(run)
         session.commit()
         session.refresh(run)
         return run.id
+
+
+def finish_execution_run(
+    run_id: uuid.UUID,
+    status: ExecutionStatus,
+    error_message: str | None = None,
+) -> None:
+    """Finalize a persisted execution run after success or failure."""
+    from datetime import datetime
+
+    from models import ExecutionRun
+
+    with get_session() as session:
+        run = session.get(ExecutionRun, run_id)
+        if run is None:
+            return
+        run.status = status
+        run.error_message = error_message
+        run.finished_at = datetime.now(UTC)
+        session.add(run)
+        session.commit()
 
 
 def record_validation_results(

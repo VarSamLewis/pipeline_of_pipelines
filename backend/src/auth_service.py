@@ -64,7 +64,7 @@ def _verified_claims(token: str) -> Mapping[str, Any]:
 def authenticate_clerk_session(token: str) -> Any:
     """Verify a Clerk JWT and provision only identities with pending invitations."""
     from db_ops import get_session
-    from models import BetaInvitation, OrganizationMembership, User, UserRole
+    from models import BetaInvitation, OrganizationMembership, PlatformRole, User
 
     claims = _verified_claims(token)
     external_id = claims["sub"]
@@ -84,7 +84,11 @@ def authenticate_clerk_session(token: str) -> Any:
         if user is not None:
             user.email = email
             user.name = name or user.name
-            user.role = UserRole.ADMIN
+            user.platform_role = (
+                PlatformRole.PLATFORM_ADMIN
+                if email in BOOTSTRAP_ADMIN_EMAILS
+                else PlatformRole.USER
+            )
             user.last_login_at = now
             session.add(user)
             session.commit()
@@ -103,7 +107,11 @@ def authenticate_clerk_session(token: str) -> Any:
             external_user_id=external_id,
             email=email,
             name=name,
-            role=UserRole.ADMIN,
+            platform_role=(
+                PlatformRole.PLATFORM_ADMIN
+                if is_bootstrap_admin
+                else PlatformRole.USER
+            ),
             last_login_at=now,
         )
         session.add(user)
@@ -148,14 +156,14 @@ def send_clerk_invitation(email: str) -> None:
 
 
 def _synthetic_local_user() -> Any:
-    from models import User, UserRole
+    from models import PlatformRole, User
 
     return User(
         id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
         external_user_id="local-dev",
         email="local-dev@example.com",
         name="Local Developer",
-        role=UserRole.ADMIN,
+        platform_role=PlatformRole.PLATFORM_ADMIN,
     )
 
 
@@ -190,18 +198,13 @@ def require_auth(request: Request) -> Any:
 
 def require_role(*allowed_roles: str) -> Callable[[Any], Any]:
     def checker(user: Any = Depends(require_auth)) -> Any:
-        from models import UserRole
+        from models import PlatformRole
 
-        levels = {
-            UserRole.CREATOR: 1,
-            UserRole.REVIEWER: 2,
-            UserRole.APPROVER: 3,
-            UserRole.ADMIN: 4,
-        }
-        if levels[user.role] < max(levels[UserRole(role)] for role in allowed_roles):
-            raise HTTPException(
-                403, f"Requires one of roles: {', '.join(allowed_roles)}"
-            )
+        if (
+            "admin" in allowed_roles
+            and user.platform_role != PlatformRole.PLATFORM_ADMIN
+        ):
+            raise HTTPException(403, "Requires platform admin access")
         return user
 
     return checker

@@ -60,15 +60,22 @@ class ExecutionStatus(str, enum.Enum):
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
 
 
-class UserRole(str, enum.Enum):
-    """Authorization roles enforced by the Clerk-backed auth layer."""
+class PlatformRole(str, enum.Enum):
+    """Global application role independent of organization membership."""
 
-    CREATOR = "creator"
-    REVIEWER = "reviewer"
-    APPROVER = "approver"
-    ADMIN = "admin"
+    PLATFORM_ADMIN = "platform_admin"
+    USER = "user"
+
+
+class OrganizationRole(str, enum.Enum):
+    """A member's administrative capability inside one organization."""
+
+    ORG_ADMIN = "org_admin"
+    MEMBER = "member"
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +351,7 @@ class OrganizationMembership(SQLModel, table=True):
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
     organization_id: uuid.UUID = SQLField(foreign_key="organization.id", index=True)
     user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True)
-    role: UserRole = SQLField(default=UserRole.CREATOR)
+    role: OrganizationRole = SQLField(default=OrganizationRole.MEMBER)
     revoked_at: datetime.datetime | None = SQLField(default=None)
     created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
 
@@ -371,7 +378,7 @@ class BetaInvitation(SQLModel, table=True):
     organization_id: uuid.UUID | None = SQLField(
         default=None, foreign_key="organization.id", index=True
     )
-    role: UserRole = SQLField(default=UserRole.REVIEWER)
+    role: OrganizationRole = SQLField(default=OrganizationRole.MEMBER)
     status: str = SQLField(default="pending", index=True)
     created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
     updated_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
@@ -571,6 +578,9 @@ class ExecutionRun(SQLModel, table=True):
         index=True,
         description="Owning client for direct tenant filtering.",
     )
+    organization_id: uuid.UUID | None = SQLField(
+        default=None, foreign_key="organization.id", index=True
+    )
     mapping_spec_id: uuid.UUID = SQLField(
         foreign_key="mappingspec.id",
         index=True,
@@ -582,6 +592,7 @@ class ExecutionRun(SQLModel, table=True):
     target_environment: str = SQLField(default="local")
     status: ExecutionStatus = SQLField(default=ExecutionStatus.PENDING)
     logs: dict[str, Any] = SQLField(default={}, sa_column=Column(JSON))
+    error_message: str | None = SQLField(default=None, sa_column=Column(Text))
     started_at: datetime.datetime | None = SQLField(default=None)
     finished_at: datetime.datetime | None = SQLField(default=None)
 
@@ -647,7 +658,7 @@ class User(SQLModel, table=True):
     external_user_id: str = SQLField(unique=True, index=True)
     email: str = SQLField(index=True)
     name: str | None = SQLField(default=None)
-    role: UserRole = SQLField(default=UserRole.CREATOR)
+    platform_role: PlatformRole = SQLField(default=PlatformRole.USER)
     last_login_at: datetime.datetime | None = SQLField(default=None)
     created_at: datetime.datetime = SQLField(
         default_factory=datetime.datetime.utcnow,

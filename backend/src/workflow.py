@@ -59,14 +59,16 @@ from models import (
     MappingSpecStatus,
     Organization,
     OrganizationMembership,
+    OrganizationRole,
     PipelineOutputFolder,
+    PlatformRole,
     RawFile,
     TargetSchema,
-    UserRole,
     ValidationResult,
 )
 from pipeline import (
     compute_quality_profile,
+    finish_execution_run,
     record_execution_run,
     record_staging_metadata,
     record_validation_results,
@@ -115,6 +117,8 @@ def get_or_create_client(
 
 def create_organization(name: str, user: Any) -> Organization:
     """Create an application-managed organization for its initial administrator."""
+    if user.platform_role != PlatformRole.PLATFORM_ADMIN:
+        raise ValueError("Platform admin access required")
     name = name.strip()
     if not name:
         raise ValueError("Organization name is required")
@@ -126,7 +130,7 @@ def create_organization(name: str, user: Any) -> Organization:
             OrganizationMembership(
                 organization_id=organization.id,
                 user_id=user.id,
-                role=UserRole.ADMIN,
+                role=OrganizationRole.ORG_ADMIN,
             )
         )
         session.commit()
@@ -310,13 +314,23 @@ def get_client_file_library(
 def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any]]:
     """Return organizations and non-sensitive BYOK status for the settings page."""
     with get_session() as session:
-        organizations = (
-            list_organizations(user)
-            if user is not None
-            else list(
-                session.exec(select(Organization).order_by(Organization.name)).all()
-            )
+        all_organizations = list(
+            session.exec(select(Organization).order_by(Organization.name)).all()
         )
+        organizations = (
+            all_organizations
+            if user is None or user.platform_role == PlatformRole.PLATFORM_ADMIN
+            else list_organizations(user)
+        )
+        memberships = {
+            membership.organization_id: membership
+            for membership in session.exec(
+                select(OrganizationMembership).where(
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
+            ).all()
+        } if user is not None else {}
         return [
             {
                 "id": organization.id,
@@ -325,30 +339,44 @@ def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any
                 "provider_base_url": get_organization_provider_base_url(
                     session, organization.id
                 ),
+                "can_edit_credentials": (
+                    user is not None
+                    and (
+                        user.platform_role == PlatformRole.PLATFORM_ADMIN
+                        or (
+                            memberships.get(organization.id) is not None
+                            and memberships[organization.id].role
+                            == OrganizationRole.ORG_ADMIN
+                        )
+                    )
+                ),
             }
             for organization in organizations
         ]
 
 
 def save_organization_key(
-    client_id: uuid.UUID,
+    organization_id: uuid.UUID,
     api_key: str,
     provider_base_url: str,
     user: Any | None = None,
 ) -> None:
     """Save a BYOK credential for an existing organization."""
     with get_session() as session:
-        if session.get(Organization, client_id) is None:
+        if session.get(Organization, organization_id) is None:
             raise ValueError("Organization not found")
-        if user is not None and session.exec(
+        membership = None if user is None else session.exec(
             select(OrganizationMembership).where(
-                OrganizationMembership.organization_id == client_id,
+                OrganizationMembership.organization_id == organization_id,
                 OrganizationMembership.user_id == user.id,
                 cast(Any, OrganizationMembership.revoked_at).is_(None),
             )
-        ).first() is None:
-            raise ValueError("Organization membership required")
-        save_organization_api_key(session, client_id, api_key, provider_base_url)
+        ).first()
+        if user is not None and user.platform_role != PlatformRole.PLATFORM_ADMIN and (
+            membership is None or membership.role != OrganizationRole.ORG_ADMIN
+        ):
+            raise ValueError("Organization admin access required")
+        save_organization_api_key(session, organization_id, api_key, provider_base_url)
 
 
 def invite_organization_reviewer(
@@ -381,10 +409,10 @@ def invite_organization_reviewer(
             invitation = BetaInvitation(
                 organization_id=organization_id,
                 email=email,
-                role=UserRole.REVIEWER,
+                role=OrganizationRole.MEMBER,
             )
         else:
-            invitation.role = UserRole.REVIEWER
+            invitation.role = OrganizationRole.MEMBER
             invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(invitation)
         session.commit()
@@ -443,7 +471,16 @@ def _store_raw_file(
     elif file_type == "xlsx":
         mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-    storage_key = build_storage_key(str(client.id), str(batch_id), filename, sha256)
+    organization = session.get(Organization, client.organization_id)
+    if organization is None:
+        raise ValueError("Client organization not found")
+    storage_key = build_storage_key(
+        organization.name,
+        str(organization.id),
+        client.name,
+        str(client.id),
+        filename,
+    )
     object_store.put(storage_key, contents)
 
     raw_file = create_raw_file(
@@ -680,71 +717,68 @@ def execute_approved_mapping(
     output_folder: Path | None = None,
 ) -> dict[str, Any]:
     """Execute the approved generated artifact, validate, and record the run."""
-    folder = output_folder or get_artifact_store().folder(spec_id)
-    folder.mkdir(parents=True, exist_ok=True)
-    create_output_folder(spec_id, folder)
-
-    mapping_spec = load_mapping_spec(spec_id)
-    target_schema = load_target_schema_from_spec(mapping_spec)
-    target_tables = {column["target_table"] for column in mapping_spec["columns"]}
-    target_dfs: dict[str, pl.DataFrame] = {}
-    csv_paths: dict[str, Path] = {}
-    for table_name in target_tables:
-        csv_path = folder / f"{table_name}.csv"
-        if csv_path.exists():
-            target_dfs[table_name] = pl.read_csv(csv_path)
-            csv_paths[table_name] = csv_path
-
-    if len(csv_paths) == 1:
-        filenames = generated_artifact_filenames(
-            target_schema,
-            mapping_spec.get("client_name", "client"),
-            mapping_spec.get("created_at"),
-        )
-        shutil.copy2(next(iter(csv_paths.values())), folder / filenames["results"])
+    from models import ExecutionStatus
 
     with get_session() as session:
         spec = get_mapping_spec(session, spec_id)
         if spec is None:
             raise ValueError("Mapping spec not found")
-        client_id = spec.client_id
+        client = get_client_by_id(session, spec.client_id)
+        if client is None or client.organization_id is None:
+            raise ValueError("Client organization not found")
+        run_id = record_execution_run(
+            client.id, spec_id, client.organization_id, target_environment
+        )
 
-    run_id = record_execution_run(client_id, spec_id, target_environment)
-    test_results = run_validation_tests(
-        target_dfs,
-        mapping_spec["columns"],
-        target_schema,
-    )
-    record_validation_results(run_id, test_results)
-    record_staging_metadata(
-        run_id,
-        target_dfs,
-        mapping_spec["columns"],
-        target_schema,
-    )
-    filenames = generated_artifact_filenames(
-        target_schema,
-        mapping_spec.get("client_name", "client"),
-        mapping_spec.get("created_at"),
-    )
-    results_path = folder / filenames["results"]
-    result = {
-        "execution_run_id": str(run_id),
-        "spec_id": str(spec_id),
-        "target_environment": target_environment,
-        "csv_paths": {name: str(path) for name, path in csv_paths.items()},
-        "results_csv": str(results_path) if results_path.exists() else None,
-        "validation_results": test_results,
-        "quality_profiles": {
-            name: compute_quality_profile(df) for name, df in target_dfs.items()
-        },
-    }
-    get_artifact_store().write_log(
-        run_id,
-        json.dumps(result, indent=2, default=str).encode("utf-8"),
-    )
-    get_artifact_store().sync_folder(spec_id)
-    return result
+    try:
+        folder = output_folder or get_artifact_store().folder(spec_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        create_output_folder(spec_id, folder)
+        mapping_spec = load_mapping_spec(spec_id)
+        target_schema = load_target_schema_from_spec(mapping_spec)
+        target_tables = {column["target_table"] for column in mapping_spec["columns"]}
+        target_dfs: dict[str, pl.DataFrame] = {}
+        csv_paths: dict[str, Path] = {}
+        for table_name in target_tables:
+            csv_path = folder / f"{table_name}.csv"
+            if csv_path.exists():
+                target_dfs[table_name] = pl.read_csv(csv_path)
+                csv_paths[table_name] = csv_path
+        filenames = generated_artifact_filenames(
+            target_schema,
+            mapping_spec.get("client_name", "client"),
+            mapping_spec.get("created_at"),
+        )
+        if len(csv_paths) == 1:
+            shutil.copy2(next(iter(csv_paths.values())), folder / filenames["results"])
+        test_results = run_validation_tests(
+            target_dfs, mapping_spec["columns"], target_schema
+        )
+        record_validation_results(run_id, test_results)
+        record_staging_metadata(
+            run_id, target_dfs, mapping_spec["columns"], target_schema
+        )
+        results_path = folder / filenames["results"]
+        result = {
+            "execution_run_id": str(run_id),
+            "spec_id": str(spec_id),
+            "target_environment": target_environment,
+            "csv_paths": {name: str(path) for name, path in csv_paths.items()},
+            "results_csv": str(results_path) if results_path.exists() else None,
+            "validation_results": test_results,
+            "quality_profiles": {
+                name: compute_quality_profile(df) for name, df in target_dfs.items()
+            },
+        }
+        get_artifact_store().write_log(
+            run_id, json.dumps(result, indent=2, default=str).encode("utf-8")
+        )
+        get_artifact_store().sync_folder(spec_id)
+        finish_execution_run(run_id, ExecutionStatus.SUCCESS)
+        return result
+    except Exception as exc:
+        finish_execution_run(run_id, ExecutionStatus.FAILED, str(exc))
+        raise
 
 
 def approve_mapping_and_execute(

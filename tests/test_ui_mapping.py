@@ -20,8 +20,9 @@ def test_settings_omits_reviewer_controls(monkeypatch) -> None:
             {
                 "id": uuid.uuid4(),
                 "name": "Acme",
-                "key_suffix": None,
-                "provider_base_url": None,
+                    "key_suffix": None,
+                    "provider_base_url": None,
+                    "can_edit_credentials": True,
             }
         ],
     )

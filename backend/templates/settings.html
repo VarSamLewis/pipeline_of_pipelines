@@ -5,6 +5,7 @@
 {% block content %}
 <h1>Organization settings</h1>
 <p class="muted">API keys are encrypted at rest and are never shown again after saving.</p>
+{% if user.platform_role.value == "platform_admin" %}
 <div class="card">
   <h2>Create organization</h2>
   <form hx-post="/settings/organizations" hx-target="#organization-status" hx-swap="innerHTML">
@@ -14,12 +15,14 @@
     <span id="organization-status" aria-live="polite"></span>
   </form>
 </div>
+{% endif %}
 {% for organization in organizations %}
 <div class="card">
   <h2>{{ organization.name }}</h2>
   <p class="muted">
     {% if organization.key_suffix %}Provider: {{ organization.provider_base_url }}. Key ending in {{ organization.key_suffix }}{% else %}No provider credentials saved.{% endif %}
   </p>
+  {% if organization.can_edit_credentials %}
   <form hx-post="/settings/{{ organization.id }}/api-key" hx-target="#key-status-{{ organization.id }}" hx-swap="innerHTML">
     <label for="api-key-{{ organization.id }}">API key</label>
     <input id="api-key-{{ organization.id }}" name="api_key" type="password" autocomplete="off" required>
@@ -28,6 +31,9 @@
     <button class="btn btn-primary" type="submit">Save key</button>
     <span id="key-status-{{ organization.id }}" aria-live="polite"></span>
   </form>
+  {% else %}
+  <p class="muted">Only an organization admin can edit provider credentials.</p>
+  {% endif %}
 </div>
 {% else %}
 <p class="muted">Create an organization above to add provider credentials.</p>

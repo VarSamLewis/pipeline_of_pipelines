@@ -25,6 +25,7 @@ from models import (
     BusinessRule,
     BusinessRuleStatus,
     Client,
+    ExecutionRun,
     ExtractedEvidence,
     FileStatus,
     FolderIngestionResult,
@@ -35,11 +36,12 @@ from models import (
     Organization,
     OrganizationApiKey,
     OrganizationMembership,
+    OrganizationRole,
+    PlatformRole,
     RawFile,
     SpreadsheetProfile,
     TargetSchema,
     User,
-    UserRole,
 )
 from parser import (
     discover_source_tables,
@@ -118,6 +120,37 @@ def create_tables(engine: Engine | None = None) -> None:
             )
         )
         connection.execute(
+            text(
+                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS "
+                "platform_role VARCHAR NOT NULL DEFAULT 'user'"
+            )
+        )
+        connection.execute(
+            text(
+                "DO $$ BEGIN "
+                "IF EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'user' AND column_name = 'role') "
+                "THEN ALTER TABLE \"user\" ALTER COLUMN role DROP NOT NULL; "
+                "END IF; END $$"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE organizationmembership SET role = "
+                "CASE WHEN role = 'admin' THEN 'org_admin' ELSE 'member' END "
+                "WHERE role NOT IN ('org_admin', 'member')"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE executionrun "
+                "ADD COLUMN IF NOT EXISTS organization_id UUID"
+            )
+        )
+        connection.execute(
+            text("ALTER TABLE executionrun ADD COLUMN IF NOT EXISTS error_message TEXT")
+        )
+        connection.execute(
             text("ALTER TABLE client ADD COLUMN IF NOT EXISTS organization_id UUID")
         )
         connection.execute(
@@ -166,12 +199,12 @@ def create_tables(engine: Engine | None = None) -> None:
             for client in legacy_clients:
                 client.organization_id = organization.id
                 session.add(client)
-            for user in session.exec(select(User).where(User.role == UserRole.ADMIN)):
+            for user in session.exec(select(User)):
                 session.add(
                     OrganizationMembership(
                         organization_id=organization.id,
                         user_id=user.id,
-                        role=UserRole.ADMIN,
+                        role=OrganizationRole.ORG_ADMIN,
                     )
                 )
             for key in session.exec(
@@ -182,6 +215,23 @@ def create_tables(engine: Engine | None = None) -> None:
                 key.organization_id = organization.id
                 session.add(key)
             session.commit()
+        for user in session.exec(select(User)):
+            user.platform_role = (
+                PlatformRole.PLATFORM_ADMIN
+                if user.email.lower() in _settings.bootstrap_admin_emails
+                else PlatformRole.USER
+            )
+            session.add(user)
+        for run in session.exec(
+            select(ExecutionRun).where(
+                cast(Any, ExecutionRun.organization_id).is_(None)
+            )
+        ):
+            run_client = session.get(Client, run.client_id)
+            if run_client is not None:
+                run.organization_id = run_client.organization_id
+                session.add(run)
+        session.commit()
 
 
 def get_session(engine: Engine | None = None) -> Session:
@@ -320,8 +370,15 @@ def ingest_client_folder(
                 "wordprocessingml.document"
             )
 
+        organization = session.get(Organization, client.organization_id)
+        if organization is None:
+            raise ValueError("Client organization not found")
         storage_key = build_storage_key(
-            str(client.id), str(batch.id), file_path.name, sha256
+            organization.name,
+            str(organization.id),
+            client.name,
+            str(client.id),
+            file_path.name,
         )
         object_store.put(storage_key, file_bytes)
 

@@ -15,7 +15,7 @@
         <a href="/upload">Upload</a>
         <a href="/runs">Runs</a>
         <a href="/settings">Organization settings</a>
-        <span>{{ user.email }} ({{ user.role.value }})</span>
+        <span>{{ user.email }} ({{ user.platform_role.value }})</span>
         <form action="/auth/logout" method="post" style="display:inline;">
           <button class="btn btn-sm" type="submit">Logout</button>
         </form>

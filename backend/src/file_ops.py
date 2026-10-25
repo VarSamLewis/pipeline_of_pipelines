@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
@@ -133,11 +135,29 @@ class LocalObjectStore(ObjectStore):
 
 
 def build_storage_key(
+    organization_name: str,
+    organization_id: str,
+    client_name: str,
     client_id: str,
-    ingestion_batch_id: str,
     original_filename: str,
-    sha256: str,
+    uploaded_at: datetime | None = None,
 ) -> str:
-    """Build a deterministic storage key for a raw file."""
-    safe_name = original_filename.replace("/", "_")
-    return f"{client_id}/{ingestion_batch_id}/{sha256[:16]}_{safe_name}"
+    """Build a readable, collision-resistant key for one immutable raw upload."""
+    uploaded_at = uploaded_at or datetime.now(UTC)
+    if uploaded_at.tzinfo is None:
+        uploaded_at = uploaded_at.replace(tzinfo=UTC)
+    timestamp = uploaded_at.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    path = Path(original_filename)
+    stem = _storage_segment(path.stem) or "file"
+    extension = re.sub(r"[^A-Za-z0-9.]", "", path.suffix.lower())
+    organization = _storage_segment(organization_name) or "organization"
+    client = _storage_segment(client_name) or "client"
+    return (
+        f"organizations/{organization}--{organization_id}/"
+        f"clients/{client}--{client_id}/raw/{stem}_{timestamp}{extension}"
+    )
+
+
+def _storage_segment(value: str) -> str:
+    """Normalize a user-facing name into one safe object-key segment."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-_").lower()
