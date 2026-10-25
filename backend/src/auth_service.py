@@ -84,6 +84,7 @@ def authenticate_clerk_session(token: str) -> Any:
         if user is not None:
             user.email = email
             user.name = name or user.name
+            user.role = UserRole.ADMIN
             user.last_login_at = now
             session.add(user)
             session.commit()
@@ -102,7 +103,7 @@ def authenticate_clerk_session(token: str) -> Any:
             external_user_id=external_id,
             email=email,
             name=name,
-            role=UserRole.ADMIN if is_bootstrap_admin else UserRole.REVIEWER,
+            role=UserRole.ADMIN,
             last_login_at=now,
         )
         session.add(user)

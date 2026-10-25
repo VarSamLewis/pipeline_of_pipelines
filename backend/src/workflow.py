@@ -190,6 +190,39 @@ def list_visible_clients(user: Any) -> list[Client]:
         )
 
 
+def list_organization_runs(
+    organization_id: uuid.UUID, user: Any
+) -> list[dict[str, Any]]:
+    """Return execution history for one organization the user can access."""
+    with get_session() as session:
+        membership = session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user.id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first()
+        if membership is None:
+            raise ValueError("Organization membership required")
+        rows = session.exec(
+            select(ExecutionRun, Client)
+            .join(Client, cast(Any, Client.id) == ExecutionRun.client_id)
+            .where(cast(Any, Client.organization_id) == organization_id)
+            .order_by(cast(Any, ExecutionRun.started_at).desc())
+        ).all()
+        return [
+            {
+                "id": run.id,
+                "client_name": client.name,
+                "status": run.status.value,
+                "target_environment": run.target_environment,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+            }
+            for run, client in rows
+        ]
+
+
 def get_client_file_library(
     client_id: uuid.UUID,
     user: Any,

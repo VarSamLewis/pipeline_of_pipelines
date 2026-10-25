@@ -89,6 +89,43 @@ def test_client_files_panel_shows_authorized_summary(monkeypatch) -> None:
     assert f"/clients/{client_id}/files" in response.text
 
 
+def test_runs_page_lists_organization_history(monkeypatch) -> None:
+    """Runs are listed for the selected organization with links to details."""
+    import ui
+    from app import app
+
+    organization_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "list_organizations",
+        lambda user: [SimpleNamespace(id=organization_id, name="Acme")],
+    )
+    monkeypatch.setattr(
+        ui,
+        "list_organization_runs",
+        lambda requested_organization_id, user: [
+            {
+                "id": run_id,
+                "client_name": "Orders",
+                "status": "success",
+                "target_environment": "production",
+                "started_at": "2026-10-25T10:00:00",
+                "finished_at": "2026-10-25T10:01:00",
+            }
+        ],
+    )
+
+    response = TestClient(app).get(f"/runs?organization_id={organization_id}")
+
+    assert response.status_code == 200
+    assert "Previous runs" in response.text
+    assert "Orders" in response.text
+    assert "production" in response.text
+    assert f"/results/{run_id}" in response.text
+    assert "Organization settings" in response.text
+
+
 def test_mapping_review_surfaces_catalog_warnings(
     monkeypatch,
 ) -> None:

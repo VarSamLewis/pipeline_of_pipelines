@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Runs - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<h1>Runs</h1>
+
+{% if organizations %}
+<form class="card" method="get" action="/runs">
+  <div class="form-group">
+    <label for="organization_id">Organization</label>
+    <select id="organization_id" name="organization_id" onchange="this.form.submit()">
+      {% for organization in organizations %}
+      <option value="{{ organization.id }}" {% if organization.id == selected_organization_id %}selected{% endif %}>{{ organization.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Previous runs</h2>
+    <span class="muted">{{ runs | length }} total</span>
+  </div>
+  {% if runs %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Started</th><th>Client</th><th>Environment</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for run in runs %}
+        <tr>
+          <td>{{ run.started_at or "Unknown" }}</td>
+          <td>{{ run.client_name }}</td>
+          <td>{{ run.target_environment }}</td>
+          <td><span class="badge badge-{{ run.status }}">{{ run.status }}</span></td>
+          <td><a href="/results/{{ run.id }}">View run</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No runs have been recorded for this organization.</p>
+  {% endif %}
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">Create or join an organization before viewing runs.</p>
+</div>
+{% endif %}
+{% endblock %}

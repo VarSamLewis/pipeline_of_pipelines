@@ -39,6 +39,7 @@ from workflow import (
     get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
+    list_organization_runs,
     list_organizations,
     list_visible_clients,
     reject_mapping,
@@ -170,12 +171,43 @@ def client_files_panel(
     )
 
 
+@router.get("/runs")
+def runs_page(
+    request: Request,
+    organization_id: uuid.UUID | None = Query(default=None),
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Render an organization's execution-run history."""
+    organizations = list_organizations(user)
+    selected_organization_id = organization_id or (
+        organizations[0].id if organizations else None
+    )
+    try:
+        runs = (
+            list_organization_runs(selected_organization_id, user)
+            if selected_organization_id is not None
+            else []
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return templates.TemplateResponse(
+        request,
+        "runs.html",
+        {
+            **_user_context(request, user),
+            "organizations": organizations,
+            "selected_organization_id": selected_organization_id,
+            "runs": runs,
+        },
+    )
+
+
 @router.get("/settings")
 def organization_settings_page(
     request: Request,
-    user: Any = Depends(require_role("admin")),
+    user: Any = Depends(require_auth),
 ) -> Any:
-    """Render organization-level BYOK settings for the bootstrap admin."""
+    """Render organization-level BYOK settings for an authenticated user."""
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -192,7 +224,7 @@ def save_organization_key_endpoint(
     client_id: uuid.UUID,
     api_key: str = Form(""),
     provider_base_url: str = Form(""),
-    user: Any = Depends(require_role("admin")),
+    user: Any = Depends(require_auth),
 ) -> Any:
     """Save an encrypted organization API key without rendering it back."""
     try:
@@ -206,7 +238,7 @@ def save_organization_key_endpoint(
 def create_organization_endpoint(
     request: Request,
     name: str = Form(""),
-    user: Any = Depends(require_role("admin")),
+    user: Any = Depends(require_auth),
 ) -> Any:
     """Create an organization before configuring its members and credentials."""
     try:

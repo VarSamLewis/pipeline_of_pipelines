@@ -13,8 +13,9 @@
     <div class="user">
       {% if user %}
         <a href="/upload">Upload</a>
+        <a href="/runs">Runs</a>
+        <a href="/settings">Organization settings</a>
         <span>{{ user.email }} ({{ user.role.value }})</span>
-        {% if user.role.value == "admin" %}<a href="/settings">Settings</a>{% endif %}
         <form action="/auth/logout" method="post" style="display:inline;">
           <button class="btn btn-sm" type="submit">Logout</button>
         </form>
