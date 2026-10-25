@@ -3,8 +3,56 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+
+
+def test_settings_omits_reviewer_controls(monkeypatch) -> None:
+    """Organization settings only manage organization credentials."""
+    import ui
+    from app import app
+
+    monkeypatch.setattr(
+        ui,
+        "get_organization_key_settings",
+        lambda user: [
+            {
+                "id": uuid.uuid4(),
+                "name": "Acme",
+                "key_suffix": None,
+                "provider_base_url": None,
+            }
+        ],
+    )
+
+    response = TestClient(app).get("/settings")
+
+    assert response.status_code == 200
+    assert "Provider base URL" in response.text
+    assert "Reviewers" not in response.text
+    assert "Invite reviewer" not in response.text
+
+
+def test_upload_uses_client_terminology(monkeypatch) -> None:
+    """The upload form distinguishes authorization organizations from clients."""
+    import ui
+    from app import app
+
+    organization_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "list_organizations",
+        lambda user: [SimpleNamespace(id=organization_id, name="Acme")],
+    )
+    monkeypatch.setattr(ui, "list_visible_clients", lambda user: [])
+
+    response = TestClient(app).get("/upload")
+
+    assert response.status_code == 200
+    assert 'label for="client_select">Client<' in response.text
+    assert "Client context" not in response.text
+    assert "New client name" in response.text
 
 
 def test_mapping_review_surfaces_catalog_warnings(
@@ -103,18 +151,18 @@ def test_mapping_confirmation_displays_execution_errors(monkeypatch) -> None:
     assert "Pipeline execution exceeded the configured time limit" in response.text
 
 
-def test_organization_files_page_lists_workflow_files(monkeypatch) -> None:
-    """The organization library groups source and generated workflow files."""
+def test_client_files_page_lists_workflow_files(monkeypatch) -> None:
+    """The client library groups source and generated workflow files."""
     import ui
     from app import app
 
-    organization_id = uuid.uuid4()
+    client_id = uuid.uuid4()
     mapping_id = uuid.uuid4()
     monkeypatch.setattr(
         ui,
-        "get_organization_file_library",
-        lambda client_id, user: {
-            "organization": {"id": organization_id, "name": "Acme"},
+        "get_client_file_library",
+        lambda requested_client_id, user: {
+            "client": {"id": requested_client_id, "name": "Acme"},
             "target_schema": {"name": "records", "table_count": 1},
             "source_files": [
                 {
@@ -142,7 +190,7 @@ def test_organization_files_page_lists_workflow_files(monkeypatch) -> None:
         },
     )
 
-    response = TestClient(app).get(f"/organizations/{organization_id}/files")
+    response = TestClient(app).get(f"/clients/{client_id}/files")
 
     assert response.status_code == 200
     assert "Acme files" in response.text

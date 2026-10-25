@@ -34,17 +34,15 @@ from workflow import (
     approve_mapping_and_execute,
     approve_result,
     create_organization,
+    get_client_file_library,
     get_mapping_review,
-    get_organization_file_library,
     get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
-    invite_organization_reviewer,
     list_organizations,
     list_visible_clients,
     reject_mapping,
     reject_result,
-    revoke_organization_reviewer_invitation,
 )
 from workflow import (
     save_organization_key as save_organization_key_record,
@@ -136,15 +134,15 @@ def upload_submit(
     return _htmx_redirect(request, f"/mapping/{spec_id}")
 
 
-@router.get("/organizations/{client_id}/files")
-def organization_files_page(
+@router.get("/clients/{client_id}/files")
+def client_files_page(
     request: Request,
     client_id: uuid.UUID,
     user: Any = Depends(require_auth),
 ) -> Any:
-    """Render the authorized file inventory for one organization."""
+    """Render the authorized file inventory for one client."""
     try:
-        library = get_organization_file_library(client_id, user)
+        library = get_client_file_library(client_id, user)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return templates.TemplateResponse(
@@ -202,36 +200,6 @@ def create_organization_endpoint(
             {**_user_context(request, user), "message": str(exc)},
         )
     return _htmx_redirect(request, "/settings")
-
-
-@router.post("/settings/{client_id}/reviewers")
-def invite_reviewer(
-    request: Request,
-    client_id: uuid.UUID,
-    email: str = Form(""),
-    user: Any = Depends(require_role("admin")),
-) -> Any:
-    """Invite a colleague as an organization reviewer."""
-    try:
-        invite_organization_reviewer(client_id, email, user)
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return HTMLResponse("<span class='save-note'>Reviewer invited</span>")
-
-
-@router.post("/settings/{client_id}/reviewers/{invitation_id}/revoke")
-def revoke_reviewer_invitation(
-    request: Request,
-    client_id: uuid.UUID,
-    invitation_id: uuid.UUID,
-    user: Any = Depends(require_role("admin")),
-) -> Any:
-    """Revoke a pending reviewer invitation."""
-    try:
-            revoke_organization_reviewer_invitation(client_id, invitation_id, user)
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return HTMLResponse("<span class='save-note'>Invitation revoked</span>")
 
 
 # ---------------------------------------------------------------------------

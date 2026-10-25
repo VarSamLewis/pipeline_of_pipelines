@@ -17,7 +17,6 @@
 {% for organization in organizations %}
 <div class="card">
   <h2>{{ organization.name }}</h2>
-  <p><a href="/organizations/{{ organization.id }}/files">View organization files</a></p>
   <p class="muted">
     {% if organization.key_suffix %}Provider: {{ organization.provider_base_url }}. Key ending in {{ organization.key_suffix }}{% else %}No provider credentials saved.{% endif %}
   </p>
@@ -29,28 +28,6 @@
     <button class="btn btn-primary" type="submit">Save key</button>
     <span id="key-status-{{ organization.id }}" aria-live="polite"></span>
   </form>
-  <hr>
-  <h3>Reviewers</h3>
-  <p class="muted">Invited colleagues receive reviewer access when they sign in with this email.</p>
-  <form hx-post="/settings/{{ organization.id }}/reviewers" hx-target="#invite-status-{{ organization.id }}" hx-swap="innerHTML">
-    <label for="reviewer-email-{{ organization.id }}">Email address</label>
-    <input id="reviewer-email-{{ organization.id }}" name="email" type="email" required>
-    <button class="btn btn-primary" type="submit">Invite reviewer</button>
-    <span id="invite-status-{{ organization.id }}" aria-live="polite"></span>
-  </form>
-  {% if organization.pending_invitations %}
-  <p class="muted">Pending invitations:</p>
-  <ul class="pending-invitations">
-  {% for invitation in organization.pending_invitations %}
-    <li>
-      {{ invitation.email }}
-      <form class="inline-form" hx-post="/settings/{{ organization.id }}/reviewers/{{ invitation.id }}/revoke" hx-target="#invite-status-{{ organization.id }}" hx-swap="innerHTML">
-        <button class="btn btn-sm" type="submit">Revoke</button>
-      </form>
-    </li>
-  {% endfor %}
-  </ul>
-  {% endif %}
 </div>
 {% else %}
 <p class="muted">Create an organization above to add provider credentials.</p>

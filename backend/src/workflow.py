@@ -190,7 +190,7 @@ def list_visible_clients(user: Any) -> list[Client]:
         )
 
 
-def get_organization_file_library(
+def get_client_file_library(
     client_id: uuid.UUID,
     user: Any,
 ) -> dict[str, Any]:
@@ -258,7 +258,7 @@ def get_organization_file_library(
         target_schema = {"name": schema.name, "table_count": len(schema.tables)}
 
     return {
-        "organization": {"id": client.id, "name": client.name},
+        "client": {"id": client.id, "name": client.name},
         "target_schema": target_schema,
         "source_files": [
             {
@@ -292,15 +292,6 @@ def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any
                 "provider_base_url": get_organization_provider_base_url(
                     session, organization.id
                 ),
-                "pending_invitations": [
-                    {"id": invitation.id, "email": invitation.email}
-                    for invitation in session.exec(
-                        select(BetaInvitation).where(
-                            BetaInvitation.organization_id == organization.id,
-                            BetaInvitation.status == "pending",
-                        )
-                    ).all()
-                ],
             }
             for organization in organizations
         ]
