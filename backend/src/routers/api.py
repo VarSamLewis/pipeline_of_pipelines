@@ -32,6 +32,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from access_control import require_execution_run_access, require_mapping_spec_access
 from auth_service import (
     AUTH_BYPASS_LOCAL,
     CLERK_JWT_TEMPLATE,
@@ -114,20 +115,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def require_mapping_spec_access(
-    spec_id: uuid.UUID,
-    user: Any = Depends(require_auth),
-) -> None:
-    """Authorize access to the client that owns a mapping specification."""
-    if AUTH_BYPASS_LOCAL:
-        return
-    with get_session() as session:
-        spec = get_mapping_spec(session, spec_id)
-        if spec is None:
-            raise HTTPException(404, "Mapping spec not found")
-        require_client_membership(session, user, spec.client_id)
-
-
 def require_client_id_access(
     client_id: uuid.UUID,
     user: Any = Depends(require_auth),
@@ -154,22 +141,6 @@ def require_raw_file_access(
         if raw_file is None:
             raise HTTPException(404, "Raw file not found")
         require_client_membership(session, user, raw_file.client_id)
-
-
-def require_execution_run_access(
-    run_id: uuid.UUID,
-    user: Any = Depends(require_auth),
-) -> None:
-    """Authorize access through the execution run's owning client."""
-    if AUTH_BYPASS_LOCAL:
-        return
-    from models import ExecutionRun
-
-    with get_session() as session:
-        run = session.get(ExecutionRun, run_id)
-        if run is None:
-            raise HTTPException(404, "Execution run not found")
-        require_client_membership(session, user, run.client_id)
 
 
 def require_business_rule_access(
@@ -361,6 +332,7 @@ def set_user_role(
         if updated is None:
             raise HTTPException(404, "User not found")
         updated.platform_role = role
+        updated.session_version += 1
         session.add(updated)
         session.commit()
         session.refresh(updated)
@@ -370,6 +342,109 @@ def set_user_role(
         "name": updated.name,
         "platform_role": updated.platform_role.value,
     }
+
+
+@app.get("/admin/organizations/{organization_id}/members")
+def list_organization_members(
+    organization_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+) -> list[dict[str, Any]]:
+    """List active and revoked memberships for one organization."""
+    from models import Organization, OrganizationMembership, User
+    from sqlmodel import select
+
+    with get_session() as session:
+        if session.get(Organization, organization_id) is None:
+            raise HTTPException(404, "Organization not found")
+        rows = session.exec(
+            select(OrganizationMembership, User)
+            .join(User, cast(Any, User.id) == OrganizationMembership.user_id)
+            .where(OrganizationMembership.organization_id == organization_id)
+            .order_by(User.email)
+        ).all()
+        return [
+            {
+                "user_id": str(member.id),
+                "email": member_user.email,
+                "role": member.role.value,
+                "revoked_at": member.revoked_at.isoformat()
+                if member.revoked_at
+                else None,
+            }
+            for member, member_user in rows
+        ]
+
+
+@app.post("/admin/organizations/{organization_id}/members")
+def set_organization_member(
+    organization_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, str]:
+    """Create, restore, or change a member's organization role."""
+    from models import Organization, OrganizationMembership, OrganizationRole, User
+    from sqlmodel import select
+
+    try:
+        user_id = uuid.UUID(payload["user_id"])
+        role = OrganizationRole(payload.get("role", "member"))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(422, "user_id and a valid role are required") from exc
+    with get_session() as session:
+        if session.get(Organization, organization_id) is None:
+            raise HTTPException(404, "Organization not found")
+        member_user = session.get(User, user_id)
+        if member_user is None:
+            raise HTTPException(404, "User not found")
+        membership = session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user_id,
+            )
+        ).first()
+        if membership is None:
+            membership = OrganizationMembership(
+                organization_id=organization_id, user_id=user_id, role=role
+            )
+        else:
+            membership.role = role
+            membership.revoked_at = None
+            member_user.session_version += 1
+            session.add(member_user)
+        session.add(membership)
+        session.commit()
+        return {"user_id": str(user_id), "role": role.value}
+
+
+@app.post("/admin/organizations/{organization_id}/members/{user_id}/revoke")
+def revoke_organization_member(
+    organization_id: uuid.UUID,
+    user_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, str]:
+    """Revoke organization access and invalidate the user's active sessions."""
+    from models import OrganizationMembership, User
+    from sqlmodel import select
+
+    with get_session() as session:
+        membership = session.exec(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == user_id,
+                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            )
+        ).first()
+        if membership is None:
+            raise HTTPException(404, "Active organization membership not found")
+        member_user = session.get(User, user_id)
+        if member_user is None:
+            raise HTTPException(404, "User not found")
+        membership.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+        member_user.session_version += 1
+        session.add(membership)
+        session.add(member_user)
+        session.commit()
+    return {"user_id": str(user_id), "status": "revoked"}
 
 
 @app.get("/admin/invitations")

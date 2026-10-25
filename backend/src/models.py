@@ -659,6 +659,7 @@ class User(SQLModel, table=True):
     email: str = SQLField(index=True)
     name: str | None = SQLField(default=None)
     platform_role: PlatformRole = SQLField(default=PlatformRole.USER)
+    session_version: int = SQLField(default=1)
     last_login_at: datetime.datetime | None = SQLField(default=None)
     created_at: datetime.datetime = SQLField(
         default_factory=datetime.datetime.utcnow,

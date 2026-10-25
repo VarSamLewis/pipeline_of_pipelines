@@ -122,6 +122,12 @@ def create_tables(engine: Engine | None = None) -> None:
         connection.execute(
             text(
                 "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS "
+                "session_version INTEGER NOT NULL DEFAULT 1"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS "
                 "platform_role VARCHAR NOT NULL DEFAULT 'user'"
             )
         )

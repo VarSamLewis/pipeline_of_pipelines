@@ -63,6 +63,39 @@ def test_local_bypass_returns_admin_user() -> None:
     assert user.email == "local-dev@example.com"
 
 
+def test_session_version_invalidates_existing_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A role or membership change invalidates existing signed sessions."""
+    import auth_service
+    import db_ops
+    from models import PlatformRole, User
+
+    class FakeSession:
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, _: object, __: object) -> User:
+            return User(
+                external_user_id="member-1",
+                email="member@example.com",
+                platform_role=PlatformRole.USER,
+                session_version=2,
+            )
+
+    monkeypatch.setattr(auth_service, "AUTH_BYPASS_LOCAL", False)
+    monkeypatch.setattr(db_ops, "get_session", lambda: FakeSession())
+    request = FakeRequest(
+        {"user_id": str(uuid.uuid4()), "session_version": 1}
+    )
+
+    assert auth_service.get_current_user(request) is None
+    assert request.session == {}
+
+
 def test_send_clerk_invitation_uses_backend_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -16,6 +16,7 @@ import uuid
 from typing import Any
 
 import polars as pl
+from access_control import require_execution_run_access, require_mapping_spec_access
 from auth_service import require_auth, require_role
 from config import get_settings
 from fastapi import (
@@ -262,6 +263,7 @@ def mapping_review_page(
     request: Request,
     spec_id: uuid.UUID,
     user: Any = Depends(require_auth),
+    _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Render the proposed mapping JSON for human review."""
     mapping = get_mapping_review(spec_id)
@@ -314,6 +316,7 @@ def update_mapping_column_from_editor(
     lookup_key: str = Form(""),
     lookup_value: str = Form(""),
     user: Any = Depends(require_role("reviewer")),
+    _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Save one guided mapping edit after validating catalog selections."""
     try:
@@ -339,6 +342,7 @@ def mapping_confirm(
     request: Request,
     spec_id: uuid.UUID,
     user: Any = Depends(require_role("admin")),
+    _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Approve the reviewed mapping, then generate and execute its pipeline."""
     try:
@@ -357,6 +361,7 @@ def mapping_reject(
     request: Request,
     spec_id: uuid.UUID,
     user: Any = Depends(require_auth),
+    _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Reject the mapping and return to the upload page."""
     reject_mapping(spec_id)
@@ -373,6 +378,7 @@ def results_review_page(
     request: Request,
     run_id: uuid.UUID,
     user: Any = Depends(require_auth),
+    _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Render the results review page."""
     return templates.TemplateResponse(
@@ -388,6 +394,7 @@ def results_csv_page(
     run_id: uuid.UUID,
     page: int = Query(1, ge=1),
     user: Any = Depends(require_auth),
+    _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Return a paginated fragment of the results CSV."""
     paths = get_result_review(run_id)
@@ -426,6 +433,7 @@ def results_code_page(
     request: Request,
     run_id: uuid.UUID,
     user: Any = Depends(require_auth),
+    _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Return the generated pipeline.py code fragment."""
     paths = get_result_review(run_id)
@@ -446,6 +454,7 @@ def results_confirm(
     request: Request,
     run_id: uuid.UUID,
     user: Any = Depends(require_role("admin")),
+    _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Confirm the results and finish the workflow."""
     try:
@@ -468,6 +477,7 @@ def results_reject(
     request: Request,
     run_id: uuid.UUID,
     user: Any = Depends(require_auth),
+    _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Reject the results and return to the mapping review page."""
     try:

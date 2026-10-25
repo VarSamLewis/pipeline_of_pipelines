@@ -181,7 +181,13 @@ def get_current_user(request: Request) -> Any | None:
     from models import User
 
     with get_session() as session:
-        return session.get(User, parsed_id)
+        user = session.get(User, parsed_id)
+        if user is None:
+            return None
+        if request.session.get("session_version") != user.session_version:
+            request.session.clear()
+            return None
+        return user
 
 
 def require_auth(request: Request) -> Any:
@@ -235,7 +241,16 @@ def require_client_membership(
 
 
 def create_session(request: Request, user_id: uuid.UUID) -> None:
+    """Persist the current user and version in the signed browser session."""
+    from db_ops import get_session
+    from models import User
+
+    with get_session() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise ValueError("User not found")
     request.session["user_id"] = str(user_id)
+    request.session["session_version"] = user.session_version
 
 
 def clear_session(request: Request) -> None:
