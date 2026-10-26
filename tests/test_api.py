@@ -99,8 +99,8 @@ def test_manage_beta_invitation(
         "/admin/invitations",
         json={
             "email": "operator@example.com",
-            "client_id": registered_client["id"],
-            "role": "reviewer",
+            "organization_id": registered_client["organization_id"],
+            "role": "member",
         },
     )
     assert created.status_code == 200, created.text
@@ -234,8 +234,17 @@ def client() -> TestClient:
 @pytest.fixture
 def registered_client(client: TestClient) -> dict:
     """Create a client and return its record."""
+    from db_ops import get_session
+    from models import Organization
+
+    with get_session() as session:
+        organization = Organization(name=f"Test organization {uuid.uuid4()}")
+        session.add(organization)
+        session.commit()
+        session.refresh(organization)
     response = client.post(
-        "/clients", json={"name": "Test Client"}
+        "/clients",
+        json={"name": "Test Client", "organization_id": str(organization.id)},
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    return {**response.json(), "organization_id": str(organization.id)}

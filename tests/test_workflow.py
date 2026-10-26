@@ -17,7 +17,6 @@ from models import (
 from sqlmodel import select
 from workflow import (
     get_or_create_client,
-    get_organization_key_settings,
     invite_organization_reviewer,
     propose_mapping,
     revoke_organization_reviewer_invitation,
@@ -86,14 +85,16 @@ def test_invite_organization_reviewer_is_idempotent(monkeypatch) -> None:
     invite_organization_reviewer(organization_id, " Reviewer@Example.com ")
     invite_organization_reviewer(organization_id, "reviewer@example.com")
 
-    organization = next(
-        item
-        for item in get_organization_key_settings()
-        if item["id"] == organization_id
-    )
-    assert [item["email"] for item in organization["pending_invitations"]] == [
-        "reviewer@example.com"
-    ]
+    with get_session() as session:
+        invitations = list(
+            session.exec(
+                select(BetaInvitation).where(
+                    BetaInvitation.organization_id == organization_id,
+                    BetaInvitation.status == "pending",
+                )
+            ).all()
+        )
+    assert [invitation.email for invitation in invitations] == ["reviewer@example.com"]
     assert sent_emails == ["reviewer@example.com"]
 
 
@@ -114,12 +115,14 @@ def test_reviewer_invitation_is_not_persisted_when_clerk_delivery_fails(
     with pytest.raises(RuntimeError, match="Clerk unavailable"):
         invite_organization_reviewer(organization_id, "reviewer@example.com")
 
-    organization = next(
-        item
-        for item in get_organization_key_settings()
-        if item["id"] == organization_id
-    )
-    assert organization["pending_invitations"] == []
+    with get_session() as session:
+        invitation = session.exec(
+            select(BetaInvitation).where(
+                BetaInvitation.organization_id == organization_id,
+                BetaInvitation.email == "reviewer@example.com",
+            )
+        ).first()
+    assert invitation is None
 
 
 def test_revoke_organization_reviewer_invitation(monkeypatch) -> None:
@@ -129,23 +132,23 @@ def test_revoke_organization_reviewer_invitation(monkeypatch) -> None:
 
     monkeypatch.setattr(workflow, "send_clerk_invitation", lambda email: None)
     invite_organization_reviewer(organization_id, "reviewer@example.com")
-    organization = next(
-        item
-        for item in get_organization_key_settings()
-        if item["id"] == organization_id
-    )
+    with get_session() as session:
+        invitation = session.exec(
+            select(BetaInvitation).where(
+                BetaInvitation.organization_id == organization_id,
+                BetaInvitation.status == "pending",
+            )
+        ).one()
 
     revoke_organization_reviewer_invitation(
         organization_id,
-        organization["pending_invitations"][0]["id"],
+        invitation.id,
     )
 
-    organization = next(
-        item
-        for item in get_organization_key_settings()
-        if item["id"] == organization_id
-    )
-    assert organization["pending_invitations"] == []
+    with get_session() as session:
+        invitation = session.get(BetaInvitation, invitation.id)
+    assert invitation is not None
+    assert invitation.status == "revoked"
 
 
 def test_clerk_authentication_accepts_reviewer_invitation(monkeypatch) -> None:

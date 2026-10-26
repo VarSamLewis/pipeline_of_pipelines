@@ -94,7 +94,10 @@ def get_engine(database_url: str | None = None) -> Engine:
     global _engine
     url = database_url or DEFAULT_DATABASE_URL
     if _engine is None:
-        _engine = create_engine(url)
+        _engine = create_engine(
+            url,
+            execution_options={"schema_translate_map": {None: APPLICATION_SCHEMA}},
+        )
         event.listen(_engine, "connect", _set_application_search_path)
     return _engine
 
@@ -149,23 +152,45 @@ def create_tables(engine: Engine | None = None) -> None:
         connection.execute(
             text(
                 "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS "
-                "platform_role VARCHAR NOT NULL DEFAULT 'user'"
+                "platform_role VARCHAR NOT NULL DEFAULT 'USER'"
+            )
+        )
+        connection.execute(
+            text(
+                "DO $$ DECLARE role_is_enum BOOLEAN; BEGIN "
+                "SELECT t.typtype = 'e' INTO role_is_enum "
+                "FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid "
+                "WHERE a.attrelid = 'user'::regclass AND a.attname = 'platform_role'; "
+                "IF role_is_enum THEN "
+                "UPDATE \"user\" SET platform_role = "
+                "CASE WHEN platform_role::text = 'platform_admin' "
+                "THEN 'PLATFORM_ADMIN'::platformrole "
+                "ELSE 'USER'::platformrole END "
+                "WHERE platform_role::text NOT IN ('PLATFORM_ADMIN', 'USER'); "
+                "ELSE UPDATE \"user\" SET platform_role = "
+                "CASE WHEN platform_role::text = 'platform_admin' "
+                "THEN 'PLATFORM_ADMIN' ELSE 'USER' END "
+                "WHERE platform_role::text NOT IN ('PLATFORM_ADMIN', 'USER'); "
+                "END IF; END $$"
             )
         )
         connection.execute(
             text(
                 "DO $$ BEGIN "
                 "IF EXISTS (SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = 'user' AND column_name = 'role') "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'user' AND column_name = 'role') "
                 "THEN ALTER TABLE \"user\" ALTER COLUMN role DROP NOT NULL; "
                 "END IF; END $$"
             )
         )
         connection.execute(
             text(
-                "UPDATE organizationmembership SET role = "
-                "CASE WHEN role = 'admin' THEN 'org_admin' ELSE 'member' END "
-                "WHERE role NOT IN ('org_admin', 'member')"
+                "DO $$ BEGIN "
+                "IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'organizationrole') "
+                "THEN ALTER TYPE organizationrole ADD VALUE IF NOT EXISTS 'ORG_ADMIN'; "
+                "ALTER TYPE organizationrole ADD VALUE IF NOT EXISTS 'MEMBER'; "
+                "END IF; END $$"
             )
         )
         connection.execute(
@@ -196,7 +221,8 @@ def create_tables(engine: Engine | None = None) -> None:
             text(
                 "DO $$ BEGIN "
                 "IF EXISTS (SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = 'organizationapikey' "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'organizationapikey' "
                 "AND column_name = 'client_id') "
                 "THEN ALTER TABLE organizationapikey "
                 "ALTER COLUMN client_id DROP NOT NULL; "
@@ -207,9 +233,21 @@ def create_tables(engine: Engine | None = None) -> None:
             text(
                 "DO $$ BEGIN "
                 "IF EXISTS (SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = 'betainvitation' AND column_name = 'client_id') "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'betainvitation' AND column_name = 'client_id') "
                 "THEN ALTER TABLE betainvitation ALTER COLUMN client_id DROP NOT NULL; "
                 "END IF; END $$"
+            )
+        )
+        connection.commit()
+    with engine.connect() as connection:
+        connection.execute(
+            text(
+                "UPDATE organizationmembership SET role = "
+                "CASE WHEN role::text IN ('admin', 'ADMIN', 'org_admin', 'ORG_ADMIN') "
+                "THEN 'ORG_ADMIN'::organizationrole "
+                "ELSE 'MEMBER'::organizationrole END "
+                "WHERE role::text NOT IN ('ORG_ADMIN', 'MEMBER')"
             )
         )
         connection.commit()

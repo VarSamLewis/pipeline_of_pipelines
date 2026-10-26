@@ -602,7 +602,7 @@ def create_client_endpoint(
                 cast(Any, OrganizationMembership.revoked_at).is_(None),
             )
         ).first()
-        if membership is None:
+        if not AUTH_BYPASS_LOCAL and membership is None:
             raise HTTPException(403, "Organization membership required")
         client = create_client(
             session,
