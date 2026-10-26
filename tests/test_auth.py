@@ -7,6 +7,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
 # Ensure local auth bypass is active for these unit tests before importing the
 # auth module, which evaluates AUTH_BYPASS_LOCAL at import time.
@@ -61,6 +62,16 @@ def test_local_bypass_returns_admin_user() -> None:
     assert user is not None
     assert user.platform_role == PlatformRole.PLATFORM_ADMIN
     assert user.email == "local-dev@example.com"
+
+
+def test_logout_redirects_post_to_get_login() -> None:
+    """Logout uses 303 so the browser follows the redirect with GET."""
+    from app import app
+
+    response = TestClient(app).post("/auth/logout", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
 
 
 def test_session_version_invalidates_existing_session(

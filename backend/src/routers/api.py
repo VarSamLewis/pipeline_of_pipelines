@@ -273,7 +273,7 @@ def create_authenticated_session(request: Request) -> dict[str, str]:
 def logout(request: Request) -> RedirectResponse:
     """Clear the session and return to the login page."""
     clear_session(request)
-    response = RedirectResponse(url="/login")
+    response = RedirectResponse(url="/login", status_code=303)
     return response
 
 
