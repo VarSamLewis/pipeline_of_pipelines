@@ -54,7 +54,7 @@ from repositories.clients import (
     create_ingestion_batch,
     get_client_by_id,
 )
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, event, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 _settings = get_settings()
@@ -86,6 +86,7 @@ def get_embedding(
 
 
 _engine: Engine | None = None
+APPLICATION_SCHEMA = "pipeline"
 
 
 def get_engine(database_url: str | None = None) -> Engine:
@@ -94,7 +95,26 @@ def get_engine(database_url: str | None = None) -> Engine:
     url = database_url or DEFAULT_DATABASE_URL
     if _engine is None:
         _engine = create_engine(url)
+        event.listen(_engine, "connect", _set_application_search_path)
     return _engine
+
+
+def _set_application_search_path(dbapi_connection: Any, _: Any) -> None:
+    """Ensure every pooled PostgreSQL connection resolves app tables in pipeline."""
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute(f"SET search_path TO {APPLICATION_SCHEMA}, public")
+    finally:
+        cursor.close()
+
+
+def create_application_schema(engine: Engine | None = None) -> None:
+    """Create the dedicated schema before application tables are initialized."""
+    if engine is None:
+        engine = get_engine()
+    with engine.connect() as connection:
+        connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {APPLICATION_SCHEMA}"))
+        connection.commit()
 
 
 def create_pgvector_extension(engine: Engine | None = None) -> None:
@@ -110,6 +130,7 @@ def create_tables(engine: Engine | None = None) -> None:
     """Create all SQLModel tables and apply lightweight additive upgrades."""
     if engine is None:
         engine = get_engine()
+    create_application_schema(engine)
     create_pgvector_extension(engine)
     SQLModel.metadata.create_all(engine)
     with engine.connect() as connection:

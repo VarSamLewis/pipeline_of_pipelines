@@ -9,6 +9,17 @@ Run these checks after a successful development deployment.
 - The Cloud Run deployment workflow completed successfully.
 - Cloud SQL is running.
 
+## Database Schema
+
+Application tables are created in the PostgreSQL `pipeline` schema. For a
+development reset, drop only that schema rather than `public`:
+
+```sql
+DROP SCHEMA pipeline CASCADE;
+```
+
+The next application startup recreates the schema and tables.
+
 Set the service URL once for command-line checks:
 
 ```bash
