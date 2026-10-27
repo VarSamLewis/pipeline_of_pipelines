@@ -151,7 +151,21 @@ def send_clerk_invitation(email: str) -> None:
         with urlopen(request, timeout=10):
             pass
     except HTTPError as exc:
-        raise RuntimeError(f"Clerk invitation request failed ({exc.code})") from exc
+        try:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            error_payload = json.loads(error_body)
+            errors = error_payload.get("errors", [])
+            detail = (
+                errors[0].get("long_message") or errors[0].get("message")
+                if errors and isinstance(errors[0], dict)
+                else None
+            )
+        except (json.JSONDecodeError, OSError, UnicodeError):
+            detail = None
+        message = f"Clerk invitation request failed ({exc.code})"
+        if detail:
+            message = f"{message}: {detail}"
+        raise RuntimeError(message) from exc
     except URLError as exc:
         raise RuntimeError("Could not reach Clerk to send invitation") from exc
 
