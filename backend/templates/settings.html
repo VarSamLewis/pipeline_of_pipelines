@@ -24,7 +24,7 @@
       <label for="invite-organization">Organization</label>
       <select id="invite-organization" name="organization_id" required>
         {% if user.platform_role.value == "platform_admin" %}
-        <option value="">No organization — user creates their own</option>
+        <option value="create-own">No organization — user creates their own</option>
         {% endif %}
         {% for organization in invite_organizations %}
         <option value="{{ organization.id }}">{{ organization.name }}</option>

@@ -279,7 +279,11 @@ def invite_user_from_settings_endpoint(
 ) -> Any:
     """Invite a user to the selected organization from Settings."""
     try:
-        parsed_organization_id = uuid.UUID(organization_id) if organization_id else None
+        parsed_organization_id = (
+            None
+            if organization_id == "create-own"
+            else uuid.UUID(organization_id)
+        )
         invite_organization_reviewer(parsed_organization_id, email, user)
         return HTMLResponse("<span class='save-note'>Invitation sent</span>")
     except (RuntimeError, ValueError) as exc:
