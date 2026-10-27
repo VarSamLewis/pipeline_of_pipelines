@@ -155,13 +155,21 @@ def send_clerk_invitation(email: str) -> None:
             error_body = exc.read().decode("utf-8", errors="replace")
             error_payload = json.loads(error_body)
             errors = error_payload.get("errors", [])
+            error_code = (
+                errors[0].get("code")
+                if errors and isinstance(errors[0], dict)
+                else None
+            )
             detail = (
                 errors[0].get("long_message") or errors[0].get("message")
                 if errors and isinstance(errors[0], dict)
                 else None
             )
         except (json.JSONDecodeError, OSError, UnicodeError):
+            error_code = None
             detail = None
+        if error_code == "form_identifier_exists":
+            return
         message = f"Clerk invitation request failed ({exc.code})"
         if detail:
             message = f"{message}: {detail}"
