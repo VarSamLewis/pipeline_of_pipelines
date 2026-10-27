@@ -238,6 +238,21 @@ tr:hover { background: #f8f9fa; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #f8f9fa;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.csv-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.csv-table th,
+.csv-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .mapping-card {
