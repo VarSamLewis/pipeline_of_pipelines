@@ -117,13 +117,14 @@ def authenticate_clerk_session(token: str) -> Any:
         session.add(user)
         session.flush()
         for invitation in invitations:
-            session.add(
-                OrganizationMembership(
-                    user_id=user.id,
-                    organization_id=invitation.organization_id,
-                    role=invitation.role,
+            if invitation.organization_id is not None:
+                session.add(
+                    OrganizationMembership(
+                        user_id=user.id,
+                        organization_id=invitation.organization_id,
+                        role=invitation.role,
+                    )
                 )
-            )
             invitation.status = "accepted"
             invitation.updated_at = now
             session.add(invitation)

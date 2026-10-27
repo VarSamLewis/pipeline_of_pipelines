@@ -5,7 +5,6 @@
 {% block content %}
 <h1>Organization settings</h1>
 <p class="muted">Manage organization access and provider credentials.</p>
-{% if user.platform_role.value == "platform_admin" %}
 <div class="card">
   <h2>Create organization</h2>
   <form hx-post="/settings/organizations" hx-target="#organization-status" hx-swap="innerHTML">
@@ -15,9 +14,8 @@
     <span id="organization-status" aria-live="polite"></span>
   </form>
 </div>
-{% endif %}
 {% set invite_organizations = organizations | selectattr('can_edit_credentials') | list %}
-{% if invite_organizations %}
+{% if invite_organizations or user.platform_role.value == "platform_admin" %}
 <div class="card">
   <h2>Invite user</h2>
   <p class="muted">Invited users are added as members of the selected organization.</p>
@@ -25,6 +23,9 @@
     <div class="form-group">
       <label for="invite-organization">Organization</label>
       <select id="invite-organization" name="organization_id" required>
+        {% if user.platform_role.value == "platform_admin" %}
+        <option value="">No organization — user creates their own</option>
+        {% endif %}
         {% for organization in invite_organizations %}
         <option value="{{ organization.id }}">{{ organization.name }}</option>
         {% endfor %}

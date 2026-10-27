@@ -117,8 +117,6 @@ def get_or_create_client(
 
 def create_organization(name: str, user: Any) -> Organization:
     """Create an application-managed organization for its initial administrator."""
-    if user.platform_role != PlatformRole.PLATFORM_ADMIN:
-        raise ValueError("Platform admin access required")
     name = name.strip()
     if not name:
         raise ValueError("Organization name is required")
@@ -380,18 +378,26 @@ def save_organization_key(
 
 
 def invite_organization_reviewer(
-    organization_id: uuid.UUID, email: str, user: Any | None = None
+    organization_id: uuid.UUID | None, email: str, user: Any | None = None
 ) -> None:
-    """Create or refresh a pending reviewer invitation for an organization."""
+    """Create or refresh a pending invitation, optionally for an organization."""
     email = email.strip().lower()
     if not email:
         raise ValueError("Email is required")
     with get_session() as session:
-        if session.get(Organization, organization_id) is None:
+        if (
+            organization_id is not None
+            and session.get(Organization, organization_id) is None
+        ):
             raise ValueError("Organization not found")
         if user is not None:
-            if getattr(user, "platform_role", None) == PlatformRole.PLATFORM_ADMIN:
+            is_platform_admin = (
+                getattr(user, "platform_role", None) == PlatformRole.PLATFORM_ADMIN
+            )
+            if is_platform_admin:
                 pass
+            elif organization_id is None:
+                raise ValueError("Platform admin access required")
             elif (membership := session.exec(
                 select(OrganizationMembership).where(
                     OrganizationMembership.organization_id == organization_id,

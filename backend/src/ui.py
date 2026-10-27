@@ -241,7 +241,7 @@ def save_organization_key_endpoint(
 def create_organization_endpoint(
     request: Request,
     name: str = Form(""),
-    user: Any = Depends(require_role("admin")),
+    user: Any = Depends(require_auth),
 ) -> Any:
     """Create an organization before configuring its members and credentials."""
     try:
@@ -273,13 +273,14 @@ def invite_user_endpoint(
 @router.post("/settings/invitations")
 def invite_user_from_settings_endpoint(
     request: Request,
-    organization_id: uuid.UUID = Form(...),
+    organization_id: str = Form(""),
     email: str = Form(""),
     user: Any = Depends(require_auth),
 ) -> Any:
     """Invite a user to the selected organization from Settings."""
     try:
-        invite_organization_reviewer(organization_id, email, user)
+        parsed_organization_id = uuid.UUID(organization_id) if organization_id else None
+        invite_organization_reviewer(parsed_organization_id, email, user)
         return HTMLResponse("<span class='save-note'>Invitation sent</span>")
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
