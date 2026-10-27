@@ -38,8 +38,10 @@
   {% if user.platform_role.value == "platform_admin" or organization.can_edit_credentials %}
   <h3>Invite user</h3>
   <form hx-post="/settings/{{ organization.id }}/invite" hx-target="#invite-status-{{ organization.id }}" hx-swap="innerHTML">
-    <label for="invite-email-{{ organization.id }}">Email</label>
-    <input id="invite-email-{{ organization.id }}" name="email" type="email" required>
+    <div class="form-group">
+      <label for="invite-email-{{ organization.id }}">Email address</label>
+      <input id="invite-email-{{ organization.id }}" name="email" type="email" placeholder="colleague@example.com" autocomplete="email" required>
+    </div>
     <button class="btn btn-primary" type="submit">Send invite</button>
     <span id="invite-status-{{ organization.id }}" aria-live="polite"></span>
   </form>
