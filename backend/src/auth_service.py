@@ -169,7 +169,7 @@ def send_clerk_invitation(email: str) -> None:
         except (json.JSONDecodeError, OSError, UnicodeError):
             error_code = None
             detail = None
-        if error_code == "form_identifier_exists":
+        if error_code in {"form_identifier_exists", "duplicate_invitations"}:
             return
         message = f"Clerk invitation request failed ({exc.code})"
         if detail:
