@@ -389,14 +389,17 @@ def invite_organization_reviewer(
     with get_session() as session:
         if session.get(Organization, organization_id) is None:
             raise ValueError("Organization not found")
-        if user is not None and session.exec(
-            select(OrganizationMembership).where(
-                OrganizationMembership.organization_id == organization_id,
-                OrganizationMembership.user_id == user.id,
-                cast(Any, OrganizationMembership.revoked_at).is_(None),
-            )
-        ).first() is None:
-            raise ValueError("Organization membership required")
+        if user is not None:
+            if getattr(user, "platform_role", None) == PlatformRole.PLATFORM_ADMIN:
+                pass
+            elif session.exec(
+                select(OrganizationMembership).where(
+                    OrganizationMembership.organization_id == organization_id,
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
+            ).first() is None:
+                raise ValueError("Organization membership required")
         invitation = session.exec(
             select(BetaInvitation).where(
                 BetaInvitation.organization_id == organization_id,
@@ -432,14 +435,17 @@ def revoke_organization_reviewer_invitation(
             or invitation.status != "pending"
         ):
             raise ValueError("Pending reviewer invitation not found")
-        if user is not None and session.exec(
-            select(OrganizationMembership).where(
-                OrganizationMembership.organization_id == organization_id,
-                OrganizationMembership.user_id == user.id,
-                cast(Any, OrganizationMembership.revoked_at).is_(None),
-            )
-        ).first() is None:
-            raise ValueError("Organization membership required")
+        if user is not None:
+            if getattr(user, "platform_role", None) == PlatformRole.PLATFORM_ADMIN:
+                pass
+            elif session.exec(
+                select(OrganizationMembership).where(
+                    OrganizationMembership.organization_id == organization_id,
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
+            ).first() is None:
+                raise ValueError("Organization membership required")
         invitation.status = "revoked"
         invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(invitation)

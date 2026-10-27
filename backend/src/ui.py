@@ -40,11 +40,13 @@ from workflow import (
     get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
+    invite_organization_reviewer,
     list_organization_runs,
     list_organizations,
     list_visible_clients,
     reject_mapping,
     reject_result,
+    revoke_organization_reviewer_invitation,
 )
 from workflow import (
     save_organization_key as save_organization_key_record,
@@ -251,6 +253,36 @@ def create_organization_endpoint(
             {**_user_context(request, user), "message": str(exc)},
         )
     return _htmx_redirect(request, "/settings")
+
+
+@router.post("/settings/{organization_id}/invite")
+def invite_user_endpoint(
+    request: Request,
+    organization_id: uuid.UUID,
+    email: str = Form(""),
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Invite a user to an organization."""
+    try:
+        invite_organization_reviewer(organization_id, email, user)
+        return HTMLResponse("<span class='save-note'>Invitation sent</span>")
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/settings/{organization_id}/invitations/{invitation_id}/revoke")
+def revoke_invitation_endpoint(
+    request: Request,
+    organization_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Revoke a pending invitation."""
+    try:
+        revoke_organization_reviewer_invitation(organization_id, invitation_id, user)
+        return HTMLResponse("<span class='save-note'>Invitation revoked</span>")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

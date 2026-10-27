@@ -22,7 +22,7 @@
   <p class="muted">
     {% if organization.key_suffix %}Provider: {{ organization.provider_base_url }}. Key ending in {{ organization.key_suffix }}{% else %}No provider credentials saved.{% endif %}
   </p>
-  {% if organization.can_edit_credentials %}
+  {% if organization.can_edit_credentials or user.platform_role.value == "platform_admin" %}
   <form hx-post="/settings/{{ organization.id }}/api-key" hx-target="#key-status-{{ organization.id }}" hx-swap="innerHTML">
     <label for="api-key-{{ organization.id }}">API key</label>
     <input id="api-key-{{ organization.id }}" name="api_key" type="password" autocomplete="off" required>
@@ -33,6 +33,16 @@
   </form>
   {% else %}
   <p class="muted">Only an organization admin can edit provider credentials.</p>
+  {% endif %}
+
+  {% if user.platform_role.value == "platform_admin" or organization.can_edit_credentials %}
+  <h3>Invite user</h3>
+  <form hx-post="/settings/{{ organization.id }}/invite" hx-target="#invite-status-{{ organization.id }}" hx-swap="innerHTML">
+    <label for="invite-email-{{ organization.id }}">Email</label>
+    <input id="invite-email-{{ organization.id }}" name="email" type="email" required>
+    <button class="btn btn-primary" type="submit">Send invite</button>
+    <span id="invite-status-{{ organization.id }}" aria-live="polite"></span>
+  </form>
   {% endif %}
 </div>
 {% else %}
