@@ -270,6 +270,21 @@ def invite_user_endpoint(
         raise HTTPException(422, str(exc)) from exc
 
 
+@router.post("/settings/invitations")
+def invite_user_from_settings_endpoint(
+    request: Request,
+    organization_id: uuid.UUID = Form(...),
+    email: str = Form(""),
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Invite a user to the selected organization from Settings."""
+    try:
+        invite_organization_reviewer(organization_id, email, user)
+        return HTMLResponse("<span class='save-note'>Invitation sent</span>")
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/settings/{organization_id}/invitations/{invitation_id}/revoke")
 def revoke_invitation_endpoint(
     request: Request,

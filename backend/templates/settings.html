@@ -4,7 +4,7 @@
 
 {% block content %}
 <h1>Organization settings</h1>
-<p class="muted">API keys are encrypted at rest and are never shown again after saving.</p>
+<p class="muted">Manage organization access and provider credentials.</p>
 {% if user.platform_role.value == "platform_admin" %}
 <div class="card">
   <h2>Create organization</h2>
@@ -16,9 +16,32 @@
   </form>
 </div>
 {% endif %}
+{% set invite_organizations = organizations | selectattr('can_edit_credentials') | list %}
+{% if invite_organizations %}
+<div class="card">
+  <h2>Invite user</h2>
+  <p class="muted">Invited users are added as members of the selected organization.</p>
+  <form hx-post="/settings/invitations" hx-target="#invite-status" hx-swap="innerHTML">
+    <div class="form-group">
+      <label for="invite-organization">Organization</label>
+      <select id="invite-organization" name="organization_id" required>
+        {% for organization in invite_organizations %}
+        <option value="{{ organization.id }}">{{ organization.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="invite-email">Email address</label>
+      <input id="invite-email" name="email" type="email" placeholder="colleague@example.com" autocomplete="email" required>
+    </div>
+    <button class="btn btn-primary" type="submit">Send invite</button>
+    <span id="invite-status" aria-live="polite"></span>
+  </form>
+</div>
+{% endif %}
 {% for organization in organizations %}
 <div class="card">
-  <h2>{{ organization.name }}</h2>
+  <h2>{{ organization.name }} credentials</h2>
   <p class="muted">
     {% if organization.key_suffix %}Provider: {{ organization.provider_base_url }}. Key ending in {{ organization.key_suffix }}{% else %}No provider credentials saved.{% endif %}
   </p>
@@ -35,17 +58,6 @@
   <p class="muted">Only an organization admin can edit provider credentials.</p>
   {% endif %}
 
-  {% if user.platform_role.value == "platform_admin" or organization.can_edit_credentials %}
-  <h3>Invite user</h3>
-  <form hx-post="/settings/{{ organization.id }}/invite" hx-target="#invite-status-{{ organization.id }}" hx-swap="innerHTML">
-    <div class="form-group">
-      <label for="invite-email-{{ organization.id }}">Email address</label>
-      <input id="invite-email-{{ organization.id }}" name="email" type="email" placeholder="colleague@example.com" autocomplete="email" required>
-    </div>
-    <button class="btn btn-primary" type="submit">Send invite</button>
-    <span id="invite-status-{{ organization.id }}" aria-live="polite"></span>
-  </form>
-  {% endif %}
 </div>
 {% else %}
 <p class="muted">Create an organization above to add provider credentials.</p>
