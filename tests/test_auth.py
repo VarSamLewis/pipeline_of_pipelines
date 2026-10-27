@@ -139,6 +139,7 @@ def test_send_clerk_invitation_uses_backend_api(
     request = captured["request"]
     assert request.full_url == "https://api.clerk.com/v1/invitations"
     assert request.get_header("Authorization") == "Bearer sk_test_secret"
+    assert request.get_header("User-agent") == "pipeline-of-pipelines/0.1"
     assert request.data == b'{"email_address": "reviewer@example.com"}'
     assert captured["timeout"] == 10
 

@@ -144,6 +144,7 @@ def send_clerk_invitation(email: str) -> None:
         headers={
             "Authorization": f"Bearer {secret_key}",
             "Content-Type": "application/json",
+            "User-Agent": "pipeline-of-pipelines/0.1",
         },
         method="POST",
     )
