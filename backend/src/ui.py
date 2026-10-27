@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from html import escape
 from typing import Any
 
 import polars as pl
@@ -267,7 +268,9 @@ def invite_user_endpoint(
         invite_organization_reviewer(organization_id, email, user)
         return HTMLResponse("<span class='save-note'>Invitation sent</span>")
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        return HTMLResponse(
+            f"<span class='warning-error'>{escape(str(exc))}</span>",
+        )
 
 
 @router.post("/settings/invitations")
@@ -287,7 +290,9 @@ def invite_user_from_settings_endpoint(
         invite_organization_reviewer(parsed_organization_id, email, user)
         return HTMLResponse("<span class='save-note'>Invitation sent</span>")
     except (RuntimeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        return HTMLResponse(
+            f"<span class='warning-error'>{escape(str(exc))}</span>",
+        )
 
 
 @router.post("/settings/{organization_id}/invitations/{invitation_id}/revoke")
