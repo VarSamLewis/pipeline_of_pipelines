@@ -3,7 +3,7 @@
 {% block title %}{{ library.client.name }} files - Pipeline of Pipelines{% endblock %}
 
 {% block content %}
-<p><a href="/upload">Back to upload</a></p>
+  <p><a href="/client-library">Back to clients</a></p>
 <h1>{{ library.client.name }} files</h1>
 
 <div class="card">
@@ -18,14 +18,20 @@
 <div class="card">
   <h2>Uploaded source files</h2>
   {% if library.source_files %}
-  <table>
+  <form hx-post="/clients/{{ library.client.id }}/mappings/reuse" hx-target="#reuse-mapping-result" hx-swap="innerHTML" hx-indicator="#reuse-mapping-progress">
+  <div class="table-scroll"><table>
     <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr></thead>
     <tbody>
     {% for file in library.source_files %}
-      <tr><td>{{ file.name }}</td><td>{{ file.mime_type }}</td><td>{{ file.size_bytes }} bytes</td><td>{{ file.status }}</td><td>{{ file.uploaded_at }}</td></tr>
+      <tr><td><label><input type="checkbox" name="raw_file_ids" value="{{ file.id }}"> {{ file.name }}</label></td><td>{{ file.mime_type }}</td><td>{{ file.size_bytes }} bytes</td><td>{{ file.status }}</td><td>{{ file.uploaded_at }}</td></tr>
     {% endfor %}
     </tbody>
-  </table>
+  </table></div>
+  <p class="muted">Selected files are reused from storage. Files not already parsed will be parsed before a mapping is proposed.</p>
+  <button class="btn btn-primary" type="submit">Create mapping from selected files</button>
+  <span id="reuse-mapping-progress" class="htmx-indicator progress-indicator" aria-live="polite"><span class="spinner" aria-hidden="true"></span> Creating mapping...</span>
+  <div id="reuse-mapping-result" style="margin-top: 1rem;"></div>
+  </form>
   {% else %}
   <p class="muted">No source files have been uploaded.</p>
   {% endif %}

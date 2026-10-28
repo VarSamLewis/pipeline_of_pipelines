@@ -90,6 +90,60 @@ def test_client_files_panel_shows_authorized_summary(monkeypatch) -> None:
     assert f"/clients/{client_id}/files" in response.text
 
 
+def test_clients_page_lists_visible_clients(monkeypatch) -> None:
+    """The Clients navigation target lists accessible client libraries."""
+    import ui
+    from app import app
+
+    client_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "list_visible_clients",
+        lambda user: [
+            SimpleNamespace(
+                id=client_id,
+                name="Acme",
+                created_at="2026-10-28T10:00:00",
+            )
+        ],
+    )
+
+    response = TestClient(app).get("/client-library")
+
+    assert response.status_code == 200
+    assert "Clients" in response.text
+    assert "Acme" in response.text
+    assert f"/clients/{client_id}/files" in response.text
+
+
+def test_reuse_stored_files_redirects_to_mapping(monkeypatch) -> None:
+    """Selected stored file IDs start a new proposed mapping."""
+    import ui
+    from app import app
+
+    client_id = uuid.uuid4()
+    raw_file_id = uuid.uuid4()
+    mapping_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "propose_mapping_from_stored_files",
+        lambda requested_client_id, raw_file_ids, user: (
+            mapping_id
+            if requested_client_id == client_id and raw_file_ids == [raw_file_id]
+            else (_ for _ in ()).throw(AssertionError("Unexpected mapping request"))
+        ),
+    )
+
+    response = TestClient(app).post(
+        f"/clients/{client_id}/mappings/reuse",
+        data={"raw_file_ids": str(raw_file_id)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/mapping/{mapping_id}"
+
+
 def test_runs_page_lists_organization_history(monkeypatch) -> None:
     """Runs are listed for the selected organization with links to details."""
     import ui
@@ -124,7 +178,7 @@ def test_runs_page_lists_organization_history(monkeypatch) -> None:
     assert "Orders" in response.text
     assert "production" in response.text
     assert f"/results/{run_id}" in response.text
-    assert "Organization settings" in response.text
+    assert "Organizations" in response.text
 
 
 def test_mapping_review_surfaces_catalog_warnings(

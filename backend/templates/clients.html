@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Clients - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<div class="card-header">
+  <div>
+    <h1>Clients</h1>
+    <p class="muted">View stored files, mappings, and outputs for each client.</p>
+  </div>
+  <a class="btn btn-primary" href="/upload">Upload data</a>
+</div>
+
+<div class="card">
+  {% if clients %}
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Client</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+      {% for client in clients %}
+        <tr>
+          <td>{{ client.name }}</td>
+          <td>{{ client.created_at }}</td>
+          <td><a href="/clients/{{ client.id }}/files">View files and mappings</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No clients are available. Create one while uploading data.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -45,6 +45,7 @@ from workflow import (
     list_organization_runs,
     list_organizations,
     list_visible_clients,
+    propose_mapping_from_stored_files,
     reject_mapping,
     reject_result,
     revoke_organization_reviewer_invitation,
@@ -155,6 +156,35 @@ def client_files_page(
         "files.html",
         {**_user_context(request, user), "library": library},
     )
+
+
+@router.get("/client-library")
+def clients_page(request: Request, user: Any = Depends(require_auth)) -> Any:
+    """Render the clients visible to the current user."""
+    return templates.TemplateResponse(
+        request,
+        "clients.html",
+        {**_user_context(request, user), "clients": list_visible_clients(user)},
+    )
+
+
+@router.post("/clients/{client_id}/mappings/reuse")
+def reuse_stored_files_for_mapping(
+    request: Request,
+    client_id: uuid.UUID,
+    raw_file_ids: list[uuid.UUID] = Form(default_factory=list),
+    user: Any = Depends(require_auth),
+) -> Any:
+    """Parse selected stored files as needed and propose a new mapping."""
+    try:
+        spec_id = propose_mapping_from_stored_files(client_id, raw_file_ids, user)
+    except (RuntimeError, ValueError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, f"/mapping/{spec_id}")
 
 
 @router.get("/clients/{client_id}/files/panel")

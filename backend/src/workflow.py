@@ -297,6 +297,7 @@ def get_client_file_library(
         "target_schema": target_schema,
         "source_files": [
             {
+                "id": raw_file.id,
                 "name": raw_file.original_filename,
                 "mime_type": raw_file.mime_type,
                 "size_bytes": raw_file.size_bytes,
@@ -307,6 +308,98 @@ def get_client_file_library(
         ],
         "mappings": mappings,
     }
+
+
+def propose_mapping_from_stored_files(
+    client_id: uuid.UUID,
+    raw_file_ids: list[uuid.UUID],
+    user: Any,
+) -> uuid.UUID:
+    """Create a proposed mapping using immutable files already stored for a client."""
+    if not raw_file_ids:
+        raise ValueError("Select at least one stored source file")
+
+    settings = get_settings()
+    if len(raw_file_ids) > settings.max_source_files:
+        raise ValueError(
+            f"A maximum of {settings.max_source_files} source files may be selected"
+        )
+
+    with get_session() as session:
+        client = get_client_by_id(session, client_id)
+        if client is None:
+            raise ValueError("Client not found")
+        require_client_membership(session, user, client.id)
+        if client.organization_id is None:
+            raise ValueError("Client organization not found")
+
+        raw_files: list[RawFile] = []
+        for raw_file_id in raw_file_ids:
+            raw_file = get_raw_file_by_id(session, raw_file_id)
+            if raw_file is None or raw_file.client_id != client.id:
+                raise ValueError("Selected source file does not belong to this client")
+            raw_files.append(raw_file)
+
+        api_key = get_organization_api_key(session, client.organization_id)
+        base_url = get_organization_provider_base_url(session, client.organization_id)
+        if not api_key or not base_url:
+            raise RuntimeError(
+                "No organization provider credentials are configured. "
+                "Ask an administrator to add one."
+            )
+        try:
+            target_schema = get_artifact_store().read_target_schema(str(client.id))
+        except FileNotFoundError as exc:
+            raise ValueError(
+                "Upload a target schema before reusing source files"
+            ) from exc
+
+        object_store = get_object_store()
+        for raw_file in raw_files:
+            if raw_file.status == FileStatus.PARSED:
+                continue
+            file_bytes = object_store.get(raw_file.storage_key)
+            file_type = detect_file_type(raw_file.original_filename, file_bytes)
+            try:
+                _parse_raw_file(
+                    session,
+                    raw_file,
+                    file_bytes,
+                    file_type,
+                    api_key=api_key,
+                    base_url=base_url,
+                )
+                update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
+            except Exception as exc:
+                update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
+                raw_file.meta = {
+                    **raw_file.meta,
+                    "parse_error": {"code": "parse_failed", "message": str(exc)},
+                }
+                session.add(raw_file)
+                session.commit()
+                raise ValueError(
+                    f"Could not parse {raw_file.original_filename}: {exc}"
+                ) from exc
+
+        spec = create_mapping_spec(
+            session,
+            client_id=client.id,
+            source_raw_file_ids=[raw_file.id for raw_file in raw_files],
+            target_schema=target_schema,
+            description="Generated from stored source files",
+        )
+        propose_mapping_spec(
+            session,
+            spec.id,
+            target_schema=target_schema,
+            model=settings.mapping_model,
+            api_key=api_key,
+            base_url=base_url,
+            top_k_evidence=10,
+        )
+        update_mapping_spec_status(session, spec.id, MappingSpecStatus.PROPOSED)
+        return spec.id
 
 
 def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any]]:
