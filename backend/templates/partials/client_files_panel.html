@@ -22,12 +22,12 @@
     </div>
   </div>
 
-  <h3>Recent source files</h3>
+  <h3>Stored source files</h3>
   {% if library.source_files %}
   <ul class="client-file-list">
-    {% for file in library.source_files[:5] %}
+    {% for file in library.source_files %}
     <li>
-      <strong>{{ file.name }}</strong>
+      <label><input type="checkbox" name="stored_raw_file_ids" value="{{ file.id }}"> <strong>{{ file.name }}</strong></label>
       <span class="muted">{{ file.mime_type }} · {{ file.size_bytes }} bytes · {{ file.status }}</span>
     </li>
     {% endfor %}

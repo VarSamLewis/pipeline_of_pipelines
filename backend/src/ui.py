@@ -45,7 +45,6 @@ from workflow import (
     list_organization_runs,
     list_organizations,
     list_visible_clients,
-    propose_mapping_from_stored_files,
     reject_mapping,
     reject_result,
     revoke_organization_reviewer_invitation,
@@ -103,7 +102,8 @@ def upload_submit(
     organization_select: str = Form(""),
     new_client_name: str = Form(""),
     source_files: list[UploadFile] = File(default_factory=list),
-    target_schema: UploadFile = File(...),
+    stored_raw_file_ids: list[uuid.UUID] = Form(default_factory=list),
+    target_schema: UploadFile | None = File(default=None),
     user: Any = Depends(require_auth),
 ) -> Any:
     """Ingest files, extract evidence, and propose a mapping."""
@@ -118,10 +118,12 @@ def upload_submit(
     valid_source_files = [f for f in source_files if f.filename]
 
     try:
-        target_schema_bytes = target_schema.file.read()
-        settings = get_settings()
-        if len(target_schema_bytes) > settings.max_upload_size_bytes:
-            raise ValueError("Target schema exceeds the individual file limit")
+        target_schema_bytes = None
+        if target_schema is not None and target_schema.filename:
+            target_schema_bytes = target_schema.file.read()
+            settings = get_settings()
+            if len(target_schema_bytes) > settings.max_upload_size_bytes:
+                raise ValueError("Target schema exceeds the individual file limit")
         spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
@@ -129,6 +131,7 @@ def upload_submit(
             user=user,
             source_uploads=valid_source_files,
             target_schema_bytes=target_schema_bytes,
+            stored_raw_file_ids=stored_raw_file_ids,
         )
     except (RuntimeError, ValueError) as exc:
         return templates.TemplateResponse(
@@ -166,25 +169,6 @@ def clients_page(request: Request, user: Any = Depends(require_auth)) -> Any:
         "clients.html",
         {**_user_context(request, user), "clients": list_visible_clients(user)},
     )
-
-
-@router.post("/clients/{client_id}/mappings/reuse")
-def reuse_stored_files_for_mapping(
-    request: Request,
-    client_id: uuid.UUID,
-    raw_file_ids: list[uuid.UUID] = Form(default_factory=list),
-    user: Any = Depends(require_auth),
-) -> Any:
-    """Parse selected stored files as needed and propose a new mapping."""
-    try:
-        spec_id = propose_mapping_from_stored_files(client_id, raw_file_ids, user)
-    except (RuntimeError, ValueError) as exc:
-        return templates.TemplateResponse(
-            request,
-            "partials/error.html",
-            {**_user_context(request, user), "message": str(exc)},
-        )
-    return _htmx_redirect(request, f"/mapping/{spec_id}")
 
 
 @router.get("/clients/{client_id}/files/panel")

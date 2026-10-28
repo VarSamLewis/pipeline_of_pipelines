@@ -18,20 +18,15 @@
 <div class="card">
   <h2>Uploaded source files</h2>
   {% if library.source_files %}
-  <form hx-post="/clients/{{ library.client.id }}/mappings/reuse" hx-target="#reuse-mapping-result" hx-swap="innerHTML" hx-indicator="#reuse-mapping-progress">
   <div class="table-scroll"><table>
     <thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Status</th><th>Uploaded</th></tr></thead>
     <tbody>
     {% for file in library.source_files %}
-      <tr><td><label><input type="checkbox" name="raw_file_ids" value="{{ file.id }}"> {{ file.name }}</label></td><td>{{ file.mime_type }}</td><td>{{ file.size_bytes }} bytes</td><td>{{ file.status }}</td><td>{{ file.uploaded_at }}</td></tr>
+      <tr><td>{{ file.name }}</td><td>{{ file.mime_type }}</td><td>{{ file.size_bytes }} bytes</td><td>{{ file.status }}</td><td>{{ file.uploaded_at }}</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="muted">Selected files are reused from storage. Files not already parsed will be parsed before a mapping is proposed.</p>
-  <button class="btn btn-primary" type="submit">Create mapping from selected files</button>
-  <span id="reuse-mapping-progress" class="htmx-indicator progress-indicator" aria-live="polite"><span class="spinner" aria-hidden="true"></span> Creating mapping...</span>
-  <div id="reuse-mapping-result" style="margin-top: 1rem;"></div>
-  </form>
+  <p class="muted">Start a mapping from the <a href="/upload">Upload</a> page, where you can combine these stored files with new uploads.</p>
   {% else %}
   <p class="muted">No source files have been uploaded.</p>
   {% endif %}

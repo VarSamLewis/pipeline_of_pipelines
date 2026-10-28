@@ -310,98 +310,6 @@ def get_client_file_library(
     }
 
 
-def propose_mapping_from_stored_files(
-    client_id: uuid.UUID,
-    raw_file_ids: list[uuid.UUID],
-    user: Any,
-) -> uuid.UUID:
-    """Create a proposed mapping using immutable files already stored for a client."""
-    if not raw_file_ids:
-        raise ValueError("Select at least one stored source file")
-
-    settings = get_settings()
-    if len(raw_file_ids) > settings.max_source_files:
-        raise ValueError(
-            f"A maximum of {settings.max_source_files} source files may be selected"
-        )
-
-    with get_session() as session:
-        client = get_client_by_id(session, client_id)
-        if client is None:
-            raise ValueError("Client not found")
-        require_client_membership(session, user, client.id)
-        if client.organization_id is None:
-            raise ValueError("Client organization not found")
-
-        raw_files: list[RawFile] = []
-        for raw_file_id in raw_file_ids:
-            raw_file = get_raw_file_by_id(session, raw_file_id)
-            if raw_file is None or raw_file.client_id != client.id:
-                raise ValueError("Selected source file does not belong to this client")
-            raw_files.append(raw_file)
-
-        api_key = get_organization_api_key(session, client.organization_id)
-        base_url = get_organization_provider_base_url(session, client.organization_id)
-        if not api_key or not base_url:
-            raise RuntimeError(
-                "No organization provider credentials are configured. "
-                "Ask an administrator to add one."
-            )
-        try:
-            target_schema = get_artifact_store().read_target_schema(str(client.id))
-        except FileNotFoundError as exc:
-            raise ValueError(
-                "Upload a target schema before reusing source files"
-            ) from exc
-
-        object_store = get_object_store()
-        for raw_file in raw_files:
-            if raw_file.status == FileStatus.PARSED:
-                continue
-            file_bytes = object_store.get(raw_file.storage_key)
-            file_type = detect_file_type(raw_file.original_filename, file_bytes)
-            try:
-                _parse_raw_file(
-                    session,
-                    raw_file,
-                    file_bytes,
-                    file_type,
-                    api_key=api_key,
-                    base_url=base_url,
-                )
-                update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
-            except Exception as exc:
-                update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-                raw_file.meta = {
-                    **raw_file.meta,
-                    "parse_error": {"code": "parse_failed", "message": str(exc)},
-                }
-                session.add(raw_file)
-                session.commit()
-                raise ValueError(
-                    f"Could not parse {raw_file.original_filename}: {exc}"
-                ) from exc
-
-        spec = create_mapping_spec(
-            session,
-            client_id=client.id,
-            source_raw_file_ids=[raw_file.id for raw_file in raw_files],
-            target_schema=target_schema,
-            description="Generated from stored source files",
-        )
-        propose_mapping_spec(
-            session,
-            spec.id,
-            target_schema=target_schema,
-            model=settings.mapping_model,
-            api_key=api_key,
-            base_url=base_url,
-            top_k_evidence=10,
-        )
-        update_mapping_spec_status(session, spec.id, MappingSpecStatus.PROPOSED)
-        return spec.id
-
-
 def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any]]:
     """Return organizations and non-sensitive BYOK status for the settings page."""
     with get_session() as session:
@@ -608,28 +516,28 @@ def ingest_and_propose(
     organization_id: uuid.UUID,
     user: Any,
     source_uploads: list[Any],
-    target_schema_bytes: bytes,
+    target_schema_bytes: bytes | None,
+    stored_raw_file_ids: list[uuid.UUID] | None = None,
     model: str | None = None,
 ) -> uuid.UUID:
-    """Ingest uploads, extract evidence, and create a proposed mapping.
+    """Create a proposed mapping from new uploads and/or stored source files.
 
     Args:
         existing_client_id: UUID of an existing client, if selected.
         new_client_name: Name for a new client, if creating one.
-        source_uploads: List of uploaded source files.
-        target_schema_bytes: Raw bytes of the uploaded target schema JSON.
+        source_uploads: New source files to store for this mapping.
+        target_schema_bytes: Optional replacement target schema JSON.
+        stored_raw_file_ids: Existing client files to reuse.
         model: LLM model to use for mapping proposal.
 
     Returns:
         The UUID of the proposed MappingSpec.
     """
-    if not source_uploads:
-        raise ValueError("At least one source file is required")
-
+    stored_raw_file_ids = stored_raw_file_ids or []
     settings = get_settings()
-    if len(source_uploads) > settings.max_source_files:
+    if len(source_uploads) + len(stored_raw_file_ids) > settings.max_source_files:
         raise ValueError(
-            f"A maximum of {settings.max_source_files} source files may be uploaded"
+            f"A maximum of {settings.max_source_files} source files may be selected"
         )
     source_sizes = []
     for upload in source_uploads:
@@ -665,38 +573,56 @@ def ingest_and_propose(
                 "No organization provider credentials are configured. "
                 "Ask an administrator to add one."
             )
-        batch = create_ingestion_batch(
-            session,
-            client_id=client.id,
-            label="Wizard upload",
-            metadata={},
-        )
-        session.commit()
+        raw_files: list[RawFile] = []
+        for raw_file_id in dict.fromkeys(stored_raw_file_ids):
+            raw_file = get_raw_file_by_id(session, raw_file_id)
+            if raw_file is None or raw_file.client_id != client.id:
+                raise ValueError("Selected stored file does not belong to this client")
+            raw_files.append(raw_file)
 
-        raw_file_ids: list[uuid.UUID] = []
-        for upload in source_uploads:
-            raw_file_id = _store_raw_file(
-                session, client, batch.id, upload, object_store
+        if source_uploads:
+            batch = create_ingestion_batch(
+                session,
+                client_id=client.id,
+                label="Wizard upload",
+                metadata={},
             )
-            raw_file_ids.append(raw_file_id)
+            session.commit()
+            for upload in source_uploads:
+                raw_file_id = _store_raw_file(
+                    session, client, batch.id, upload, object_store
+                )
+                raw_file = get_raw_file_by_id(session, raw_file_id)
+                if raw_file is not None:
+                    raw_files.append(raw_file)
 
-        target_schema = _save_target_schema(client.id, target_schema_bytes)
+        if not raw_files:
+            raise ValueError("Select stored files, upload new files, or both")
+
+        if target_schema_bytes is not None:
+            target_schema = _save_target_schema(client.id, target_schema_bytes)
+        else:
+            try:
+                target_schema = get_artifact_store().read_target_schema(str(client.id))
+            except FileNotFoundError as exc:
+                raise ValueError(
+                    "Upload a target schema before running a mapping"
+                ) from exc
 
         spec = create_mapping_spec(
             session,
             client_id=client.id,
-            source_raw_file_ids=raw_file_ids,
+            source_raw_file_ids=[raw_file.id for raw_file in raw_files],
             target_schema=target_schema,
             description="Generated by upload wizard",
         )
 
         # Parse source files to extract evidence and profiles.
-        for raw_file_id in raw_file_ids:
-            raw_file = get_raw_file_by_id(session, raw_file_id)
-            if raw_file is None:
+        for raw_file in raw_files:
+            if raw_file.status == FileStatus.PARSED:
                 continue
-            file_type = detect_file_type(raw_file.original_filename)
             data = object_store.get(raw_file.storage_key)
+            file_type = detect_file_type(raw_file.original_filename, data)
             try:
                 _parse_raw_file(
                     session,

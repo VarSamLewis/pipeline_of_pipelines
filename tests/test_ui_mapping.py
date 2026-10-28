@@ -116,8 +116,8 @@ def test_clients_page_lists_visible_clients(monkeypatch) -> None:
     assert f"/clients/{client_id}/files" in response.text
 
 
-def test_reuse_stored_files_redirects_to_mapping(monkeypatch) -> None:
-    """Selected stored file IDs start a new proposed mapping."""
+def test_upload_can_reuse_stored_files_for_mapping(monkeypatch) -> None:
+    """The upload flow passes selected stored files into a new mapping proposal."""
     import ui
     from app import app
 
@@ -126,17 +126,24 @@ def test_reuse_stored_files_redirects_to_mapping(monkeypatch) -> None:
     mapping_id = uuid.uuid4()
     monkeypatch.setattr(
         ui,
-        "propose_mapping_from_stored_files",
-        lambda requested_client_id, raw_file_ids, user: (
+        "ingest_and_propose",
+        lambda **kwargs: (
             mapping_id
-            if requested_client_id == client_id and raw_file_ids == [raw_file_id]
+            if kwargs["existing_client_id"] == client_id
+            and kwargs["stored_raw_file_ids"] == [raw_file_id]
+            and not kwargs["source_uploads"]
+            and kwargs["target_schema_bytes"] is None
             else (_ for _ in ()).throw(AssertionError("Unexpected mapping request"))
         ),
     )
 
     response = TestClient(app).post(
-        f"/clients/{client_id}/mappings/reuse",
-        data={"raw_file_ids": str(raw_file_id)},
+        "/upload",
+        data={
+            "client_select": str(client_id),
+            "organization_select": str(uuid.uuid4()),
+            "stored_raw_file_ids": str(raw_file_id),
+        },
         follow_redirects=False,
     )
 
