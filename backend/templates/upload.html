@@ -52,8 +52,8 @@
 
     <div class="form-group">
       <label for="target_schema">Target schema JSON</label>
-      <input type="file" id="target_schema" name="target_schema" accept=".json" required>
-      <p class="muted">Required for a new client. For an existing client, leave empty to use its stored schema or upload a replacement.</p>
+      <input type="file" id="target_schema" name="target_schema" accept=".json">
+      <p class="muted">Optionally upload a schema file to replace the client’s saved schema. Leave empty to use the saved schema.</p>
     </div>
 
     <button class="btn btn-primary" type="submit">
@@ -73,12 +73,10 @@ function toggleNewClient(select) {
   if (select.value === '') {
     fields.style.display = 'block';
     fields.querySelectorAll('input').forEach(i => i.required = true);
-    document.getElementById('target_schema').required = true;
     clearClientFiles('Create the client by selecting a target schema and adding source files.');
   } else {
     fields.style.display = 'none';
     fields.querySelectorAll('input').forEach(i => i.required = false);
-    document.getElementById('target_schema').required = false;
     loadClientFiles(select.value);
   }
 }
