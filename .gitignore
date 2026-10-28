@@ -29,6 +29,7 @@ data/target-schemas/
 # Virtual environments
 .env
 .venv
+.direnv/
 env/
 venv/
 ENV/

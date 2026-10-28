@@ -43,6 +43,30 @@ uv pip install -e ".[dev]"
 
 This installs the runtime dependencies plus `pytest`, `ruff`, and `mypy`.
 
+### Nix development environment
+
+The Nix flake supplies the development toolchain; Docker Compose continues to
+run PostgreSQL with pgvector. Install Nix with flakes enabled, then run:
+
+```bash
+nix develop
+cp .env.example .env
+uv sync --frozen --extra dev
+nix run .#db-up -- up -d postgres
+nix run .#serve
+```
+
+The flake requires access to a running Docker daemon. On Linux, ensure Docker
+is running and that your user can access it (for example, through the `docker`
+group). Common helpers are:
+
+```bash
+nix run .#db-up -- up -d postgres
+nix run .#db-down -- down
+nix run .#test
+nix run .#check
+```
+
 ## Database
 
 Start PostgreSQL + pgvector with Docker Compose:
