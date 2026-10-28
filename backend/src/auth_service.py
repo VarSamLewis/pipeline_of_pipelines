@@ -226,6 +226,24 @@ def require_auth(request: Request) -> Any:
     return user
 
 
+def require_ui_auth(request: Request) -> Any:
+    """Require authentication for a browser page and redirect to sign-in."""
+    user = get_current_user(request)
+    if user is None:
+        if request.headers.get("HX-Request") == "true":
+            raise HTTPException(
+                401,
+                "Authentication required",
+                headers={"HX-Redirect": "/login"},
+            )
+        raise HTTPException(
+            303,
+            "Authentication required",
+            headers={"Location": "/login"},
+        )
+    return user
+
+
 def require_role(*allowed_roles: str) -> Callable[[Any], Any]:
     def checker(user: Any = Depends(require_auth)) -> Any:
         from models import PlatformRole

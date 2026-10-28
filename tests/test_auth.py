@@ -18,7 +18,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend" / "src"))
 
-from auth_service import get_current_user, require_client_membership, require_role
+from auth_service import (
+    get_current_user,
+    require_client_membership,
+    require_role,
+    require_ui_auth,
+)
 from fastapi import HTTPException
 from models import PlatformRole
 
@@ -261,3 +266,18 @@ def test_require_auth_adds_htmx_redirect_header() -> None:
     with pytest.raises(HTTPException) as exc_info:
         require_auth(request)
     assert exc_info.value.headers.get("HX-Redirect") == "/login"
+
+
+def test_require_ui_auth_redirects_browser_to_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unauthenticated browser pages redirect to the hosted sign-in flow."""
+    import auth_service
+
+    monkeypatch.setattr(auth_service, "get_current_user", lambda request: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_ui_auth(FakeRequest())
+
+    assert exc_info.value.status_code == 303
+    assert exc_info.value.headers == {"Location": "/login"}

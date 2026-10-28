@@ -18,7 +18,7 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
-from auth_service import require_auth, require_role
+from auth_service import require_role, require_ui_auth
 from config import get_settings
 from fastapi import (
     APIRouter,
@@ -81,7 +81,7 @@ def _user_context(request: Request, user: Any) -> dict[str, Any]:
 
 
 @router.get("/upload")
-def upload_page(request: Request, user: Any = Depends(require_auth)) -> Any:
+def upload_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
     """Render the upload form with a client dropdown."""
     return templates.TemplateResponse(
         request,
@@ -104,7 +104,7 @@ def upload_submit(
     source_files: list[UploadFile] = File(default_factory=list),
     stored_raw_file_ids: list[uuid.UUID] = Form(default_factory=list),
     target_schema: UploadFile | None = File(default=None),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Ingest files, extract evidence, and propose a mapping."""
     existing_client_id = uuid.UUID(client_select) if client_select else None
@@ -147,7 +147,7 @@ def upload_submit(
 def client_files_page(
     request: Request,
     client_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Render the authorized file inventory for one client."""
     try:
@@ -162,7 +162,7 @@ def client_files_page(
 
 
 @router.get("/client-library")
-def clients_page(request: Request, user: Any = Depends(require_auth)) -> Any:
+def clients_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
     """Render the clients visible to the current user."""
     return templates.TemplateResponse(
         request,
@@ -175,7 +175,7 @@ def clients_page(request: Request, user: Any = Depends(require_auth)) -> Any:
 def client_files_panel(
     request: Request,
     client_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Render a compact authorized client-file summary for the upload page."""
     try:
@@ -193,7 +193,7 @@ def client_files_panel(
 def runs_page(
     request: Request,
     organization_id: uuid.UUID | None = Query(default=None),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Render an organization's execution-run history."""
     organizations = list_organizations(user)
@@ -223,7 +223,7 @@ def runs_page(
 @router.get("/settings")
 def organization_settings_page(
     request: Request,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Render organization-level BYOK settings for an authenticated user."""
     return templates.TemplateResponse(
@@ -242,7 +242,7 @@ def save_organization_key_endpoint(
     client_id: uuid.UUID,
     api_key: str = Form(""),
     provider_base_url: str = Form(""),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Save an encrypted organization API key without rendering it back."""
     try:
@@ -256,7 +256,7 @@ def save_organization_key_endpoint(
 def create_organization_endpoint(
     request: Request,
     name: str = Form(""),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Create an organization before configuring its members and credentials."""
     try:
@@ -275,7 +275,7 @@ def invite_user_endpoint(
     request: Request,
     organization_id: uuid.UUID,
     email: str = Form(""),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Invite a user to an organization."""
     try:
@@ -292,7 +292,7 @@ def invite_user_from_settings_endpoint(
     request: Request,
     organization_id: str = Form(""),
     email: str = Form(""),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Invite a user to the selected organization from Settings."""
     try:
@@ -314,7 +314,7 @@ def revoke_invitation_endpoint(
     request: Request,
     organization_id: uuid.UUID,
     invitation_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Revoke a pending invitation."""
     try:
@@ -333,7 +333,7 @@ def revoke_invitation_endpoint(
 def mapping_review_page(
     request: Request,
     spec_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Render the proposed mapping JSON for human review."""
@@ -380,7 +380,7 @@ def mapping_review_page(
 @router.get("/mapping/{spec_id}/target-schema.json")
 def mapping_target_schema_file(
     spec_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_mapping_spec_access),
 ) -> Response:
     """Return the target schema file attached to one mapping specification."""
@@ -453,7 +453,7 @@ def mapping_confirm(
 def mapping_reject(
     request: Request,
     spec_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Reject the mapping and return to the upload page."""
@@ -470,7 +470,7 @@ def mapping_reject(
 def results_review_page(
     request: Request,
     run_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Render the results review page."""
@@ -486,7 +486,7 @@ def results_csv_page(
     request: Request,
     run_id: uuid.UUID,
     page: int = Query(1, ge=1),
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Return a paginated fragment of the results CSV."""
@@ -525,7 +525,7 @@ def results_csv_page(
 def results_code_page(
     request: Request,
     run_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Return the generated pipeline.py code fragment."""
@@ -569,7 +569,7 @@ def results_confirm(
 def results_reject(
     request: Request,
     run_id: uuid.UUID,
-    user: Any = Depends(require_auth),
+    user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Reject the results and return to the mapping review page."""
