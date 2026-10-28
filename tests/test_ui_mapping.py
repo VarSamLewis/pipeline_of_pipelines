@@ -68,7 +68,6 @@ def test_client_files_panel_shows_authorized_summary(monkeypatch) -> None:
         "get_client_file_library",
         lambda requested_client_id, user: {
             "client": {"id": requested_client_id, "name": "Acme"},
-            "target_schema": {"name": "records", "table_count": 2},
             "source_files": [
                 {
                     "name": "orders.csv",
@@ -86,7 +85,7 @@ def test_client_files_panel_shows_authorized_summary(monkeypatch) -> None:
     assert response.status_code == 200
     assert "Acme" in response.text
     assert "orders.csv" in response.text
-    assert "records (2 tables)" in response.text
+    assert 'name="stored_raw_file_ids"' in response.text
     assert f"/clients/{client_id}/files" in response.text
 
 
@@ -132,7 +131,7 @@ def test_upload_can_reuse_stored_files_for_mapping(monkeypatch) -> None:
             if kwargs["existing_client_id"] == client_id
             and kwargs["stored_raw_file_ids"] == [raw_file_id]
             and not kwargs["source_uploads"]
-            and kwargs["target_schema_bytes"] is None
+            and kwargs["target_schema_bytes"] == b'{"name":"test","tables":[]}'
             else (_ for _ in ()).throw(AssertionError("Unexpected mapping request"))
         ),
     )
@@ -143,6 +142,13 @@ def test_upload_can_reuse_stored_files_for_mapping(monkeypatch) -> None:
             "client_select": str(client_id),
             "organization_select": str(uuid.uuid4()),
             "stored_raw_file_ids": str(raw_file_id),
+        },
+        files={
+            "target_schema": (
+                "target_schema.json",
+                b'{"name":"test","tables":[]}',
+                "application/json",
+            )
         },
         follow_redirects=False,
     )
@@ -200,6 +206,7 @@ def test_mapping_review_surfaces_catalog_warnings(
         "get_mapping_review",
         lambda spec_id: {
             "id": str(spec_id),
+            "target_schema_json": {"name": "records", "tables": []},
             "columns": [
                 {
                     "id": str(uuid.uuid4()),
@@ -268,6 +275,28 @@ def test_mapping_review_surfaces_catalog_warnings(
     assert '<label>Tests' not in response.text
 
 
+def test_mapping_target_schema_is_viewable_as_a_file(monkeypatch) -> None:
+    """Each mapping exposes its own target-schema file."""
+    import ui
+    from app import app
+
+    spec_id = uuid.uuid4()
+    monkeypatch.setattr(
+        ui,
+        "get_mapping_review",
+        lambda requested_spec_id: {
+            "id": str(requested_spec_id),
+            "target_schema_json": {"name": "records", "tables": []},
+        },
+    )
+
+    response = TestClient(app).get(f"/mapping/{spec_id}/target-schema.json")
+
+    assert response.status_code == 200
+    assert response.json() == {"name": "records", "tables": []}
+    assert "target_schema.json" in response.headers["content-disposition"]
+
+
 def test_mapping_confirmation_displays_execution_errors(monkeypatch) -> None:
     """Pipeline execution failures are returned to the HTMX target."""
     import ui
@@ -296,7 +325,6 @@ def test_client_files_page_lists_workflow_files(monkeypatch) -> None:
         "get_client_file_library",
         lambda requested_client_id, user: {
             "client": {"id": requested_client_id, "name": "Acme"},
-            "target_schema": {"name": "records", "table_count": 1},
             "source_files": [
                 {
                     "name": "orders.csv",

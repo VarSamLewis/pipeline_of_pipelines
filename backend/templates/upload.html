@@ -52,8 +52,8 @@
 
     <div class="form-group">
       <label for="target_schema">Target schema JSON</label>
-      <input type="file" id="target_schema" name="target_schema" accept=".json">
-      <p class="muted">Optionally upload a schema file to replace the client’s saved schema. Leave empty to use the saved schema.</p>
+      <input type="file" id="target_schema" name="target_schema" accept=".json" required>
+      <p class="muted">Upload the schema file that defines this mapping’s target output.</p>
     </div>
 
     <button class="btn btn-primary" type="submit">

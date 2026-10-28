@@ -118,12 +118,12 @@ def upload_submit(
     valid_source_files = [f for f in source_files if f.filename]
 
     try:
-        target_schema_bytes = None
-        if target_schema is not None and target_schema.filename:
-            target_schema_bytes = target_schema.file.read()
-            settings = get_settings()
-            if len(target_schema_bytes) > settings.max_upload_size_bytes:
-                raise ValueError("Target schema exceeds the individual file limit")
+        if target_schema is None or not target_schema.filename:
+            raise ValueError("A target schema file is required")
+        target_schema_bytes = target_schema.file.read()
+        settings = get_settings()
+        if len(target_schema_bytes) > settings.max_upload_size_bytes:
+            raise ValueError("Target schema exceeds the individual file limit")
         spec_id = ingest_and_propose(
             existing_client_id=existing_client_id,
             new_client_name=new_client_name or None,
@@ -367,9 +367,31 @@ def mapping_review_page(
             **_user_context(request, user),
             "spec_id": str(spec_id),
             "mapping_json": mapping_json,
+            "target_schema_json": json.dumps(
+                mapping["target_schema_json"], indent=2, default=str
+            ),
             "mapping_columns": mapping.get("columns", []),
             "source_tables": source_tables,
             "parse_warnings": parse_warnings,
+        },
+    )
+
+
+@router.get("/mapping/{spec_id}/target-schema.json")
+def mapping_target_schema_file(
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_auth),
+    _: None = Depends(require_mapping_spec_access),
+) -> Response:
+    """Return the target schema file attached to one mapping specification."""
+    mapping = get_mapping_review(spec_id)
+    return Response(
+        content=json.dumps(mapping["target_schema_json"], indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{spec_id}_target_schema.json"'
+            )
         },
     )
 

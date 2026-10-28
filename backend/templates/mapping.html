@@ -60,6 +60,12 @@
 </div>
 {% endif %}
 
+<details class="card">
+  <summary><strong>Target schema</strong> <span class="muted">File for this mapping</span></summary>
+  <p><a href="/mapping/{{ spec_id }}/target-schema.json">Download target_schema.json</a></p>
+  <pre class="code-editor">{{ target_schema_json }}</pre>
+</details>
+
 <div class="card">
   <h2>Mapping editor</h2>
   <p class="muted">Review each proposed target mapping below. Select a catalogued source, explain the transformation, and optionally refine the generated Polars expression.</p>

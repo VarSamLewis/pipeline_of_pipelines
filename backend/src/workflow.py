@@ -285,16 +285,8 @@ def get_client_file_library(
             }
         )
 
-    try:
-        schema = store.read_target_schema(str(client.id))
-    except FileNotFoundError:
-        target_schema = None
-    else:
-        target_schema = {"name": schema.name, "table_count": len(schema.tables)}
-
     return {
         "client": {"id": client.id, "name": client.name},
-        "target_schema": target_schema,
         "source_files": [
             {
                 "id": raw_file.id,
@@ -459,11 +451,9 @@ def revoke_organization_reviewer_invitation(
         session.commit()
 
 
-def _save_target_schema(client_id: uuid.UUID, content: bytes) -> TargetSchema:
-    """Persist the uploaded target schema JSON and parse it into a model."""
-    schema = TargetSchema.model_validate(json.loads(content))
-    get_artifact_store().write_target_schema(str(client_id), schema)
-    return schema
+def _parse_target_schema(content: bytes) -> TargetSchema:
+    """Parse the target schema supplied for one mapping specification."""
+    return TargetSchema.model_validate(json.loads(content))
 
 
 def _store_raw_file(
@@ -516,7 +506,7 @@ def ingest_and_propose(
     organization_id: uuid.UUID,
     user: Any,
     source_uploads: list[Any],
-    target_schema_bytes: bytes | None,
+    target_schema_bytes: bytes,
     stored_raw_file_ids: list[uuid.UUID] | None = None,
     model: str | None = None,
 ) -> uuid.UUID:
@@ -526,7 +516,7 @@ def ingest_and_propose(
         existing_client_id: UUID of an existing client, if selected.
         new_client_name: Name for a new client, if creating one.
         source_uploads: New source files to store for this mapping.
-        target_schema_bytes: Optional replacement target schema JSON.
+        target_schema_bytes: Target schema JSON for this mapping.
         stored_raw_file_ids: Existing client files to reuse.
         model: LLM model to use for mapping proposal.
 
@@ -599,15 +589,7 @@ def ingest_and_propose(
         if not raw_files:
             raise ValueError("Select stored files, upload new files, or both")
 
-        if target_schema_bytes is not None:
-            target_schema = _save_target_schema(client.id, target_schema_bytes)
-        else:
-            try:
-                target_schema = get_artifact_store().read_target_schema(str(client.id))
-            except FileNotFoundError as exc:
-                raise ValueError(
-                    "Upload a target schema before running a mapping"
-                ) from exc
+        target_schema = _parse_target_schema(target_schema_bytes)
 
         spec = create_mapping_spec(
             session,

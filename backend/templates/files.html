@@ -7,15 +7,6 @@
 <h1>{{ library.client.name }} files</h1>
 
 <div class="card">
-  <h2>Target schema</h2>
-  {% if library.target_schema %}
-  <p>{{ library.target_schema.name }} with {{ library.target_schema.table_count }} table{% if library.target_schema.table_count != 1 %}s{% endif %}.</p>
-  {% else %}
-  <p class="muted">No target schema has been uploaded.</p>
-  {% endif %}
-</div>
-
-<div class="card">
   <h2>Uploaded source files</h2>
   {% if library.source_files %}
   <div class="table-scroll"><table>
@@ -41,7 +32,7 @@
         <div><strong>Mapping {{ mapping.id }}</strong><br><span class="muted">{{ mapping.description or "No description" }} · {{ mapping.created_at }}</span></div>
         <div><span class="badge">{{ mapping.status }}</span>{% if mapping.execution_status %} <span class="badge">{{ mapping.execution_status }}</span>{% endif %}</div>
       </div>
-      <p><a href="/mapping/{{ mapping.id }}">Review mapping</a></p>
+      <p><a href="/mapping/{{ mapping.id }}">Review mapping</a> · <a href="/mapping/{{ mapping.id }}/target-schema.json">Target schema</a></p>
       {% if mapping.files %}
       <ul>
         {% for file in mapping.files %}

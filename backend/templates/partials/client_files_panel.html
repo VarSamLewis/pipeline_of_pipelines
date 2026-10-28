@@ -9,16 +9,12 @@
 
   <div class="client-file-summary">
     <div>
-      <strong>Target schema</strong>
-      {% if library.target_schema %}
-      <span>{{ library.target_schema.name }} ({{ library.target_schema.table_count }} tables)</span>
-      {% else %}
-      <span class="muted">Not uploaded</span>
-      {% endif %}
-    </div>
-    <div>
       <strong>Mappings</strong>
       <span>{{ library.mappings | length }}</span>
+    </div>
+    <div>
+      <strong>Stored source files</strong>
+      <span>{{ library.source_files | length }}</span>
     </div>
   </div>
 
