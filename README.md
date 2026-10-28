@@ -125,8 +125,14 @@ The API is then available at `http://127.0.0.1:8000`. Visit
    ```bash
    curl http://127.0.0.1:8000/output-folders/<spec-id>/pipeline.py
    curl http://127.0.0.1:8000/output-folders/<spec-id>/mapping.json
-   curl http://127.0.0.1:8000/output-folders/<spec-id>/results.csv
-   ```
+    curl http://127.0.0.1:8000/output-folders/<spec-id>/results.csv
+    ```
+
+## CLI design
+
+The planned `pop` CLI mirrors the upload, mapping review, and execution
+workflow while returning generated deliverables to a local output directory.
+See [the CLI design](docs/cli.md) for the command contract and examples.
 
 ## Example
 

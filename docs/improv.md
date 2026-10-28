@@ -4,7 +4,9 @@ UI
 - Done - Client context on homepage - should just be client
 - Done - Add panel to see client files
 - Done - Make runs a seperate page and show all prev runs within an org
-- Wrap JSON/code/csv
+- Done - Wrap JSON/code/csv
+- Improve error messages for end users
+- Change timestamps to 0 dp
 - Revamp entire to panel format UI
 
 Applications
@@ -17,7 +19,7 @@ Applications
 
 Data Storage
 
-- In cloud storage bucket create a clients/{client_name}/{file_name}\_timestamp.extension
+- Done - In cloud storage bucket create a clients/{client_name}/{file_name}\_timestamp.extension
 - Validate that the seperation in the DB actually works
 
 Infra
