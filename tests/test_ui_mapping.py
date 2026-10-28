@@ -115,6 +115,19 @@ def test_clients_page_lists_visible_clients(monkeypatch) -> None:
     assert f"/clients/{client_id}/files" in response.text
 
 
+def test_documentation_page_explains_web_workflow() -> None:
+    """The in-app guide documents the upload-review-execute flow."""
+    from app import app
+
+    response = TestClient(app).get("/documentation")
+
+    assert response.status_code == 200
+    assert "Start a mapping" in response.text
+    assert "Review the proposed mapping" in response.text
+    assert "target_schema.json" in response.text
+    assert 'href="/documentation"' in response.text
+
+
 def test_upload_can_reuse_stored_files_for_mapping(monkeypatch) -> None:
     """The upload flow passes selected stored files into a new mapping proposal."""
     import ui

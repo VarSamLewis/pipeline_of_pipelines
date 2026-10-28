@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Documentation - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<h1>Using Pipeline of Pipelines</h1>
+<p class="muted">Create reviewable, auditable data transformations from stored and newly uploaded source files.</p>
+
+<div class="card">
+  <h2>1. Sign in and choose an organization</h2>
+  <p>Sign in with your invited Clerk account. Organizations control which clients and files you can access. Organization administrators can manage members and provider credentials from <a href="/settings">Organizations</a>.</p>
+</div>
+
+<div class="card">
+  <h2>2. Start a mapping</h2>
+  <p>Open <a href="/upload">Upload</a>, select an organization, then choose an existing client or create a new one.</p>
+  <ul>
+    <li>Select any stored source files shown for an existing client.</li>
+    <li>Optionally add new source files in the same run.</li>
+    <li>Upload the required target-schema JSON file for this mapping.</li>
+  </ul>
+  <p>The client is the boundary for reusable source-file context. The target schema belongs to the mapping, not the client.</p>
+</div>
+
+<div class="card">
+  <h2>3. Review the proposed mapping</h2>
+  <p>The service parses the selected files, retrieves relevant evidence, and proposes target-column mappings. Review source-table warnings, the target schema, source columns, transformation logic, and generated Polars expressions.</p>
+  <p>Save any edits before approving. Reject a mapping if the selected source files or target shape are wrong.</p>
+</div>
+
+<div class="card">
+  <h2>4. Generate and review results</h2>
+  <p>Approving a mapping generates and runs the transformation. Review the results CSV, generated Python pipeline, and validation results. Confirm the result only when it is ready for delivery.</p>
+</div>
+
+<div class="card">
+  <h2>Files, runs, and outputs</h2>
+  <ul>
+    <li><a href="/client-library">Clients</a> lists reusable source files, mappings, and generated deliverables.</li>
+    <li><a href="/runs">Runs</a> shows execution history for an organization.</li>
+    <li>Every mapping has its own downloadable <code>target_schema.json</code>, <code>mapping.json</code>, <code>pipeline.py</code>, and <code>results.csv</code> when generated.</li>
+  </ul>
+</div>
+
+<div class="card warning-panel">
+  <h2>Good practice</h2>
+  <ul class="warning-list">
+    <li>Use only files you intend to include in the mapping; source files are retained immutably.</li>
+    <li>Review parser warnings and low-confidence mappings before approval.</li>
+    <li>Keep target schemas with the run that produced the output so the result remains reproducible.</li>
+  </ul>
+</div>
+{% endblock %}

@@ -236,6 +236,16 @@ def organization_settings_page(
     )
 
 
+@router.get("/documentation")
+def documentation_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
+    """Render the in-app guide for the web workflow."""
+    return templates.TemplateResponse(
+        request,
+        "documentation.html",
+        _user_context(request, user),
+    )
+
+
 @router.post("/settings/{client_id}/api-key")
 def save_organization_key_endpoint(
     request: Request,

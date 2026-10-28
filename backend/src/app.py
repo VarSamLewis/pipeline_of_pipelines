@@ -8,9 +8,7 @@ translation belongs to router modules.
 from __future__ import annotations
 
 import json
-import logging
 import time
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -23,38 +21,12 @@ from config import get_settings
 from db_ops import create_tables, get_engine
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from request_audit import REQUEST_AUDIT_LOGGER, request_id_for
 from routers.api import app as api_router
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from ui import router as ui_router
-
-
-def _request_audit_logger() -> logging.Logger:
-    """Create a logger whose JSON lines are parsed by Cloud Logging."""
-    logger = logging.getLogger("pipeline.request_audit")
-    if logger.handlers:
-        return logger
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    return logger
-
-
-REQUEST_AUDIT_LOGGER = _request_audit_logger()
-
-
-def _request_id(request: Request) -> str:
-    """Use a valid caller request ID or generate one safe to echo and log."""
-    supplied = request.headers.get("X-Request-ID")
-    if supplied:
-        try:
-            return str(uuid.UUID(supplied))
-        except ValueError:
-            pass
-    return str(uuid.uuid4())
 
 
 @asynccontextmanager
@@ -91,7 +63,7 @@ def create_app() -> FastAPI:
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         """Apply browser protections and emit safe authenticated-request audit logs."""
-        request_id = _request_id(request)
+        request_id = request_id_for(request)
         request.state.request_id = request_id
         started_at = time.perf_counter()
         response = await call_next(request)
