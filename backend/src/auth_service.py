@@ -191,9 +191,16 @@ def _synthetic_local_user() -> Any:
     )
 
 
+def _record_request_actor(request: Request, user: Any) -> None:
+    """Attach the non-sensitive internal actor ID for request audit logging."""
+    request.state.actor_user_id = str(user.id)
+
+
 def get_current_user(request: Request) -> Any | None:
     if AUTH_BYPASS_LOCAL:
-        return _synthetic_local_user()
+        user = _synthetic_local_user()
+        _record_request_actor(request, user)
+        return user
     user_id = request.session.get("user_id")
     if not user_id:
         return None
@@ -211,6 +218,7 @@ def get_current_user(request: Request) -> Any | None:
         if request.session.get("session_version") != user.session_version:
             request.session.clear()
             return None
+        _record_request_actor(request, user)
         return user
 
 
@@ -293,6 +301,7 @@ def create_session(request: Request, user_id: uuid.UUID) -> None:
             raise ValueError("User not found")
     request.session["user_id"] = str(user_id)
     request.session["session_version"] = user.session_version
+    _record_request_actor(request, user)
 
 
 def clear_session(request: Request) -> None:

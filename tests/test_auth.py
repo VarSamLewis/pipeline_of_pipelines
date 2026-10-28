@@ -34,6 +34,7 @@ class FakeRequest:
     def __init__(self, session: dict[str, str] | None = None) -> None:
         self.session = session or {}
         self.headers: dict[str, str] = {}
+        self.state = SimpleNamespace()
 
 
 class FakeMembershipResult:
@@ -67,6 +68,7 @@ def test_local_bypass_returns_admin_user() -> None:
     assert user is not None
     assert user.platform_role == PlatformRole.PLATFORM_ADMIN
     assert user.email == "local-dev@example.com"
+    assert request.state.actor_user_id == str(user.id)
 
 
 def test_logout_redirects_post_to_get_login() -> None:

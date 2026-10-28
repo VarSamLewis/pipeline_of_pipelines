@@ -81,6 +81,7 @@ def test_responses_include_browser_security_headers(client: TestClient) -> None:
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert response.headers["X-Request-ID"]
 
 
 def test_health_check(client: TestClient) -> None:
