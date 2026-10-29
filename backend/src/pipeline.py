@@ -24,15 +24,21 @@ def build_validation_tests(
     target_schema: TargetSchema,
 ) -> list[dict[str, Any]]:
     """Translate mapping-column tests and target schema into Polars checks."""
-    target_col_map = {c.name: c for t in target_schema.tables for c in t.columns}
+    target_col_map = {
+        (table.name, column.name): column
+        for table in target_schema.tables
+        for column in table.columns
+    }
     tests = []
     for col in mapping_columns:
-        tc = target_col_map.get(col["target_column"])
+        target_table = col["target_table"]
+        tc = target_col_map.get((target_table, col["target_column"]))
         if tc and tc.required:
             tests.append(
                 {
                     "name": f"{col['target_table']}.{col['target_column']}.not_null",
                     "severity": "error",
+                    "target_table": target_table,
                     "column": col["target_column"],
                     "expression": (
                         f"pl.col('{col['target_column']}').is_not_null().all()"
@@ -44,6 +50,7 @@ def build_validation_tests(
                 {
                     "name": f"{col['target_table']}.{col['target_column']}.unique",
                     "severity": "error",
+                    "target_table": target_table,
                     "column": col["target_column"],
                     "expression": f"pl.col('{col['target_column']}').is_unique().all()",
                 }
@@ -61,6 +68,7 @@ def build_validation_tests(
                 {
                     "name": f"{col['target_table']}.{col['target_column']}.{test}",
                     "severity": "warning",
+                    "target_table": target_table,
                     "column": col["target_column"],
                     "expression": expression,
                 }
@@ -79,21 +87,32 @@ def run_validation_tests(
     for test in tests:
         passed = True
         details: dict[str, Any] = {"expression": test["expression"]}
-        for _table_name, df in target_dfs.items():
-            if test["column"] not in df.columns:
-                continue
-            try:
-                expr = eval(
-                    test["expression"],
-                    {"pl": pl, "col": pl.col, "when": pl.when},
-                    {test["column"]: df[test["column"]]},
-                )
-                # Polars expressions are lazy; evaluate them against the DataFrame.
-                result = df.select(expr).item() if isinstance(expr, pl.Expr) else expr
-                passed = bool(result)
-            except Exception as exc:
-                passed = False
-                details["error"] = str(exc)
+        df = target_dfs.get(test["target_table"])
+        if df is None or test["column"] not in df.columns:
+            results.append(
+                {
+                    "test_name": test["name"],
+                    "severity": test["severity"],
+                    "passed": False,
+                    "details": {
+                        **details,
+                        "error": "Target table or column is missing from output",
+                    },
+                }
+            )
+            continue
+        try:
+            expr = eval(
+                test["expression"],
+                {"pl": pl, "col": pl.col, "when": pl.when},
+                {test["column"]: df[test["column"]]},
+            )
+            # Polars expressions are lazy; evaluate them against the DataFrame.
+            result = df.select(expr).item() if isinstance(expr, pl.Expr) else expr
+            passed = bool(result)
+        except Exception as exc:
+            passed = False
+            details["error"] = str(exc)
         results.append(
             {
                 "test_name": test["name"],
@@ -193,9 +212,8 @@ def record_validation_results(
                 recorded_at=datetime.now(UTC),
             )
             session.add(vr)
-            session.commit()
-            session.refresh(vr)
             ids.append(vr.id)
+        session.commit()
     return ids
 
 
@@ -210,6 +228,10 @@ def record_staging_metadata(
 
     ids: list[uuid.UUID] = []
     with get_session() as session:
+        mapping_columns_by_target = {
+            (mapping["target_table"], mapping["target_column"]): mapping
+            for mapping in mapping_columns
+        }
         for table_name, df in target_dfs.items():
             st = StagingTable(
                 execution_run_id=execution_run_id,
@@ -217,14 +239,11 @@ def record_staging_metadata(
                 row_count=len(df),
             )
             session.add(st)
-            session.commit()
-            session.refresh(st)
+            session.flush()
             ids.append(st.id)
 
             for col in df.columns:
-                mc = next(
-                    (m for m in mapping_columns if m["target_column"] == col), None
-                )
+                mc = mapping_columns_by_target.get((table_name, col))
                 sc = StagingColumn(
                     staging_table_id=st.id,
                     mapping_column_id=uuid.UUID(mc["id"]) if mc else None,
@@ -234,5 +253,5 @@ def record_staging_metadata(
                     unique_count=int(df[col].n_unique()),
                 )
                 session.add(sc)
-            session.commit()
+        session.commit()
     return ids

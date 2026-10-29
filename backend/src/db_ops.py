@@ -69,9 +69,7 @@ def get_embedding(
 ) -> list[float]:
     """Generate an embedding vector for a text chunk using OpenAI."""
     if not api_key:
-        raise RuntimeError(
-            "An organization API key is required for embeddings."
-        )
+        raise RuntimeError("An organization API key is required for embeddings.")
 
     from openai import OpenAI
 
@@ -145,13 +143,13 @@ def create_tables(engine: Engine | None = None) -> None:
         )
         connection.execute(
             text(
-                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS "
+                'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS '
                 "session_version INTEGER NOT NULL DEFAULT 1"
             )
         )
         connection.execute(
             text(
-                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS "
+                'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS '
                 "platform_role VARCHAR NOT NULL DEFAULT 'USER'"
             )
         )
@@ -162,12 +160,12 @@ def create_tables(engine: Engine | None = None) -> None:
                 "FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid "
                 "WHERE a.attrelid = 'user'::regclass AND a.attname = 'platform_role'; "
                 "IF role_is_enum THEN "
-                "UPDATE \"user\" SET platform_role = "
+                'UPDATE "user" SET platform_role = '
                 "CASE WHEN platform_role::text = 'platform_admin' "
                 "THEN 'PLATFORM_ADMIN'::platformrole "
                 "ELSE 'USER'::platformrole END "
                 "WHERE platform_role::text NOT IN ('PLATFORM_ADMIN', 'USER'); "
-                "ELSE UPDATE \"user\" SET platform_role = "
+                'ELSE UPDATE "user" SET platform_role = '
                 "CASE WHEN platform_role::text = 'platform_admin' "
                 "THEN 'PLATFORM_ADMIN' ELSE 'USER' END "
                 "WHERE platform_role::text NOT IN ('PLATFORM_ADMIN', 'USER'); "
@@ -180,7 +178,7 @@ def create_tables(engine: Engine | None = None) -> None:
                 "IF EXISTS (SELECT 1 FROM information_schema.columns "
                 "WHERE table_schema = current_schema() "
                 "AND table_name = 'user' AND column_name = 'role') "
-                "THEN ALTER TABLE \"user\" ALTER COLUMN role DROP NOT NULL; "
+                'THEN ALTER TABLE "user" ALTER COLUMN role DROP NOT NULL; '
                 "END IF; END $$"
             )
         )
@@ -195,8 +193,7 @@ def create_tables(engine: Engine | None = None) -> None:
         )
         connection.execute(
             text(
-                "ALTER TABLE executionrun "
-                "ADD COLUMN IF NOT EXISTS organization_id UUID"
+                "ALTER TABLE executionrun ADD COLUMN IF NOT EXISTS organization_id UUID"
             )
         )
         connection.execute(
@@ -533,7 +530,10 @@ def _parse_raw_file(
             page_ref=chunk.get("page_ref"),
             chunk_index=chunk.get("chunk_index"),
             metadata=chunk.get("metadata") or {},
+            commit=False,
         )
+    if chunks:
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -578,8 +578,14 @@ def create_extracted_evidence(
     page_ref: str | None,
     chunk_index: int | None,
     metadata: dict[str, Any],
+    *,
+    commit: bool = True,
 ) -> ExtractedEvidence:
-    """Store a piece of extracted evidence and optionally its vector embedding."""
+    """Store a piece of extracted evidence and optionally its vector embedding.
+
+    Callers ingesting several chunks can defer the commit and persist the batch
+    once all records have been added.
+    """
     evidence = ExtractedEvidence(
         client_id=client_id,
         raw_file_id=raw_file_id,
@@ -591,8 +597,9 @@ def create_extracted_evidence(
         meta=metadata,
     )
     session.add(evidence)
-    session.commit()
-    session.refresh(evidence)
+    if commit:
+        session.commit()
+        session.refresh(evidence)
     return evidence
 
 
@@ -867,30 +874,6 @@ def write_audit_log(
     session.commit()
     session.refresh(log)
     return log
-
-
-def record_lineage_edge(
-    session: Session,
-    source_type: str,
-    source_id: uuid.UUID,
-    target_type: str,
-    target_id: uuid.UUID,
-    edge_type: str,
-    metadata: dict[str, Any] | None = None,
-) -> None:
-    """Record a single provenance edge between two entities."""
-    from models import LineageEdge
-
-    edge = LineageEdge(
-        source_type=source_type,
-        source_id=source_id,
-        target_type=target_type,
-        target_id=target_id,
-        edge_type=edge_type,
-        meta=metadata or {},
-    )
-    session.add(edge)
-    session.commit()
 
 
 def get_lineage_for_staging_column(
