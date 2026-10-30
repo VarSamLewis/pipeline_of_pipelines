@@ -40,7 +40,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["repositories", "routers"]
+packages = ["pop_cli", "repositories", "routers"]
 py-modules = [
     "app",
     "artifact_store",
