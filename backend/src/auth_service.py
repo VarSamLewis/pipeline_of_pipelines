@@ -196,9 +196,21 @@ def _record_request_actor(request: Request, user: Any) -> None:
     request.state.actor_user_id = str(user.id)
 
 
+def _bearer_token(request: Request) -> str | None:
+    """Extract a non-empty Bearer token from an API request, if supplied."""
+    scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
 def get_current_user(request: Request) -> Any | None:
     if AUTH_BYPASS_LOCAL:
         user = _synthetic_local_user()
+        _record_request_actor(request, user)
+        return user
+    if token := _bearer_token(request):
+        user = authenticate_clerk_session(token)
         _record_request_actor(request, user)
         return user
     user_id = request.session.get("user_id")

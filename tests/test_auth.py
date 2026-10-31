@@ -71,6 +71,28 @@ def test_local_bypass_returns_admin_user() -> None:
     assert request.state.actor_user_id == str(user.id)
 
 
+def test_bearer_token_authenticates_api_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bearer tokens authenticate CLI requests without a browser session."""
+    import auth_service
+
+    user = SimpleNamespace(id=uuid.uuid4(), email="member@example.com")
+    received: list[str] = []
+    monkeypatch.setattr(auth_service, "AUTH_BYPASS_LOCAL", False)
+    monkeypatch.setattr(
+        auth_service,
+        "authenticate_clerk_session",
+        lambda token: received.append(token) or user,
+    )
+    request = FakeRequest()
+    request.headers["Authorization"] = "Bearer clerk-access-token"
+
+    assert auth_service.get_current_user(request) == user
+    assert received == ["clerk-access-token"]
+    assert request.state.actor_user_id == str(user.id)
+
+
 def test_logout_redirects_post_to_get_login() -> None:
     """Logout uses 303 so the browser follows the redirect with GET."""
     from app import app
