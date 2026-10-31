@@ -7,7 +7,7 @@ import json
 import httpx
 import typer
 
-from pop_cli.auth import clear_tokens, load_tokens, login
+from pop_cli.auth import DeviceAuthorization, clear_tokens, load_tokens, login
 from pop_cli.config import CliConfig, load_config, save_config
 
 app = typer.Typer(help="Pipeline of Pipelines command-line client.")
@@ -29,9 +29,14 @@ def init(
 
 @app.command("login")
 def login_command() -> None:
-    """Sign in through Clerk in the default browser."""
+    """Sign in through Clerk using device authorization."""
+
+    def show_device_instructions(device: DeviceAuthorization) -> None:
+        typer.echo(f"Open {device.verification_uri}")
+        typer.echo(f"Enter code: {device.user_code}")
+
     try:
-        login(load_config())
+        login(load_config(), show_device_instructions)
     except RuntimeError as exc:
         _fail(exc)
     typer.echo("Logged in successfully")

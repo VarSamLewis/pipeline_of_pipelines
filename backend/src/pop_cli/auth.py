@@ -1,17 +1,13 @@
-"""Clerk OAuth PKCE authentication for the ``pop`` CLI."""
+"""Clerk OAuth device authorization for the ``pop`` CLI."""
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
-import secrets
 import time
 import webbrowser
+from collections.abc import Callable
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 import keyring
@@ -19,55 +15,8 @@ from keyring.errors import KeyringError
 
 from pop_cli.config import CliConfig
 
-CALLBACK_URL = "http://127.0.0.1:8765/callback"
 KEYRING_SERVICE = "pipeline-of-pipelines"
-
-
-def _pkce_pair() -> tuple[str, str]:
-    verifier = secrets.token_urlsafe(64)
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
-    return verifier, challenge
-
-
-def authorization_url(config: CliConfig, state: str, challenge: str) -> str:
-    """Build the Clerk OAuth authorization URL for a PKCE login."""
-    query = urlencode(
-        {
-            "response_type": "code",
-            "client_id": config.clerk_oauth_client_id,
-            "redirect_uri": CALLBACK_URL,
-            "scope": "openid profile email offline_access",
-            "state": state,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
-        }
-    )
-    return f"{config.clerk_issuer}/oauth/authorize?{query}"
-
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802
-        query = parse_qs(urlparse(self.path).query)
-        self.server.oauth_query = query  # type: ignore[attr-defined]
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"<p>Login complete. You can close this window.</p>")
-
-    def log_message(self, _format: str, *_args: object) -> None:
-        """Suppress callback request logs in normal CLI use."""
-
-
-def _receive_callback() -> dict[str, list[str]]:
-    with HTTPServer(("127.0.0.1", 8765), _CallbackHandler) as server:
-        server.timeout = 180
-        server.handle_request()
-        query: Any = getattr(server, "oauth_query", None)
-    if not isinstance(query, dict):
-        raise RuntimeError("Timed out waiting for Clerk login callback")
-    return query
+DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +33,114 @@ class TokenSet:
                 "expires_at": self.expires_at,
             }
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceAuthorization:
+    """The short-lived Clerk device-code authorization challenge."""
+
+    device_code: str
+    user_code: str
+    verification_uri: str
+    verification_uri_complete: str | None
+    expires_at: float
+    interval_seconds: int
+
+
+def _device_authorization(config: CliConfig) -> DeviceAuthorization:
+    """Start Clerk's device authorization grant without a redirect URI."""
+    response = httpx.post(
+        f"{config.clerk_issuer}/oauth/device_authorization",
+        data={
+            "client_id": config.clerk_oauth_client_id,
+            "scope": "openid profile email offline_access",
+        },
+        timeout=30,
+    )
+    try:
+        response.raise_for_status()
+        payload = response.json()
+        device_code = payload["device_code"]
+        user_code = payload["user_code"]
+        verification_uri = payload["verification_uri"]
+        expires_in = payload["expires_in"]
+    except (httpx.HTTPStatusError, ValueError, KeyError) as exc:
+        raise RuntimeError("Could not start Clerk device login") from exc
+    if not all(
+        isinstance(value, str) for value in (device_code, user_code, verification_uri)
+    ) or not isinstance(expires_in, int):
+        raise RuntimeError("Clerk returned an invalid device login response")
+    verification_uri_complete = payload.get("verification_uri_complete")
+    return DeviceAuthorization(
+        device_code=device_code,
+        user_code=user_code,
+        verification_uri=verification_uri,
+        verification_uri_complete=(
+            verification_uri_complete
+            if isinstance(verification_uri_complete, str)
+            else None
+        ),
+        expires_at=time.monotonic() + expires_in,
+        interval_seconds=max(1, payload.get("interval", 5)),
+    )
+
+
+def _tokens_from_payload(payload: dict[str, Any]) -> TokenSet:
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str):
+        raise RuntimeError("Clerk did not return a valid access token")
+    expires_in = payload.get("expires_in")
+    return TokenSet(
+        access_token=access_token,
+        refresh_token=(
+            payload.get("refresh_token")
+            if isinstance(payload.get("refresh_token"), str)
+            else None
+        ),
+        expires_at=(
+            int(time.time()) + expires_in if isinstance(expires_in, int) else None
+        ),
+    )
+
+
+def _poll_for_tokens(config: CliConfig, device: DeviceAuthorization) -> TokenSet:
+    """Poll Clerk until the device challenge is approved or expires."""
+    interval = device.interval_seconds
+    while time.monotonic() < device.expires_at:
+        response = httpx.post(
+            f"{config.clerk_issuer}/oauth/token",
+            data={
+                "grant_type": DEVICE_CODE_GRANT,
+                "client_id": config.clerk_oauth_client_id,
+                "device_code": device.device_code,
+            },
+            timeout=30,
+        )
+        if response.is_success:
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError("Clerk returned an invalid token response") from exc
+            if not isinstance(payload, dict):
+                raise RuntimeError("Clerk returned an invalid token response")
+            return _tokens_from_payload(payload)
+        try:
+            error = response.json().get("error")
+        except ValueError as exc:
+            raise RuntimeError("Could not complete Clerk device login") from exc
+        if error == "authorization_pending":
+            time.sleep(interval)
+            continue
+        if error == "slow_down":
+            interval += 5
+            time.sleep(interval)
+            continue
+        if error == "access_denied":
+            raise RuntimeError("Clerk device login was denied")
+        if error == "expired_token":
+            break
+        raise RuntimeError("Could not complete Clerk device login")
+    raise RuntimeError("Clerk device login expired; run 'pop login' again")
 
 
 def _token_key(config: CliConfig) -> str:
@@ -140,53 +197,14 @@ def load_tokens(config: CliConfig) -> TokenSet:
     )
 
 
-def login(config: CliConfig) -> TokenSet:
-    """Run browser-based Clerk OAuth authorization-code login with PKCE."""
-    verifier, challenge = _pkce_pair()
-    state = secrets.token_urlsafe(32)
-    url = authorization_url(config, state, challenge)
-    webbrowser.open(url)
-    query = _receive_callback()
-    if query.get("state", [None])[0] != state:
-        raise RuntimeError("Clerk login callback state did not match")
-    if error := query.get("error", [None])[0]:
-        raise RuntimeError(f"Clerk login failed: {error}")
-    code = query.get("code", [None])[0]
-    if not isinstance(code, str):
-        raise RuntimeError("Clerk login callback did not include an authorization code")
-
-    response = httpx.post(
-        f"{config.clerk_issuer}/oauth/token",
-        data={
-            "grant_type": "authorization_code",
-            "client_id": config.clerk_oauth_client_id,
-            "code": code,
-            "redirect_uri": CALLBACK_URL,
-            "code_verifier": verifier,
-        },
-        timeout=30,
-    )
-    try:
-        response.raise_for_status()
-        payload = response.json()
-        access_token = payload["access_token"]
-    except (httpx.HTTPStatusError, ValueError, KeyError) as exc:
-        raise RuntimeError("Could not exchange Clerk authorization code") from exc
-    if not isinstance(access_token, str):
-        raise RuntimeError("Clerk did not return a valid access token")
-    expires_in = payload.get("expires_in")
-    tokens = TokenSet(
-        access_token=access_token,
-        refresh_token=(
-            payload.get("refresh_token")
-            if isinstance(payload.get("refresh_token"), str)
-            else None
-        ),
-        expires_at=(
-            int(time.time()) + expires_in
-            if isinstance(expires_in, int)
-            else None
-        ),
-    )
+def login(
+    config: CliConfig,
+    notify: Callable[[DeviceAuthorization], None],
+) -> TokenSet:
+    """Run Clerk's device authorization grant and store the resulting tokens."""
+    device = _device_authorization(config)
+    notify(device)
+    webbrowser.open(device.verification_uri_complete or device.verification_uri)
+    tokens = _poll_for_tokens(config, device)
     save_tokens(config, tokens)
     return tokens

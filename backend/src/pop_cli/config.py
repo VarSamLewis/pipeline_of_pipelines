@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pop_cli.defaults import (
     DEFAULT_CLERK_ISSUER,
@@ -28,6 +29,14 @@ class CliConfig:
     clerk_issuer: str = DEFAULT_CLERK_ISSUER
 
 
+def _api_origin(value: str) -> str:
+    """Normalize a copied web-page URL to the API service origin."""
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError("API URL must be an absolute http(s) URL")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def load_config() -> CliConfig:
     """Load CLI configuration or explain how to create it."""
     path = config_path()
@@ -41,7 +50,7 @@ def load_config() -> CliConfig:
     if not isinstance(profile, dict) or not isinstance(profile.get("api_url"), str):
         raise RuntimeError(f"Invalid CLI configuration in {path}")
     return CliConfig(
-        api_url=profile["api_url"].rstrip("/"),
+        api_url=_api_origin(profile["api_url"]),
         clerk_oauth_client_id=str(
             profile.get("clerk_oauth_client_id", DEFAULT_CLERK_OAUTH_CLIENT_ID)
         ),
@@ -57,7 +66,7 @@ def save_config(config: CliConfig) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "[default]\n"
-        f"api_url = {json.dumps(config.api_url.rstrip('/'))}\n"
+        f"api_url = {json.dumps(_api_origin(config.api_url))}\n"
         f"clerk_oauth_client_id = {json.dumps(config.clerk_oauth_client_id)}\n"
         f"clerk_issuer = {json.dumps(config.clerk_issuer.rstrip('/'))}\n",
         encoding="utf-8",
