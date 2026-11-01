@@ -518,7 +518,7 @@ def parse_llm_mapping_response(
                 target_table=raw["target_table"],
                 target_column=raw["target_column"],
                 source_columns=source_columns,
-                transformation_logic=raw.get("transformation_logic", ""),
+                transformation_logic=(raw.get("transformation_logic") or ""),
                 polars_expression=_normalize_polars_expression(
                     raw.get("polars_expression")
                 ),

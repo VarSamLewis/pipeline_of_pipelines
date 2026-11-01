@@ -10,10 +10,10 @@ be reviewed before code generation and execution.
 ```text
 local source files
   -> pop upload
-  -> pop map propose
+  -> pop propose
   -> edit mapping.json
-  -> pop map push
-  -> pop map run
+  -> pop push
+  -> pop run
   -> pipeline.py, mapping.json, results.csv
 ```
 
@@ -37,10 +37,10 @@ The command creates one ingestion batch, uploads every supplied file, and
 writes a manifest. The default manifest location is printed at the end of the
 command; `--manifest` selects an explicit path.
 
-Before uploading, the CLI validates that every path is a readable regular file
-and checks supported extensions, file-count limits, individual file-size
-limits, and total batch-size limits. It reports upload progress and preserves
-the successfully uploaded file IDs if a later file fails.
+Before uploading, the CLI checks that paths are regular files. The server
+enforces file-count and size limits. The manifest is updated after each
+successful upload, preserving the file IDs if a later upload fails. Use a new
+manifest path for each batch.
 
 Example upload manifest:
 
@@ -53,7 +53,6 @@ Example upload manifest:
     {
       "id": "31a6ffb8-a24b-4bfb-8eaa-ee2f84c79af2",
       "path": "./incoming/orders.xlsx",
-      "filename": "orders.xlsx",
       "sha256": "..."
     }
   ]
@@ -62,25 +61,15 @@ Example upload manifest:
 
 ### Propose a mapping
 
-`map propose` parses uploaded files, stores the supplied target schema, creates
+`propose` parses uploaded files, stores the supplied target schema, creates
 a mapping specification, and requests a proposed mapping. It writes the
 proposal to a local JSON file for review and editing.
 
 ```bash
-pop map propose \
+pop propose \
   --client <client-id> \
   --schema ./target_schema.json \
   --manifest ./upload.json \
-  --output ./mapping.json
-```
-
-Files can be supplied directly when a manifest is not desired:
-
-```bash
-pop map propose \
-  --client <client-id> \
-  --schema ./target_schema.json \
-  <raw-file-id> <raw-file-id> \
   --output ./mapping.json
 ```
 
@@ -94,26 +83,26 @@ Review and edit `mapping.json` in an editor or through a future guided CLI
 editor. Then validate and apply the edits:
 
 ```bash
-pop map push ./mapping.json
+pop push ./mapping.json
 ```
 
-`map push` validates the document, compares it with the stored mapping, and
+`push` validates the document, compares it with the stored mapping, and
 updates only changed mapping columns. It does not approve the mapping or run
 the generated pipeline.
 
 Use `--dry-run` to show planned changes without writing them:
 
 ```bash
-pop map push ./mapping.json --dry-run
+pop push ./mapping.json --dry-run
 ```
 
 ### Generate and run
 
-Once the mapping is ready, `map run` approves it, generates the pipeline, runs
+Once the mapping is ready, `run` approves it, generates the pipeline, runs
 the transformation, and downloads the client deliverables.
 
 ```bash
-pop map run ./mapping.json \
+pop run ./mapping.json \
   --reviewer "sam@example.com" \
   --output-dir ./deliverables
 ```
@@ -127,16 +116,9 @@ deliverables/
   results.csv
 ```
 
-The command prints the mapping ID, execution-run ID, validation status, and
-paths to the downloaded files. It must not concatenate code and CSV on standard
-output. Consumers that need one artifact on standard output should use focused
-artifact commands:
-
-```bash
-pop map show ./mapping.json --output json
-pop map code ./mapping.json > pipeline.py
-pop map results ./mapping.json > results.csv
-```
+The command prints the execution-run ID and local output directory. It does not
+concatenate artifacts on standard output. The `show`, `code`, and `results`
+convenience commands are not implemented yet.
 
 ## Command principles
 
@@ -145,22 +127,15 @@ pop map results ./mapping.json > results.csv
 - **Local files in; local deliverables out:** positional upload paths make
   normal shell use simple, while `--output-dir` provides unambiguous multi-file
   results.
-- **Machine-readable automation:** every command supports `--output json`;
-  human-oriented output is the default.
-- **Safe retries:** manifests, mapping IDs, checksums, and idempotency-aware
-  operations make it possible to resume or repeat steps without guessing.
+- **Machine-readable review:** proposal and upload manifests are JSON files;
+  a `--output json` option for commands remains future work.
+- **Retry awareness:** manifests record successful file IDs, but failed
+  proposals and executions are not automatically resumed yet.
 - **No secret persistence by default:** provider credentials are never written
   into manifests or mapping files.
 
 ## Authentication and current limitation
 
-The deployed application currently authenticates API requests with a signed,
-HTTP-only browser session cookie. A CLI cannot safely acquire or store that
-cookie after a browser login. Therefore, the authenticated production CLI
-commands require a future browser-login/device-authorization flow and bearer
-token support in the backend.
-
-The CLI command structure, local validation, manifest handling, and local
-development use can be implemented now. Until API token support exists,
-production users should complete the authenticated workflow in the web
-application rather than copying browser cookies into CLI configuration.
+The CLI uses Clerk device authorization and sends the resulting OAuth access
+token to the API. Browser sessions continue to use signed HTTP-only cookies.
+Tokens are stored in the operating-system keychain, not upload manifests.

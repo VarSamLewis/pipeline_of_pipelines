@@ -152,11 +152,31 @@ The API is then available at `http://127.0.0.1:8000`. Visit
     curl http://127.0.0.1:8000/output-folders/<spec-id>/results.csv
     ```
 
-## CLI design
+## CLI (development)
 
-The planned `pop` CLI mirrors the upload, mapping review, and execution
-workflow while returning generated deliverables to a local output directory.
-See [the CLI design](docs/cli.md) for the command contract and examples.
+Use `pop` locally against the development API. `pop init` defaults to localhost;
+pass the deployed service origin when using Cloud Run. Sign in through Clerk,
+then use an existing client UUID:
+
+```bash
+uv run pop init --api-url https://<dev-service-url>
+uv run pop login
+uv run pop whoami
+uv run pop upload --client <client-uuid> ./incoming/data.csv --manifest upload.json
+uv run pop propose --client <client-uuid> --schema ./target_schema.json \
+  --manifest upload.json --output mapping.json
+# Review/edit mapping.json before proceeding.
+uv run pop push mapping.json --dry-run
+uv run pop push mapping.json
+uv run pop run mapping.json --reviewer you@example.com --output-dir deliverables
+```
+
+`propose` calls the configured organization's LLM provider and can incur API
+charges. `run` explicitly approves the mapping and executes it on the server.
+Both upload manifests and proposed mappings refuse to overwrite existing local
+files; use fresh paths for a new run. If a proposal fails after creating its
+draft spec, retry with the same arguments plus `--spec <id>` from the error
+message. See [the CLI design](docs/cli.md) for planned extensions.
 
 ## Example
 

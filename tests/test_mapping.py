@@ -86,6 +86,24 @@ def test_parse_llm_mapping_response_requires_target_fields() -> None:
         )
 
 
+def test_parse_llm_mapping_response_allows_null_transformation_logic() -> None:
+    """Optional descriptions returned as null must not abort a proposal."""
+    mappings = parse_llm_mapping_response(
+        {
+            "mappings": [
+                {
+                    "target_table": "records",
+                    "target_column": "id",
+                    "transformation_logic": None,
+                }
+            ]
+        },
+        uuid.uuid4(),
+        TargetSchema(name="default", tables=[]),
+    )
+    assert mappings[0].transformation_logic == ""
+
+
 def test_resolve_composite_keys_populates_ids() -> None:
     """Resolver should populate source_table_id and source_column_id."""
     raw_file_id = uuid.uuid4()
