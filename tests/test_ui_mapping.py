@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -20,9 +21,9 @@ def test_settings_omits_reviewer_controls(monkeypatch) -> None:
             {
                 "id": uuid.uuid4(),
                 "name": "Acme",
-                    "key_suffix": None,
-                    "provider_base_url": None,
-                    "can_edit_credentials": True,
+                "key_suffix": None,
+                "provider_base_url": None,
+                "can_edit_credentials": True,
             }
         ],
     )
@@ -170,6 +171,110 @@ def test_upload_can_reuse_stored_files_for_mapping(monkeypatch) -> None:
     assert response.headers["location"] == f"/mapping/{mapping_id}"
 
 
+def test_upload_proposes_independent_mappings_for_two_schemas(monkeypatch) -> None:
+    """The website parses shared inputs once and links both review gates."""
+    import ui
+    from app import app
+
+    spec_ids = [uuid.uuid4(), uuid.uuid4()]
+    captured = []
+
+    def propose_many(**kwargs):
+        captured.append(kwargs)
+        return spec_ids
+
+    monkeypatch.setattr(ui, "ingest_and_propose_many", propose_many)
+    response = TestClient(app).post(
+        "/upload",
+        data={"organization_select": str(uuid.uuid4()), "new_client_name": "Test"},
+        files=[
+            ("target_schema", ("customers.json", b'{"tables":[]}', "application/json")),
+            ("target_schema", ("orders.json", b'{"tables":[]}', "application/json")),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert captured[0]["target_schema_files"] == [b'{"tables":[]}', b'{"tables":[]}']
+    assert all(f"/mapping/{spec_id}" in response.text for spec_id in spec_ids)
+    assert "customers.json" in response.text
+    assert "orders.json" in response.text
+
+
+def test_upload_keeps_successful_review_link_when_later_proposal_fails(
+    monkeypatch,
+) -> None:
+    import ui
+    from app import app
+
+    first_id = uuid.uuid4()
+
+    def fail(**_kwargs):
+        raise ui.PartialProposalError("Provider unavailable", [first_id])
+
+    monkeypatch.setattr(ui, "ingest_and_propose_many", fail)
+    response = TestClient(app).post(
+        "/upload",
+        data={"organization_select": str(uuid.uuid4()), "new_client_name": "Test"},
+        files=[
+            ("target_schema", ("customers.json", b"{}", "application/json")),
+            ("target_schema", ("orders.json", b"{}", "application/json")),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert f"/mapping/{first_id}" in response.text
+    assert "customers.json" in response.text
+    assert "Provider unavailable" in response.text
+    assert "Review mapping for orders.json" not in response.text
+
+
+def test_results_page_selects_each_target_table(monkeypatch) -> None:
+    """Multi-table results can be previewed without showing the wrong CSV."""
+    import ui
+    from fastapi import HTTPException, Request
+
+    run_id, spec_id = uuid.uuid4(), uuid.uuid4()
+    csv_files = ["customers.csv", "orders.csv", "z_results.csv"]
+    monkeypatch.setattr(
+        ui,
+        "get_result_review",
+        lambda _: {
+            "run": SimpleNamespace(mapping_spec_id=spec_id),
+            "csv_files": csv_files,
+            "results_csv": b"not_a_table\n99\n",
+        },
+    )
+
+    class Store:
+        def read_artifact(self, mapping_id, filename):
+            assert mapping_id == spec_id and filename in csv_files
+            if filename == "customers.csv":
+                return b"customer_id\n" + b"1\n" * 11
+            return b"order_id\n42\n"
+
+    monkeypatch.setattr(ui, "get_artifact_store", Store)
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/results", "headers": []}
+    )
+    response = ui.results_csv_page(
+        request, run_id, page=1, file="orders.csv", user=SimpleNamespace(), _=None
+    )
+    assert b"order_id" in response.body
+    assert b"42" in response.body
+    first = ui.results_csv_page(
+        request, run_id, page=1, file="customers.csv", user=SimpleNamespace(), _=None
+    )
+    assert b"customer_id" in first.body
+    assert b"not_a_table" not in first.body
+    assert b"file=customers.csv" in first.body  # Next page retains selection.
+    assert b"page=2" in first.body
+    with pytest.raises(HTTPException) as exc:
+        ui.results_csv_page(
+            request, run_id, page=1, file="secret.txt", user=SimpleNamespace(), _=None
+        )
+    assert exc.value.status_code == 404
+
+
 def test_runs_page_lists_organization_history(monkeypatch) -> None:
     """Runs are listed for the selected organization with links to details."""
     import ui
@@ -285,7 +390,7 @@ def test_mapping_review_surfaces_catalog_warnings(
         if "Approve mapping &amp; generate output" in response.text
         else "Approve mapping & generate output"
     )
-    assert '<label>Tests' not in response.text
+    assert "<label>Tests" not in response.text
 
 
 def test_mapping_target_schema_is_viewable_as_a_file(monkeypatch) -> None:

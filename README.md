@@ -171,6 +171,30 @@ uv run pop push mapping.json
 uv run pop run mapping.json --reviewer you@example.com --output-dir deliverables
 ```
 
+To produce separate mappings and outputs from the **same uploaded files**, pass
+two target schema files. Each is a separate review and approval gate:
+
+```bash
+uv run pop propose --client <client-uuid> --manifest upload.json \
+  --schema ./customers_schema.json --schema ./orders_schema.json \
+  --output-dir mappings
+uv run pop push mappings/customers_schema-1-mapping.json
+uv run pop push mappings/orders_schema-2-mapping.json
+uv run pop run mappings/customers_schema-1-mapping.json \
+  --reviewer you@example.com --output-dir output/customers
+uv run pop run mappings/orders_schema-2-mapping.json \
+  --reviewer you@example.com --output-dir output/orders
+```
+
+Every upload receives a timestamp and its own storage key, including repeat
+uploads of the same filename. The original filename is retained for display.
+If a schema has multiple target tables, its deliverables include one CSV per
+table (`customers.csv`, `orders.csv`) instead of a single `results.csv`.
+The website Upload form also accepts multiple schema JSON files, and the API
+accepts `target_schemas: [{...}, {...}]` at
+`POST /clients/{client_id}/mapping-specs`, returning `mapping_specs` with one
+draft per schema. Existing `target_schema` requests still return a single draft.
+
 `propose` calls the configured organization's LLM provider and can incur API
 charges. `run` explicitly approves the mapping and executes it on the server.
 Both upload manifests and proposed mappings refuse to overwrite existing local

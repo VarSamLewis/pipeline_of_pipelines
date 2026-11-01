@@ -93,20 +93,47 @@ def upload(
 @app.command()
 def propose(
     client: str = typer.Option(..., help="Client UUID"),
-    schema: Path = typer.Option(..., help="Target schema JSON"),
+    schema: list[Path] = typer.Option(..., help="Target schema JSON (repeatable)"),
     manifest: Path = typer.Option(Path("upload.json"), help="Upload manifest"),
-    output: Path = typer.Option(Path("mapping.json"), help="Mapping output path"),
+    output: Path | None = typer.Option(None, help="Single mapping output path"),
+    output_dir: Path | None = typer.Option(
+        None, help="Directory for multiple mappings"
+    ),
     spec: str | None = typer.Option(None, help="Resume an existing spec UUID"),
 ) -> None:
-    """Parse uploaded sources and propose a mapping for review."""
+    """Propose one independently reviewable mapping per target schema."""
     try:
-        with Api() as api:
-            mapping = propose_mapping(
-                api, client, schema, manifest, output, spec_id=spec
+        if not schema:
+            raise ValueError("At least one target schema is required")
+        if len(schema) > 1 and (output is not None or spec is not None):
+            raise ValueError(
+                "Multiple schemas require --output-dir, not --output or --spec"
             )
+        if len(schema) > 1 and output_dir is None:
+            raise ValueError("Use --output-dir for multiple target schemas")
+        if output_dir is not None and output is not None:
+            raise ValueError("Choose --output or --output-dir, not both")
+        paths = (
+            [output or Path("mapping.json")]
+            if output_dir is None
+            else [
+                output_dir / f"{path.stem}-{index}-mapping.json"
+                for index, path in enumerate(schema, start=1)
+            ]
+        )
+        for source, destination in zip(schema, paths, strict=True):
+            if not source.is_file():
+                raise ValueError(f"Target schema does not exist: {source}")
+            if destination.exists():
+                raise ValueError(f"Mapping output already exists: {destination}")
+        with Api() as api:
+            for source, destination in zip(schema, paths, strict=True):
+                mapping = propose_mapping(
+                    api, client, source, manifest, destination, spec_id=spec
+                )
+                typer.echo(f"Proposed mapping {mapping['id']}; review {destination}")
     except (RuntimeError, ValueError, OSError, KeyError, httpx.HTTPError) as exc:
         _fail(exc)
-    typer.echo(f"Proposed mapping {mapping['id']}; review {output}")
 
 
 @app.command()

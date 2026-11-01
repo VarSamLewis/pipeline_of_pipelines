@@ -22,10 +22,10 @@
 
   <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
     {% if page > 1 %}
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page - 1 }}" hx-target="#results-view">Previous</button>
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page - 1 }}{% if csv_file %}&amp;file={{ csv_file | urlencode }}{% endif %}" hx-target="#results-view">Previous</button>
     {% endif %}
     {% if page < total_pages %}
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page + 1 }}" hx-target="#results-view">Next</button>
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page={{ page + 1 }}{% if csv_file %}&amp;file={{ csv_file | urlencode }}{% endif %}" hx-target="#results-view">Next</button>
     {% endif %}
   </div>
 </div>

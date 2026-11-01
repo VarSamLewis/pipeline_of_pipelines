@@ -1,0 +1,10 @@
+<div class="card" role="status">
+  <h2>Mappings ready for review</h2>
+  {% if error %}<p role="alert">A later proposal failed: {{ error }}. Earlier mappings remain available below.</p>{% endif %}
+  <p>Each target schema has its own mapping. Review and approve each one separately.</p>
+  <ul>
+    {% for spec_id, filename in mappings %}
+    <li><a href="/mapping/{{ spec_id }}">Review mapping for {{ filename }}</a></li>
+    {% endfor %}
+  </ul>
+</div>

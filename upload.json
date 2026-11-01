@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "client_id": "fbc59603-07f0-434e-b754-1c027b31f036",
+  "batch_id": "36352ad7-346a-4209-a411-4ce2e66fb4c2",
+  "files": [
+    {
+      "id": "65ac6dd7-5f1c-4d2b-9401-61c83d480fee",
+      "path": "examples/complex_client/master_data.xlsx",
+      "sha256": "b9d5aada3303e5b7b8a40688829537b23b10b8a26adf1483086b88f0ce2ba643"
+    },
+    {
+      "id": "a9d76997-e276-43c6-a1d7-11cfdef99093",
+      "path": "examples/complex_client/business_glossary.txt",
+      "sha256": "90ee672e493114fa65a1ac19a9eb5429d40335f52df3a4222dcf50e1f041ec83"
+    }
+  ]
+}

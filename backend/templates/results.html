@@ -9,7 +9,9 @@
   <div class="card-header">
     <h2>Output</h2>
     <div>
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1" hx-target="#results-view" hx-indicator="#results-progress">View CSV</button>
+      {% for csv_file in csv_files %}
+      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1&amp;file={{ csv_file | urlencode }}" hx-target="#results-view" hx-indicator="#results-progress">View {{ csv_file }}</button>
+      {% endfor %}
       <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-progress">View code</button>
     </div>
   </div>

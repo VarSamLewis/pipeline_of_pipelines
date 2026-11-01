@@ -7,6 +7,7 @@ import json
 import mimetypes
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -129,7 +130,12 @@ def upload(
                 files={"file": (path.name, source, mimetypes.guess_type(path.name)[0])},
             )
         manifest["files"].append(
-            {"id": item["id"], "path": str(path), "sha256": digest.hexdigest()}
+            {
+                "id": item["id"],
+                "path": str(path),
+                "sha256": digest.hexdigest(),
+                "uploaded_at": item.get("uploaded_at"),
+            }
         )
         write_document(manifest_path, manifest)
     return manifest
@@ -243,8 +249,27 @@ def run(api: Api, path: Path, reviewer: str, output_dir: Path) -> dict[str, Any]
         raise ValueError("Local edits have not been pushed; run 'pop push' first")
     api.json("POST", f"/mapping-specs/{spec_id}/approve", json={"reviewer": reviewer})
     result = api.json("POST", f"/mapping-specs/{spec_id}/execute", json={})
+    csv_paths = result.get("csv_paths", {})
+    if not csv_paths:
+        raise RuntimeError("Execution produced no target-table CSVs")
+    downloads = {
+        name: f"/output-folders/{spec_id}/{name}"
+        for name in ("pipeline.py", "mapping.json")
+    }
+    if len(csv_paths) == 1:
+        downloads["results.csv"] = f"/output-folders/{spec_id}/results.csv"
+    else:
+        for table_name in csv_paths:
+            if Path(table_name).name != table_name or table_name in {".", ".."}:
+                raise RuntimeError("Execution returned an unsafe target-table name")
+            filename = f"{table_name}.csv"
+            downloads[filename] = (
+                f"/output-folders/{spec_id}/tables/{quote(table_name, safe='')}.csv"
+            )
+    contents = {
+        name: api.request("GET", url).content for name, url in downloads.items()
+    }
     output_dir.mkdir(parents=True, exist_ok=True)
-    for filename in ("pipeline.py", "mapping.json", "results.csv"):
-        content = api.request("GET", f"/output-folders/{spec_id}/{filename}").content
+    for filename, content in contents.items():
         (output_dir / filename).write_bytes(content)
     return cast(dict[str, Any], result)

@@ -46,6 +46,28 @@ def test_upload_writes_manifest_and_preserves_success_on_failure(
     assert calls[0] == f"/clients/{client_id}/batches"
 
 
+def test_same_file_can_be_uploaded_again_in_another_batch(tmp_path: Path) -> None:
+    client_id = str(uuid.uuid4())
+    path = tmp_path / "data.csv"
+    path.write_text("id\n1\n")
+    next_id = iter(str(uuid.uuid4()) for _ in range(4))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/batches"):
+            return httpx.Response(200, json={"id": next(next_id)})
+        return httpx.Response(
+            200, json={"id": next(next_id), "uploaded_at": "2026-11-01T12:00:00"}
+        )
+
+    with _api(handler) as api:
+        first = upload(api, client_id, [path], tmp_path / "first-upload.json")
+        second = upload(api, client_id, [path], tmp_path / "second-upload.json")
+
+    assert first["files"][0]["id"] != second["files"][0]["id"]
+    assert first["files"][0]["uploaded_at"] == "2026-11-01T12:00:00"
+    assert first["files"][0]["sha256"] == second["files"][0]["sha256"]
+
+
 def test_propose_parses_and_saves_review(tmp_path: Path) -> None:
     client_id, file_id, spec_id = (str(uuid.uuid4()) for _ in range(3))
     manifest = tmp_path / "upload.json"
@@ -190,7 +212,10 @@ def test_run_downloads_artifacts_after_approval(tmp_path: Path) -> None:
                 200, json={"id": spec_id, "status": "proposed", "columns": []}
             )
         if request.url.path.endswith("/execute"):
-            return httpx.Response(200, json={"execution_run_id": "run-1"})
+            return httpx.Response(
+                200,
+                json={"execution_run_id": "run-1", "csv_paths": {"records": "path"}},
+            )
         return httpx.Response(200, json={})
 
     output = tmp_path / "deliverables"
@@ -208,3 +233,40 @@ def test_run_downloads_artifacts_after_approval(tmp_path: Path) -> None:
         "mapping.json",
         "results.csv",
     }
+
+
+def test_run_downloads_each_target_table_when_multiple(tmp_path: Path) -> None:
+    spec_id = str(uuid.uuid4())
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"id": spec_id, "columns": []}))
+    downloads: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/output-folders/"):
+            downloads.append(request.url.path)
+            return httpx.Response(200, content=b"artifact")
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"id": spec_id, "status": "proposed", "columns": []}
+            )
+        if request.url.path.endswith("/execute"):
+            return httpx.Response(
+                200,
+                json={
+                    "execution_run_id": "run-1",
+                    "csv_paths": {"customers": "path", "orders": "path"},
+                },
+            )
+        return httpx.Response(200, json={})
+
+    output = tmp_path / "deliverables"
+    with _api(handler) as api:
+        run(api, mapping, "reviewer@example.com", output)
+    assert {path.name for path in output.iterdir()} == {
+        "pipeline.py",
+        "mapping.json",
+        "customers.csv",
+        "orders.csv",
+    }
+    assert f"/output-folders/{spec_id}/tables/customers.csv" in downloads
+    assert f"/output-folders/{spec_id}/tables/orders.csv" in downloads

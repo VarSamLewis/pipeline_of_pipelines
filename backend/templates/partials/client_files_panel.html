@@ -24,7 +24,7 @@
     {% for file in library.source_files %}
     <li>
       <label><input type="checkbox" name="stored_raw_file_ids" value="{{ file.id }}"> <strong>{{ file.name }}</strong></label>
-      <span class="muted">{{ file.mime_type }} · {{ file.size_bytes }} bytes · {{ file.status }}</span>
+       <span class="muted">{{ file.uploaded_at }} · {{ file.mime_type }} · {{ file.size_bytes }} bytes · {{ file.status }}</span>
     </li>
     {% endfor %}
   </ul>

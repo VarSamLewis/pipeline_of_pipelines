@@ -77,6 +77,11 @@ The output document includes the server-side mapping specification ID and
 mapping-column IDs. Those identifiers let the CLI apply local edits to the
 correct immutable source files and mapping records.
 
+Repeat `--schema` with `--output-dir` to create separate specs for multiple
+target schemas from the same manifest; review, push, and run each mapping
+independently. If one target schema has multiple tables, its output directory
+contains a CSV per table instead of `results.csv`.
+
 ### Edit and push a mapping
 
 Review and edit `mapping.json` in an editor or through a future guided CLI

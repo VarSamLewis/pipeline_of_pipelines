@@ -51,17 +51,17 @@
     </div>
 
     <div class="form-group">
-      <label for="target_schema">Target schema JSON</label>
-      <input type="file" id="target_schema" name="target_schema" accept=".json" required>
-      <p class="muted">Upload the schema file that defines this mapping’s target output.</p>
+      <label for="target_schema">Target schema JSON files</label>
+      <input type="file" id="target_schema" name="target_schema" accept=".json" multiple required>
+      <p class="muted">Choose one or more schemas. Each produces a separate mapping and output from the same source files.</p>
     </div>
 
     <button class="btn btn-primary" type="submit">
-      Run mapping
+      Propose mappings
     </button>
     <div id="upload-progress" class="htmx-indicator progress-indicator" aria-live="polite">
       <span class="spinner" aria-hidden="true"></span>
-      Uploading files, profiling sources, and proposing a mapping...
+      Uploading files, profiling sources, and proposing mappings...
     </div>
   </form>
   <div id="upload-result" style="margin-top: 1rem;"></div>

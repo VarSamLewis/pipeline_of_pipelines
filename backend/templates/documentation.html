@@ -17,9 +17,9 @@
   <ul>
     <li>Select any stored source files shown for an existing client.</li>
     <li>Optionally add new source files in the same run.</li>
-    <li>Upload the required target-schema JSON file for this mapping.</li>
+    <li>Upload one or more target-schema JSON files. Each creates a separate mapping and output using the same source files.</li>
   </ul>
-  <p>The client is the boundary for reusable source-file context. The target schema belongs to the mapping, not the client.</p>
+  <p>The client is the boundary for reusable source-file context. The target schema belongs to the mapping, not the client. Uploading the same file again creates a new timestamped copy; existing uploads remain available.</p>
 </div>
 
 <div class="card">
@@ -30,7 +30,7 @@
 
 <div class="card">
   <h2>4. Generate and review results</h2>
-  <p>Approving a mapping generates and runs the transformation. Review the results CSV, generated Python pipeline, and validation results. Confirm the result only when it is ready for delivery.</p>
+  <p>Approve and review each mapping separately. Review its output CSVs, generated Python pipeline, and validation results. Mappings with multiple target tables provide one CSV per table. Confirm a result only when it is ready for delivery.</p>
 </div>
 
 <div class="card">
@@ -38,7 +38,7 @@
   <ul>
     <li><a href="/client-library">Clients</a> lists reusable source files, mappings, and generated deliverables.</li>
     <li><a href="/runs">Runs</a> shows execution history for an organization.</li>
-    <li>Every mapping has its own downloadable <code>target_schema.json</code>, <code>mapping.json</code>, <code>pipeline.py</code>, and <code>results.csv</code> when generated.</li>
+    <li>Every mapping has its own downloadable <code>target_schema.json</code>, <code>mapping.json</code>, <code>pipeline.py</code>, and either <code>results.csv</code> or one CSV per target table when generated.</li>
   </ul>
 </div>
 

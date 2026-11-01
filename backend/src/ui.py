@@ -20,6 +20,7 @@ import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
 from auth_service import require_role, require_ui_auth
 from config import get_settings
+from dependencies import get_artifact_store
 from fastapi import (
     APIRouter,
     Depends,
@@ -33,6 +34,7 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from workflow import (
+    PartialProposalError,
     approve_mapping_and_execute,
     approve_result,
     create_organization,
@@ -41,6 +43,7 @@ from workflow import (
     get_organization_key_settings,
     get_result_review,
     ingest_and_propose,
+    ingest_and_propose_many,
     invite_organization_reviewer,
     list_organization_runs,
     list_organizations,
@@ -103,7 +106,7 @@ def upload_submit(
     new_client_name: str = Form(""),
     source_files: list[UploadFile] = File(default_factory=list),
     stored_raw_file_ids: list[uuid.UUID] = Form(default_factory=list),
-    target_schema: UploadFile | None = File(default=None),
+    target_schema: list[UploadFile] = File(default_factory=list),
     user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Ingest files, extract evidence, and propose a mapping."""
@@ -118,20 +121,48 @@ def upload_submit(
     valid_source_files = [f for f in source_files if f.filename]
 
     try:
-        if target_schema is None or not target_schema.filename:
-            raise ValueError("A target schema file is required")
-        target_schema_bytes = target_schema.file.read()
+        if not target_schema or any(not schema.filename for schema in target_schema):
+            raise ValueError("At least one target schema file is required")
+        target_schema_files = [schema.file.read() for schema in target_schema]
         settings = get_settings()
-        if len(target_schema_bytes) > settings.max_upload_size_bytes:
+        if any(
+            len(content) > settings.max_upload_size_bytes
+            for content in target_schema_files
+        ):
             raise ValueError("Target schema exceeds the individual file limit")
-        spec_id = ingest_and_propose(
-            existing_client_id=existing_client_id,
-            new_client_name=new_client_name or None,
-            organization_id=organization_id,
-            user=user,
-            source_uploads=valid_source_files,
-            target_schema_bytes=target_schema_bytes,
-            stored_raw_file_ids=stored_raw_file_ids,
+        options = {
+            "existing_client_id": existing_client_id,
+            "new_client_name": new_client_name or None,
+            "organization_id": organization_id,
+            "user": user,
+            "source_uploads": valid_source_files,
+            "stored_raw_file_ids": stored_raw_file_ids,
+        }
+        if len(target_schema_files) == 1:
+            spec_ids = [
+                ingest_and_propose(
+                    **options, target_schema_bytes=target_schema_files[0]
+                )
+            ]
+        else:
+            spec_ids = ingest_and_propose_many(
+                **options, target_schema_files=target_schema_files
+            )
+    except PartialProposalError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/mappings_created.html",
+            {
+                **_user_context(request, user),
+                "mappings": list(
+                    zip(
+                        exc.completed_ids,
+                        [s.filename for s in target_schema[: len(exc.completed_ids)]],
+                        strict=True,
+                    )
+                ),
+                "error": str(exc),
+            },
         )
     except (RuntimeError, ValueError) as exc:
         return templates.TemplateResponse(
@@ -140,7 +171,18 @@ def upload_submit(
             {**_user_context(request, user), "message": str(exc)},
         )
 
-    return _htmx_redirect(request, f"/mapping/{spec_id}")
+    if len(spec_ids) == 1:
+        return _htmx_redirect(request, f"/mapping/{spec_ids[0]}")
+    return templates.TemplateResponse(
+        request,
+        "partials/mappings_created.html",
+        {
+            **_user_context(request, user),
+            "mappings": list(
+                zip(spec_ids, [s.filename for s in target_schema], strict=True)
+            ),
+        },
+    )
 
 
 @router.get("/clients/{client_id}/files")
@@ -484,10 +526,15 @@ def results_review_page(
     _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Render the results review page."""
+    review = get_result_review(run_id)
     return templates.TemplateResponse(
         request,
         "results.html",
-        {**_user_context(request, user), "run_id": str(run_id)},
+        {
+            **_user_context(request, user),
+            "run_id": str(run_id),
+            "csv_files": review["csv_files"],
+        },
     )
 
 
@@ -496,12 +543,23 @@ def results_csv_page(
     request: Request,
     run_id: uuid.UUID,
     page: int = Query(1, ge=1),
+    file: str | None = Query(None),
     user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
     """Return a paginated fragment of the results CSV."""
     paths = get_result_review(run_id)
-    csv_content = paths["results_csv"]
+    if file is not None and file not in paths["csv_files"]:
+        raise HTTPException(404, "Result CSV not found")
+    if file is None:
+        csv_content = paths["results_csv"]
+    else:
+        try:
+            csv_content = get_artifact_store().read_artifact(
+                paths["run"].mapping_spec_id, file
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "Result CSV not found") from exc
     if csv_content is None:
         return HTMLResponse("<p class='muted'>No results CSV found.</p>")
 
@@ -520,6 +578,7 @@ def results_csv_page(
         {
             **_user_context(request, user),
             "run_id": str(run_id),
+            "csv_file": file,
             "columns": df.columns,
             "rows": rows,
             "page": page,

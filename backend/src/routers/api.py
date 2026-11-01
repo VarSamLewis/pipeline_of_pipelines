@@ -30,6 +30,7 @@ load_dotenv()
 import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from access_control import require_execution_run_access, require_mapping_spec_access
@@ -84,6 +85,7 @@ from file_ops import (
     detect_file_type,
 )
 from models import PipelineOutputFolder, TargetSchema
+from pydantic import ValidationError
 from repositories.clients import (
     create_client,
     create_ingestion_batch,
@@ -853,6 +855,7 @@ def upload_raw_file(
             "original_filename": raw_file.original_filename,
             "sha256": raw_file.sha256,
             "status": raw_file.status.value,
+            "uploaded_at": raw_file.uploaded_at.isoformat(),
         }
 
 
@@ -873,6 +876,7 @@ def get_raw_file(
             "status": raw_file.status.value,
             "sha256": raw_file.sha256,
             "size_bytes": raw_file.size_bytes,
+            "uploaded_at": raw_file.uploaded_at.isoformat(),
             "metadata": raw_file.meta,
         }
 
@@ -1259,30 +1263,56 @@ def create_mapping_spec_endpoint(
     payload: dict[str, Any],
     user: Any = Depends(require_role("creator")),
 ) -> dict[str, Any]:
-    """Create a new mapping specification draft against a supplied target schema."""
+    """Create independent specs for one or more target schemas and shared sources."""
     with get_session() as session:
         client = get_client_by_id(session, client_id)
         if client is None:
             raise HTTPException(status_code=404, detail="Client not found")
+        if "target_schemas" in payload:
+            if "target_schema" in payload:
+                raise HTTPException(
+                    422, "Supply target_schema or target_schemas, not both"
+                )
+            raw_schemas = payload["target_schemas"]
+            if not isinstance(raw_schemas, list) or not 1 <= len(raw_schemas) <= 10:
+                raise HTTPException(422, "Select between 1 and 10 target schemas")
+        else:
+            if "target_schema" not in payload:
+                raise HTTPException(422, "A target schema is required")
+            raw_schemas = [payload["target_schema"]]
 
-        target_schema = TargetSchema.model_validate(payload["target_schema"])
-
-        spec = create_mapping_spec(
-            session,
-            client_id=client.id,
-            source_raw_file_ids=[
+        # Validate every schema and source before creating any draft.
+        try:
+            target_schemas = [TargetSchema.model_validate(raw) for raw in raw_schemas]
+            raw_file_ids = [
                 uuid.UUID(x) for x in payload.get("source_raw_file_ids", [])
-            ],
-            target_schema=target_schema,
-            description=payload.get("description"),
-        )
-        return {
-            "id": str(spec.id),
-            "client_id": str(spec.client_id),
-            "status": spec.status.value,
-            "target_schema": spec.target_schema_json,
-            "description": spec.description,
-        }
+            ]
+        except (ValidationError, ValueError, TypeError) as exc:
+            raise HTTPException(422, "Invalid target schema or source file ID") from exc
+        for raw_file_id in raw_file_ids:
+            raw_file = get_raw_file_by_id(session, raw_file_id)
+            if raw_file is None or raw_file.client_id != client.id:
+                raise HTTPException(422, "Source file does not belong to this client")
+
+        drafts = []
+        for target_schema in target_schemas:
+            spec = create_mapping_spec(
+                session,
+                client_id=client.id,
+                source_raw_file_ids=raw_file_ids,
+                target_schema=target_schema,
+                description=payload.get("description"),
+            )
+            drafts.append(
+                {
+                    "id": str(spec.id),
+                    "client_id": str(spec.client_id),
+                    "status": spec.status.value,
+                    "target_schema": spec.target_schema_json,
+                    "description": spec.description,
+                }
+            )
+        return {"mapping_specs": drafts} if "target_schemas" in payload else drafts[0]
 
 
 @app.get("/mapping-specs")
@@ -1591,6 +1621,31 @@ def get_generated_results_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get(
+    "/output-folders/{folder_id}/tables/{table_name}.csv",
+    dependencies=[Depends(require_output_folder_access)],
+)
+def get_generated_table_csv(
+    folder_id: uuid.UUID,
+    table_name: str,
+    user: Any = Depends(require_auth),
+) -> Response:
+    """Download one target table when a mapping produces multiple CSVs."""
+    if Path(table_name).name != table_name or table_name in {".", ".."}:
+        raise HTTPException(404, "Target table not found")
+    mapping = get_mapping_review(folder_id)
+    if table_name not in {
+        table["name"] for table in mapping["target_schema_json"].get("tables", [])
+    }:
+        raise HTTPException(404, "Target table not found")
+    filename = f"{table_name}.csv"
+    try:
+        content = get_artifact_store().read_artifact(folder_id, filename)
+    except FileNotFoundError:
+        raise HTTPException(404, "Target table CSV not found") from None
+    return Response(content=content, media_type="text/csv")
 
 
 @app.post(

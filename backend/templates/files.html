@@ -39,7 +39,8 @@
         <li>
           {% if file.artifact_type == "pipeline" %}<a href="/output-folders/{{ mapping.id }}/pipeline.py">{{ file.name }}</a>
           {% elif file.artifact_type == "mapping" %}<a href="/output-folders/{{ mapping.id }}/mapping.json">{{ file.name }}</a>
-          {% elif file.artifact_type == "results" %}<a href="/output-folders/{{ mapping.id }}/results.csv">{{ file.name }}</a>
+           {% elif file.artifact_type == "results" %}<a href="/output-folders/{{ mapping.id }}/results.csv">{{ file.name }}</a>
+           {% elif file.artifact_type == "table" %}<a href="/output-folders/{{ mapping.id }}/tables/{{ file.table_name | urlencode }}.csv">{{ file.name }}</a>
           {% else %}{{ file.name }}{% endif %}
         </li>
         {% endfor %}
