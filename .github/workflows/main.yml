@@ -1,0 +1,11 @@
+on:
+  push:
+  pull_request:
+
+jobs:
+  first:
+    uses: ./.github/workflows/ci.yml
+
+  second:
+    needs: first
+    uses: ./.github/workflows/deploy-dev.yml
