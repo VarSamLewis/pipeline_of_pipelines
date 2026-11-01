@@ -93,6 +93,54 @@ def test_bearer_token_authenticates_api_request(
     assert request.state.actor_user_id == str(user.id)
 
 
+def test_verified_claims_accepts_signed_cli_token_without_audience(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OAuth access tokens are bound to the configured CLI client ID."""
+    import auth_service
+
+    class FakeJwksClient:
+        def get_signing_key_from_jwt(self, _: str) -> SimpleNamespace:
+            return SimpleNamespace(key="public-key")
+
+    claims = {"sub": "user_1", "exp": 2, "iat": 1, "nbf": 1, "client_id": "cli"}
+    monkeypatch.setattr(auth_service, "CLERK_ISSUER", "https://issuer.example")
+    monkeypatch.setattr(auth_service, "CLERK_CLI_OAUTH_CLIENT_ID", "cli")
+    monkeypatch.setattr(auth_service, "_get_jwks_client", lambda: FakeJwksClient())
+    monkeypatch.setattr(auth_service.jwt, "decode", lambda *args, **kwargs: claims)
+
+    assert auth_service._verified_claims("signed-cli-token") == claims
+
+
+def test_verified_claims_rejects_unrecognized_cli_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token without the configured audience must name the CLI OAuth app."""
+    import auth_service
+
+    class FakeJwksClient:
+        def get_signing_key_from_jwt(self, _: str) -> SimpleNamespace:
+            return SimpleNamespace(key="public-key")
+
+    monkeypatch.setattr(auth_service, "CLERK_ISSUER", "https://issuer.example")
+    monkeypatch.setattr(auth_service, "CLERK_CLI_OAUTH_CLIENT_ID", "cli")
+    monkeypatch.setattr(auth_service, "_get_jwks_client", lambda: FakeJwksClient())
+    monkeypatch.setattr(
+        auth_service.jwt,
+        "decode",
+        lambda *args, **kwargs: {
+            "sub": "user_1",
+            "exp": 2,
+            "iat": 1,
+            "nbf": 1,
+            "client_id": "other-cli",
+        },
+    )
+
+    with pytest.raises(HTTPException, match="Invalid Clerk session token"):
+        auth_service._verified_claims("other-signed-token")
+
+
 def test_logout_redirects_post_to_get_login() -> None:
     """Logout uses 303 so the browser follows the redirect with GET."""
     from app import app

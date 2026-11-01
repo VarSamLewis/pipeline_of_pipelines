@@ -25,6 +25,7 @@ CLERK_PUBLISHABLE_KEY = _settings.clerk_publishable_key
 CLERK_AUDIENCE = _settings.clerk_audience
 CLERK_ISSUER = _settings.clerk_issuer
 CLERK_JWKS_URL = _settings.clerk_jwks_url
+CLERK_CLI_OAUTH_CLIENT_ID = _settings.clerk_cli_oauth_client_id
 CLERK_SIGN_IN_URL = _settings.clerk_sign_in_url
 CLERK_JWT_TEMPLATE = _settings.clerk_jwt_template
 SESSION_SECRET_KEY = _settings.session_secret_key
@@ -45,18 +46,28 @@ def _get_jwks_client() -> PyJWKClient:
 
 
 def _verified_claims(token: str) -> Mapping[str, Any]:
-    if not CLERK_ISSUER or not CLERK_AUDIENCE:
+    if not CLERK_ISSUER:
         raise RuntimeError("Clerk JWT verification is not configured")
     try:
         key = _get_jwks_client().get_signing_key_from_jwt(token)
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             key.key,
             algorithms=["RS256"],
             issuer=CLERK_ISSUER,
-            audience=CLERK_AUDIENCE,
-            options={"require": ["sub", "exp", "iat", "nbf"]},
+            options={
+                "require": ["sub", "exp", "iat", "nbf"],
+                "verify_aud": False,
+            },
         )
+        audience = claims.get("aud")
+        if audience is not None:
+            audiences = {audience} if isinstance(audience, str) else set(audience)
+            if not CLERK_AUDIENCE or CLERK_AUDIENCE not in audiences:
+                raise HTTPException(401, "Invalid Clerk session token")
+        elif claims.get("client_id") != CLERK_CLI_OAUTH_CLIENT_ID:
+            raise HTTPException(401, "Invalid Clerk session token")
+        return claims
     except jwt.PyJWTError as exc:
         raise HTTPException(401, "Invalid Clerk session token") from exc
 

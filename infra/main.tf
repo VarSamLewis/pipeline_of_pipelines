@@ -396,6 +396,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.clerk_audience
       }
       env {
+        name  = "CLERK_CLI_OAUTH_CLIENT_ID"
+        value = var.clerk_cli_oauth_client_id
+      }
+      env {
         name  = "CLERK_JWKS_URL"
         value = var.clerk_jwks_url
       }

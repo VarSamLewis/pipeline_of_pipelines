@@ -23,6 +23,7 @@ container_image = "europe-west2-docker.pkg.dev/pipelinesdev-512107/pipelinesdev-
 clerk_publishable_key  = "pk_test_cG9zc2libGUtdGFwaXItMjU4Ni5jbGVyay5hY2NvdW50cy5kZXYk"
 clerk_issuer           = "https://possible-tapir-2586.clerk.accounts.dev"
 clerk_audience         = "pipeline-dev-api"
+clerk_cli_oauth_client_id = "74oy7ave0BOKjJh4"
 clerk_jwks_url         = "https://possible-tapir-2586.clerk.accounts.dev/.well-known/jwks.json"
 clerk_sign_in_url      = "https://possible-tapir-2586.accounts.dev/sign-in"
 clerk_jwt_template     = "pipeline-beta"

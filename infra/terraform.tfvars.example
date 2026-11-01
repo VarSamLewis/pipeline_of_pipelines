@@ -23,6 +23,7 @@ container_image = "us-central1-docker.pkg.dev/your-gcp-project-id/pipeline-dev/a
 clerk_publishable_key = "pk_..."
 clerk_issuer          = "https://your-clerk-instance.clerk.accounts.dev"
 clerk_audience        = "your-api-audience"
+clerk_cli_oauth_client_id = "your-public-cli-oauth-client-id"
 clerk_jwks_url        = "https://your-clerk-instance.clerk.accounts.dev/.well-known/jwks.json"
 clerk_sign_in_url     = "https://your-clerk-instance.clerk.accounts.dev/sign-in"
 clerk_jwt_template    = "pipeline-beta"

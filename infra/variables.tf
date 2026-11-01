@@ -95,6 +95,12 @@ variable "clerk_audience" {
   default     = ""
 }
 
+variable "clerk_cli_oauth_client_id" {
+  description = "Public Clerk OAuth client ID permitted for CLI bearer tokens."
+  type        = string
+  default     = ""
+}
+
 variable "clerk_jwks_url" {
   description = "Clerk JWKS endpoint used to verify session JWTs."
   type        = string

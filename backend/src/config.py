@@ -44,6 +44,7 @@ class Settings:
     clerk_secret_key: str | None
     clerk_issuer: str
     clerk_audience: str
+    clerk_cli_oauth_client_id: str
     clerk_jwks_url: str
     clerk_sign_in_url: str
     clerk_jwt_template: str
@@ -126,6 +127,7 @@ class Settings:
             clerk_secret_key=values.get("CLERK_SECRET_KEY"),
             clerk_issuer=values.get("CLERK_ISSUER", ""),
             clerk_audience=values.get("CLERK_AUDIENCE", ""),
+            clerk_cli_oauth_client_id=values.get("CLERK_CLI_OAUTH_CLIENT_ID", ""),
             clerk_jwks_url=values.get("CLERK_JWKS_URL", ""),
             clerk_sign_in_url=values.get("CLERK_SIGN_IN_URL", ""),
             clerk_jwt_template=values.get("CLERK_JWT_TEMPLATE", "pipeline-beta"),
