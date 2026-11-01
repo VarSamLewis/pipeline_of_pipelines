@@ -7,9 +7,9 @@ import re
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
-# Use the PostgreSQL test database by default. Tests that require a live DB are
-# skipped automatically when Postgres is not reachable.
+# Integration tests require a real, dedicated PostgreSQL test database.
 os.environ.setdefault(
     "DATABASE_URL",
     (
@@ -18,6 +18,7 @@ os.environ.setdefault(
     ),
 )
 os.environ.setdefault("AUTH_BYPASS_LOCAL", "true")
+os.environ.setdefault("BYOK_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 from db_ops import create_tables, get_engine  # noqa: E402
 
@@ -38,17 +39,17 @@ def _postgres_available() -> bool:
 POSTGRES_AVAILABLE = _postgres_available()
 
 
-requires_postgres = pytest.mark.skipif(
-    not POSTGRES_AVAILABLE,
-    reason="PostgreSQL is not available; start it with `docker compose up -d postgres`",
-)
-
-
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_database() -> None:
-    """Create tables once for the test suite when Postgres is available."""
-    if POSTGRES_AVAILABLE:
-        create_tables()
+    """Fail loudly when integration tests cannot reach their test database."""
+    if not (get_engine().url.database or "").endswith("_test"):
+        pytest.fail("Integration tests require a database name ending in _test")
+    if not POSTGRES_AVAILABLE:
+        pytest.fail(
+            "PostgreSQL test database unavailable. Start `docker compose up -d "
+            "postgres` and create `pipeline_test` (see README)."
+        )
+    create_tables()
     yield
 
 

@@ -105,6 +105,8 @@ def _set_application_search_path(dbapi_connection: Any, _: Any) -> None:
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute(f"SET search_path TO {APPLICATION_SCHEMA}, public")
+        # A pool rollback must not undo the session-level search path.
+        dbapi_connection.commit()
     finally:
         cursor.close()
 

@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import requires_postgres
 from fastapi.testclient import TestClient
-
-pytestmark = requires_postgres
 
 
 @pytest.fixture
@@ -222,6 +220,336 @@ def test_full_propose_approve_execute_flow(
     assert "record_id,full_name,score" in csv_text
     assert "1,Alice,88.5" in csv_text
     assert "2,Bob,92.0" in csv_text
+
+
+def test_repeat_upload_is_preserved_and_visible_on_website(
+    client: TestClient, registered_client: dict
+) -> None:
+    """Two identical uploads remain separate records and website inventory rows."""
+    from db_ops import get_session
+    from models import RawFile
+
+    client_id = registered_client["id"]
+    uploads = []
+    for _ in range(2):
+        batch = client.post(f"/clients/{client_id}/batches", json={"label": "repeat"})
+        assert batch.status_code == 200, batch.text
+        response = client.post(
+            f"/clients/{client_id}/batches/{batch.json()['id']}/files",
+            files={"file": ("same.csv", b"id,name\n1,Alice\n", "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+        uploads.append(response.json())
+
+    assert uploads[0]["id"] != uploads[1]["id"]
+    assert uploads[0]["sha256"] == uploads[1]["sha256"]
+    assert all(item["original_filename"] == "same.csv" for item in uploads)
+    for item in uploads:
+        assert datetime.fromisoformat(item["uploaded_at"])
+        fetched = client.get(f"/raw-files/{item['id']}")
+        assert fetched.status_code == 200
+        assert fetched.json()["uploaded_at"] == item["uploaded_at"]
+
+    with get_session() as session:
+        stored = [session.get(RawFile, uuid.UUID(item["id"])) for item in uploads]
+        assert all(item is not None for item in stored)
+        assert stored[0].storage_key != stored[1].storage_key
+
+    files_page = client.get(f"/clients/{client_id}/files")
+    assert files_page.status_code == 200, files_page.text
+    assert files_page.text.count("same.csv") >= 2
+    assert all(item["uploaded_at"][:10] in files_page.text for item in uploads)
+
+
+def test_two_schemas_create_independent_reviewable_mappings(
+    client: TestClient,
+    registered_client: dict,
+    ingested_batch: dict,
+    simple_schema_file: Path,
+    mock_openai: None,
+) -> None:
+    """Shared source files produce two independently proposed and reviewed specs."""
+    import json
+
+    client_id = registered_client["id"]
+    schema = json.loads(simple_schema_file.read_text())
+    other_schema = {**schema, "name": "another-output"}
+    created = client.post(
+        f"/clients/{client_id}/mapping-specs",
+        json={
+            "source_raw_file_ids": ingested_batch["raw_file_ids"],
+            "target_schemas": [schema, other_schema],
+        },
+    )
+    assert created.status_code == 200, created.text
+    drafts = created.json()["mapping_specs"]
+    assert len(drafts) == 2
+    assert drafts[0]["id"] != drafts[1]["id"]
+    assert [draft["target_schema"]["name"] for draft in drafts] == [
+        "default",
+        "another-output",
+    ]
+    for draft in drafts:
+        spec_id = draft["id"]
+        spec = client.get(f"/mapping-specs/{spec_id}")
+        assert spec.status_code == 200
+        assert spec.json()["source_raw_file_ids"] == ingested_batch["raw_file_ids"]
+        proposed = client.post(
+            f"/mapping-specs/{spec_id}/propose",
+            headers={
+                "X-OpenAI-Api-Key": "test-byok-key",
+                "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        review = client.get(f"/mapping/{spec_id}")
+        assert review.status_code == 200, review.text
+        target = client.get(f"/mapping/{spec_id}/target-schema.json")
+        assert target.status_code == 200
+        assert target.json()["name"] == draft["target_schema"]["name"]
+
+    approved = client.post(
+        f"/mapping-specs/{drafts[0]['id']}/approve",
+        json={"reviewer": "integration-tester"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert client.get(f"/mapping-specs/{drafts[1]['id']}").json()["status"] == (
+        "proposed"
+    )
+
+
+def test_bulk_schema_validation_does_not_leave_partial_drafts(
+    client: TestClient, registered_client: dict, simple_schema_file: Path
+) -> None:
+    import json
+
+    client_id = registered_client["id"]
+    before = client.get(f"/mapping-specs?client_id={client_id}").json()
+    invalid = client.post(
+        f"/clients/{client_id}/mapping-specs",
+        json={
+            "target_schemas": [
+                json.loads(simple_schema_file.read_text()),
+                {"name": "broken", "tables": "not-a-list"},
+            ]
+        },
+    )
+    assert invalid.status_code == 422
+    assert client.get(f"/mapping-specs?client_id={client_id}").json() == before
+
+
+def test_website_uploads_two_schemas_and_links_both_reviews(
+    client: TestClient,
+    registered_client: dict,
+    simple_schema_file: Path,
+    mock_openai: None,
+) -> None:
+    """Exercise the real upload form, source parser, and mapping proposals."""
+    import json
+
+    from byok import save_organization_api_key
+    from db_ops import get_session
+    from models import OrganizationMembership, OrganizationRole, User
+
+    org_id = uuid.UUID(registered_client["organization_id"])
+    local_id = uuid.UUID(int=0)
+    with get_session() as session:
+        if session.get(User, local_id) is None:
+            session.add(
+                User(
+                    id=local_id,
+                    external_user_id="local-dev",
+                    email="local-dev@example.com",
+                )
+            )
+            session.commit()
+        session.add(
+            OrganizationMembership(
+                organization_id=org_id,
+                user_id=local_id,
+                role=OrganizationRole.ORG_ADMIN,
+            )
+        )
+        session.commit()
+        save_organization_api_key(
+            session, org_id, "test-byok-key", "https://api.openai.com/v1"
+        )
+
+    schema = json.loads(simple_schema_file.read_text())
+    second = {**schema, "name": "second-output"}
+    response = client.post(
+        "/upload",
+        data={
+            "organization_select": str(org_id),
+            "client_select": registered_client["id"],
+        },
+        files=[
+            (
+                "source_files",
+                ("data.csv", b"id,name,score\n1,Alice,88.5\n", "text/csv"),
+            ),
+            ("target_schema", ("first.json", json.dumps(schema), "application/json")),
+            ("target_schema", ("second.json", json.dumps(second), "application/json")),
+        ],
+    )
+    assert response.status_code == 200, response.text
+    import re
+
+    review_ids = re.findall(r"/mapping/([0-9a-f-]{36})", response.text)
+    assert len(review_ids) == 2 and review_ids[0] != review_ids[1]
+    assert "first.json" in response.text and "second.json" in response.text
+    for spec_id in review_ids:
+        assert client.get(f"/mapping/{spec_id}").status_code == 200
+    first = client.get(f"/mapping-specs/{review_ids[0]}").json()
+    second_spec = client.get(f"/mapping-specs/{review_ids[1]}").json()
+    assert first["source_raw_file_ids"] == second_spec["source_raw_file_ids"]
+    assert first["status"] == second_spec["status"] == "proposed"
+
+
+def test_multi_table_outputs_download_and_preview_independently(
+    client: TestClient,
+    registered_client: dict,
+    ingested_batch: dict,
+    simple_schema_file: Path,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An executed mapping exposes one real CSV per target table in API and UI."""
+    import json
+
+    import mapping
+
+    schema = json.loads(simple_schema_file.read_text())
+    schema["tables"].append({**schema["tables"][0], "name": "records_copy"})
+    original_call = mapping.call_mapping_llm
+
+    def two_table_response(*args, **kwargs):
+        response = original_call(*args, **kwargs)
+        response["mappings"].extend(
+            {**column, "target_table": "records_copy"}
+            for column in list(response["mappings"])
+        )
+        return response
+
+    monkeypatch.setattr(mapping, "call_mapping_llm", two_table_response)
+    client_id = registered_client["id"]
+    created = client.post(
+        f"/clients/{client_id}/mapping-specs",
+        json={
+            "source_raw_file_ids": ingested_batch["raw_file_ids"],
+            "target_schema": schema,
+        },
+    )
+    assert created.status_code == 200, created.text
+    spec_id = created.json()["id"]
+    proposed = client.post(
+        f"/mapping-specs/{spec_id}/propose",
+        headers={
+            "X-OpenAI-Api-Key": "test-byok-key",
+            "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+        },
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert (
+        client.post(
+            f"/mapping-specs/{spec_id}/approve", json={"reviewer": "integration-tester"}
+        ).status_code
+        == 200
+    )
+    generated = client.post(f"/mapping-specs/{spec_id}/output-folder")
+    assert generated.status_code == 200, generated.text
+    for table in ("records", "records_copy"):
+        download = client.get(f"/output-folders/{spec_id}/tables/{table}.csv")
+        assert download.status_code == 200, download.text
+        assert "1,Alice,88.5" in download.text
+    assert (
+        client.get(f"/output-folders/{spec_id}/tables/unknown.csv").status_code == 404
+    )
+
+    # Execute to get a run ID for the website's result-review screen.
+    executed = client.post(f"/mapping-specs/{spec_id}/execute")
+    assert executed.status_code == 200, executed.text
+    run_id = executed.json()["execution_run_id"]
+    page = client.get(f"/results/{run_id}")
+    assert page.status_code == 200, page.text
+    assert "View records.csv" in page.text
+    assert "View records_copy.csv" in page.text
+    for table in ("records", "records_copy"):
+        preview = client.get(f"/results/{run_id}/csv?file={table}.csv")
+        assert preview.status_code == 200, preview.text
+        assert "Alice" in preview.text
+
+
+def test_cli_proposes_two_mappings_against_real_api(
+    client: TestClient,
+    registered_client: dict,
+    ingested_batch: dict,
+    simple_schema_file: Path,
+    mock_openai: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI arguments lead to two persisted API mappings, not fake client calls."""
+    import json
+
+    import pop_cli.main as cli
+    from byok import save_organization_api_key
+    from db_ops import get_session
+    from pop_cli.workflow import Api
+    from typer.testing import CliRunner
+
+    with get_session() as session:
+        save_organization_api_key(
+            session,
+            uuid.UUID(registered_client["organization_id"]),
+            "test-byok-key",
+            "https://api.openai.com/v1",
+        )
+
+    schema_b = tmp_path / "second.json"
+    schema = json.loads(simple_schema_file.read_text())
+    schema_b.write_text(json.dumps({**schema, "name": "second-output"}))
+    manifest = tmp_path / "upload.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "client_id": registered_client["id"],
+                "files": [{"id": raw_id} for raw_id in ingested_batch["raw_file_ids"]],
+            }
+        )
+    )
+
+    def local_api():
+        api = Api.__new__(Api)
+        api.client = TestClient(client.app)
+        return api
+
+    monkeypatch.setattr(cli, "Api", local_api)
+    outputs = tmp_path / "mappings"
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "propose",
+            "--client",
+            registered_client["id"],
+            "--manifest",
+            str(manifest),
+            "--schema",
+            str(simple_schema_file),
+            "--schema",
+            str(schema_b),
+            "--output-dir",
+            str(outputs),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    mappings = sorted(outputs.glob("*-mapping.json"))
+    assert len(mappings) == 2
+    for path in mappings:
+        saved = json.loads(path.read_text())
+        spec = client.get(f"/mapping-specs/{saved['id']}")
+        assert spec.status_code == 200
+        assert spec.json()["status"] == "proposed"
 
 
 @pytest.fixture

@@ -28,7 +28,7 @@ backend/src/
   codegen.py      Artifact and output-folder generation
   pipeline.py     Single-file Polars transformation runtime
 
-tests/            pytest unit and integration tests
+tests/            pytest API, website, and CLI integration scenarios
 examples/         Example client fixtures
 ```
 
@@ -230,8 +230,15 @@ Install the locked development dependencies and start PostgreSQL:
 ```bash
 uv sync --extra dev
 docker compose up -d postgres
+docker compose exec -T postgres psql -U postgres -d postgres -c 'CREATE DATABASE pipeline_test'
 uv run pytest
 ```
+
+Create `pipeline_test` only once. The integration suite requires a reachable
+PostgreSQL database whose name ends in `_test` and fails rather than silently
+skipping when it is unavailable. Tests exercise the API, website, and CLI
+against that database; only outbound LLM calls are stubbed. They do not run a
+browser or hit a deployed service.
 
 Run the complete local quality suite:
 
