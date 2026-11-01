@@ -72,6 +72,22 @@ def _verified_claims(token: str) -> Mapping[str, Any]:
         raise HTTPException(401, "Invalid Clerk session token") from exc
 
 
+def _oauth_userinfo(token: str) -> Mapping[str, Any]:
+    """Fetch identity claims absent from a valid OAuth access token."""
+    request = UrlRequest(
+        f"{CLERK_ISSUER}/oauth/userinfo",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            profile = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, json.JSONDecodeError) as exc:
+        raise HTTPException(401, "Could not retrieve Clerk user profile") from exc
+    if not isinstance(profile, dict):
+        raise HTTPException(401, "Invalid Clerk user profile")
+    return profile
+
+
 def authenticate_clerk_session(token: str) -> Any:
     """Verify a Clerk JWT and provision only identities with pending invitations."""
     from db_ops import get_session
@@ -80,12 +96,17 @@ def authenticate_clerk_session(token: str) -> Any:
     claims = _verified_claims(token)
     external_id = claims["sub"]
     email = claims.get("email") or claims.get("email_address")
+    profile: Mapping[str, Any] = {}
+    if not isinstance(email, str) or not email:
+        profile = _oauth_userinfo(token)
+        email = profile.get("email") or profile.get("email_address")
     if not isinstance(external_id, str) or not isinstance(email, str) or not email:
         raise HTTPException(401, "Clerk token must contain subject and email")
-    if claims.get("email_verified") is False:
+    if claims.get("email_verified", profile.get("email_verified")) is False:
         raise HTTPException(401, "Clerk email is not verified")
     email = email.strip().lower()
-    name = claims.get("name") if isinstance(claims.get("name"), str) else None
+    name = claims.get("name") or profile.get("name")
+    name = name if isinstance(name, str) else None
     now = datetime.now(UTC).replace(tzinfo=None)
 
     with get_session() as session:

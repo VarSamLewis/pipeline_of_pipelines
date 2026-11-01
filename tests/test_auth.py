@@ -141,6 +141,45 @@ def test_verified_claims_rejects_unrecognized_cli_client(
         auth_service._verified_claims("other-signed-token")
 
 
+def test_clerk_oauth_token_uses_userinfo_when_email_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device-code access tokens obtain profile details from Clerk userinfo."""
+    import auth_service
+    import db_ops
+
+    monkeypatch.setattr(
+        auth_service,
+        "_verified_claims",
+        lambda _: {"sub": "clerk-user", "client_id": "cli"},
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "_oauth_userinfo",
+        lambda _: {
+            "email": "member@example.com",
+            "email_verified": True,
+            "name": "Member",
+        },
+    )
+
+    class FakeSession:
+        def __enter__(self) -> FakeSession:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def exec(self, _: object) -> SimpleNamespace:
+            return SimpleNamespace(first=lambda: None, all=lambda: [])
+
+    monkeypatch.setattr(db_ops, "get_session", lambda: FakeSession())
+    monkeypatch.setattr(auth_service, "BOOTSTRAP_ADMIN_EMAILS", frozenset())
+
+    with pytest.raises(HTTPException, match="No pending beta invitation"):
+        auth_service.authenticate_clerk_session("oauth-token")
+
+
 def test_logout_redirects_post_to_get_login() -> None:
     """Logout uses 303 so the browser follows the redirect with GET."""
     from app import app
