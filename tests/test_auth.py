@@ -156,7 +156,8 @@ def test_clerk_oauth_token_uses_userinfo_when_email_is_absent(
     monkeypatch.setattr(
         auth_service,
         "_oauth_userinfo",
-        lambda _: {
+        lambda _, subject: {
+            "sub": subject,
             "email": "member@example.com",
             "email_verified": True,
             "name": "Member",
@@ -178,6 +179,38 @@ def test_clerk_oauth_token_uses_userinfo_when_email_is_absent(
 
     with pytest.raises(HTTPException, match="No pending beta invitation"):
         auth_service.authenticate_clerk_session("oauth-token")
+
+
+def test_oauth_userinfo_uses_verified_http_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Userinfo is fetched with HTTPX and bound to the signed token subject."""
+    import auth_service
+    import httpx
+
+    seen: dict[str, object] = {}
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: int) -> httpx.Response:
+        seen.update(url=url, headers=headers, timeout=timeout)
+        return httpx.Response(
+            200,
+            json={"sub": "user_1", "email": "member@example.com"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(auth_service, "CLERK_ISSUER", "https://clerk.example")
+    monkeypatch.setattr(auth_service.httpx, "get", fake_get)
+
+    assert auth_service._oauth_userinfo("access-token", "user_1")["email"] == (
+        "member@example.com"
+    )
+    assert seen == {
+        "url": "https://clerk.example/oauth/userinfo",
+        "headers": {"Authorization": "Bearer access-token"},
+        "timeout": 10,
+    }
+    with pytest.raises(HTTPException, match="does not match token"):
+        auth_service._oauth_userinfo("access-token", "user_2")
 
 
 def test_logout_redirects_post_to_get_login() -> None:
