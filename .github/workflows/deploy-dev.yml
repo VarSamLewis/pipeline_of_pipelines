@@ -1,9 +1,7 @@
 name: Deploy development
 
 on:
-  workflow_dispatch:
-  push:
-  pull_request:
+  workflow_call:
 
 permissions:
   contents: read

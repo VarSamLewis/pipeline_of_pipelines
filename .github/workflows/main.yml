@@ -1,11 +1,17 @@
+name: CI and deploy development
+
 on:
   push:
-  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  first:
+  ci:
+    name: CI
     uses: ./.github/workflows/ci.yml
 
-  second:
-    needs: first
+  deploy-development:
+    name: Deploy development
+    needs: ci
     uses: ./.github/workflows/deploy-dev.yml
+    secrets: inherit
