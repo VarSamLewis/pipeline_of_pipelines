@@ -73,6 +73,13 @@ pop propose \
   --output ./mapping.json
 ```
 
+Run the same command again to refresh a proposal. If `mapping.json` already
+exists, the CLI checks that its server-side spec belongs to the supplied client,
+schema, and upload manifest. Draft/proposed specs are retried; finalized specs
+get a new, independent review. The local file is replaced only after success.
+Use `--spec <id>` to resume a draft when a previous attempt failed before it
+could write `mapping.json`.
+
 The output document includes the server-side mapping specification ID and
 mapping-column IDs. Those identifiers let the CLI apply local edits to the
 correct immutable source files and mapping records.

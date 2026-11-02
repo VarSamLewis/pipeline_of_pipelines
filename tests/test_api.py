@@ -254,6 +254,10 @@ def test_repeat_upload_is_preserved_and_visible_on_website(
         stored = [session.get(RawFile, uuid.UUID(item["id"])) for item in uploads]
         assert all(item is not None for item in stored)
         assert stored[0].storage_key != stored[1].storage_key
+        assert all(
+            re.search(r"/raw/same_\d{8}T\d{12}Z\.csv$", item.storage_key)
+            for item in stored
+        )
 
     files_page = client.get(f"/clients/{client_id}/files")
     assert files_page.status_code == 200, files_page.text
@@ -526,22 +530,20 @@ def test_cli_proposes_two_mappings_against_real_api(
 
     monkeypatch.setattr(cli, "Api", local_api)
     outputs = tmp_path / "mappings"
-    result = CliRunner().invoke(
-        cli.app,
-        [
-            "propose",
-            "--client",
-            registered_client["id"],
-            "--manifest",
-            str(manifest),
-            "--schema",
-            str(simple_schema_file),
-            "--schema",
-            str(schema_b),
-            "--output-dir",
-            str(outputs),
-        ],
-    )
+    command = [
+        "propose",
+        "--client",
+        registered_client["id"],
+        "--manifest",
+        str(manifest),
+        "--schema",
+        str(simple_schema_file),
+        "--schema",
+        str(schema_b),
+        "--output-dir",
+        str(outputs),
+    ]
+    result = CliRunner().invoke(cli.app, command)
     assert result.exit_code == 0, result.output
     mappings = sorted(outputs.glob("*-mapping.json"))
     assert len(mappings) == 2
@@ -550,6 +552,25 @@ def test_cli_proposes_two_mappings_against_real_api(
         spec = client.get(f"/mapping-specs/{saved['id']}")
         assert spec.status_code == 200
         assert spec.json()["status"] == "proposed"
+
+    # Repeat the same command: reuse each proposed review instead of failing
+    # because the output files already exist.
+    previous_ids = [json.loads(path.read_text())["id"] for path in mappings]
+    rerun = CliRunner().invoke(cli.app, command)
+    assert rerun.exit_code == 0, rerun.output
+    assert [json.loads(path.read_text())["id"] for path in mappings] == previous_ids
+
+    approved = client.post(
+        f"/mapping-specs/{previous_ids[0]}/approve", json={"reviewer": "tester"}
+    )
+    assert approved.status_code == 200, approved.text
+    rerun = CliRunner().invoke(cli.app, command)
+    assert rerun.exit_code == 0, rerun.output
+    assert json.loads(mappings[0].read_text())["id"] != previous_ids[0]
+    assert json.loads(mappings[1].read_text())["id"] == previous_ids[1]
+    assert client.get(f"/mapping-specs/{previous_ids[0]}").json()["status"] == (
+        "approved"
+    )
 
 
 @pytest.fixture

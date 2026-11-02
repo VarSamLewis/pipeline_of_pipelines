@@ -80,9 +80,9 @@ from fastapi.responses import (
     Response,
 )
 from file_ops import (
-    build_storage_key,
     compute_sha256,
     detect_file_type,
+    store_raw_upload,
 )
 from models import PipelineOutputFolder, TargetSchema
 from pydantic import ValidationError
@@ -829,15 +829,16 @@ def upload_raw_file(
         organization = session.get(Organization, client.organization_id)
         if organization is None:
             raise HTTPException(404, "Client organization not found")
-        storage_key = build_storage_key(
+        object_store = get_object_store()
+        storage_key = store_raw_upload(
+            object_store,
             organization.name,
             str(organization.id),
             client.name,
             str(client.id),
             file.filename or "unknown",
+            contents,
         )
-        object_store = get_object_store()
-        object_store.put(storage_key, contents)
 
         raw_file = create_raw_file(
             session=session,
@@ -1066,8 +1067,10 @@ def get_target_schema(
             raise HTTPException(status_code=404, detail="Client not found")
 
     try:
-        return get_artifact_store().read_target_schema(str(client.id)).model_dump(
-            mode="json"
+        return (
+            get_artifact_store()
+            .read_target_schema(str(client.id))
+            .model_dump(mode="json")
         )
     except FileNotFoundError:
         raise HTTPException(
@@ -1337,15 +1340,17 @@ def list_mapping_specs_endpoint(
             require_client_membership(session, user, client.id)
             statement = statement.where(MappingSpec.client_id == client.id)
         elif not AUTH_BYPASS_LOCAL:
-            statement = statement.join(
-                Client, cast(Any, Client.id) == MappingSpec.client_id
-            ).join(
-                OrganizationMembership,
-                cast(Any, OrganizationMembership.organization_id)
-                == Client.organization_id,
-            ).where(
-                OrganizationMembership.user_id == user.id,
-                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            statement = (
+                statement.join(Client, cast(Any, Client.id) == MappingSpec.client_id)
+                .join(
+                    OrganizationMembership,
+                    cast(Any, OrganizationMembership.organization_id)
+                    == Client.organization_id,
+                )
+                .where(
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
             )
         if status:
             statement = statement.where(MappingSpec.status == status)
@@ -1725,15 +1730,17 @@ def list_execution_runs_endpoint(
             require_client_membership(session, user, spec.client_id)
             statement = statement.where(ExecutionRun.mapping_spec_id == spec_id)
         elif not AUTH_BYPASS_LOCAL:
-            statement = statement.join(
-                Client, cast(Any, Client.id) == ExecutionRun.client_id
-            ).join(
-                OrganizationMembership,
-                cast(Any, OrganizationMembership.organization_id)
-                == Client.organization_id,
-            ).where(
-                OrganizationMembership.user_id == user.id,
-                cast(Any, OrganizationMembership.revoked_at).is_(None),
+            statement = (
+                statement.join(Client, cast(Any, Client.id) == ExecutionRun.client_id)
+                .join(
+                    OrganizationMembership,
+                    cast(Any, OrganizationMembership.organization_id)
+                    == Client.organization_id,
+                )
+                .where(
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
             )
         if status:
             statement = statement.where(ExecutionRun.status == status)

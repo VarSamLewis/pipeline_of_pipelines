@@ -42,9 +42,9 @@ from db_ops import (
 from dependencies import get_artifact_store, get_object_store
 from file_ops import (
     ObjectStore,
-    build_storage_key,
     compute_sha256,
     detect_file_type,
+    store_raw_upload,
 )
 from mapping import propose_mapping_spec, validate_mapping_expression_dtypes
 from mapping_specs import load_mapping_spec, load_target_schema_from_spec
@@ -324,15 +324,19 @@ def get_organization_key_settings(user: Any | None = None) -> list[dict[str, Any
             if user is None or user.platform_role == PlatformRole.PLATFORM_ADMIN
             else list_organizations(user)
         )
-        memberships = {
-            membership.organization_id: membership
-            for membership in session.exec(
-                select(OrganizationMembership).where(
-                    OrganizationMembership.user_id == user.id,
-                    cast(Any, OrganizationMembership.revoked_at).is_(None),
-                )
-            ).all()
-        } if user is not None else {}
+        memberships = (
+            {
+                membership.organization_id: membership
+                for membership in session.exec(
+                    select(OrganizationMembership).where(
+                        OrganizationMembership.user_id == user.id,
+                        cast(Any, OrganizationMembership.revoked_at).is_(None),
+                    )
+                ).all()
+            }
+            if user is not None
+            else {}
+        )
         return [
             {
                 "id": organization.id,
@@ -367,15 +371,21 @@ def save_organization_key(
     with get_session() as session:
         if session.get(Organization, organization_id) is None:
             raise ValueError("Organization not found")
-        membership = None if user is None else session.exec(
-            select(OrganizationMembership).where(
-                OrganizationMembership.organization_id == organization_id,
-                OrganizationMembership.user_id == user.id,
-                cast(Any, OrganizationMembership.revoked_at).is_(None),
-            )
-        ).first()
-        if user is not None and user.platform_role != PlatformRole.PLATFORM_ADMIN and (
-            membership is None or membership.role != OrganizationRole.ORG_ADMIN
+        membership = (
+            None
+            if user is None
+            else session.exec(
+                select(OrganizationMembership).where(
+                    OrganizationMembership.organization_id == organization_id,
+                    OrganizationMembership.user_id == user.id,
+                    cast(Any, OrganizationMembership.revoked_at).is_(None),
+                )
+            ).first()
+        )
+        if (
+            user is not None
+            and user.platform_role != PlatformRole.PLATFORM_ADMIN
+            and (membership is None or membership.role != OrganizationRole.ORG_ADMIN)
         ):
             raise ValueError("Organization admin access required")
         save_organization_api_key(session, organization_id, api_key, provider_base_url)
@@ -402,13 +412,15 @@ def invite_organization_reviewer(
                 pass
             elif organization_id is None:
                 raise ValueError("Platform admin access required")
-            elif (membership := session.exec(
-                select(OrganizationMembership).where(
-                    OrganizationMembership.organization_id == organization_id,
-                    OrganizationMembership.user_id == user.id,
-                    cast(Any, OrganizationMembership.revoked_at).is_(None),
-                )
-            ).first()) is None or membership.role != OrganizationRole.ORG_ADMIN:
+            elif (
+                membership := session.exec(
+                    select(OrganizationMembership).where(
+                        OrganizationMembership.organization_id == organization_id,
+                        OrganizationMembership.user_id == user.id,
+                        cast(Any, OrganizationMembership.revoked_at).is_(None),
+                    )
+                ).first()
+            ) is None or membership.role != OrganizationRole.ORG_ADMIN:
                 raise ValueError("Organization admin access required")
         invitation = session.exec(
             select(BetaInvitation).where(
@@ -448,13 +460,15 @@ def revoke_organization_reviewer_invitation(
         if user is not None:
             if getattr(user, "platform_role", None) == PlatformRole.PLATFORM_ADMIN:
                 pass
-            elif (membership := session.exec(
-                select(OrganizationMembership).where(
-                    OrganizationMembership.organization_id == organization_id,
-                    OrganizationMembership.user_id == user.id,
-                    cast(Any, OrganizationMembership.revoked_at).is_(None),
-                )
-            ).first()) is None or membership.role != OrganizationRole.ORG_ADMIN:
+            elif (
+                membership := session.exec(
+                    select(OrganizationMembership).where(
+                        OrganizationMembership.organization_id == organization_id,
+                        OrganizationMembership.user_id == user.id,
+                        cast(Any, OrganizationMembership.revoked_at).is_(None),
+                    )
+                ).first()
+            ) is None or membership.role != OrganizationRole.ORG_ADMIN:
                 raise ValueError("Organization admin access required")
         invitation.status = "revoked"
         invitation.updated_at = datetime.now(UTC).replace(tzinfo=None)
@@ -488,14 +502,15 @@ def _store_raw_file(
     organization = session.get(Organization, client.organization_id)
     if organization is None:
         raise ValueError("Client organization not found")
-    storage_key = build_storage_key(
+    storage_key = store_raw_upload(
+        object_store,
         organization.name,
         str(organization.id),
         client.name,
         str(client.id),
         filename,
+        contents,
     )
-    object_store.put(storage_key, contents)
 
     raw_file = create_raw_file(
         session=session,

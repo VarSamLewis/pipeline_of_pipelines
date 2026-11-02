@@ -16,9 +16,9 @@ from typing import Any, cast
 from config import get_settings
 from file_ops import (
     ObjectStore,
-    build_storage_key,
     compute_sha256,
     detect_file_type,
+    store_raw_upload,
 )
 from models import (
     AuditLog,
@@ -437,14 +437,15 @@ def ingest_client_folder(
         organization = session.get(Organization, client.organization_id)
         if organization is None:
             raise ValueError("Client organization not found")
-        storage_key = build_storage_key(
+        storage_key = store_raw_upload(
+            object_store,
             organization.name,
             str(organization.id),
             client.name,
             str(client.id),
             file_path.name,
+            file_bytes,
         )
-        object_store.put(storage_key, file_bytes)
 
         raw_file = create_raw_file(
             session=session,

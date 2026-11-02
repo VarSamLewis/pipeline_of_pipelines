@@ -158,17 +158,16 @@ def propose(
     raw_ids = [identifier(item["id"]) for item in manifest.get("files", [])]
     if not raw_ids:
         raise ValueError("Upload manifest contains no files")
-    if output.exists():
-        raise ValueError(f"Mapping output already exists: {output}")
     schema = document(schema_path)
-    if spec_id is None:
-        spec = api.json(
-            "POST",
-            f"/clients/{client_id}/mapping-specs",
-            json={"source_raw_file_ids": raw_ids, "target_schema": schema},
-        )
-        spec_id = identifier(spec["id"])
-    else:
+    inferred_spec = False
+    if output.exists():
+        local_spec_id = identifier(document(output)["id"])
+        if spec_id is not None and identifier(spec_id) != local_spec_id:
+            raise ValueError("Existing mapping output belongs to a different spec")
+        if spec_id is None:
+            spec_id = local_spec_id
+            inferred_spec = True
+    if spec_id is not None:
         spec_id = identifier(spec_id)
         existing = api.json("GET", f"/mapping-specs/{spec_id}")
         if (
@@ -178,7 +177,18 @@ def propose(
         ):
             raise ValueError("Existing spec does not match client, manifest, or schema")
         if existing["status"] not in ("draft", "proposed"):
-            raise ValueError("Only draft or proposed specs can be retried")
+            if inferred_spec:
+                # Keep the finalized server-side mapping intact; start a new review.
+                spec_id = None
+            else:
+                raise ValueError("Only draft or proposed specs can be retried")
+    if spec_id is None:
+        spec = api.json(
+            "POST",
+            f"/clients/{client_id}/mapping-specs",
+            json={"source_raw_file_ids": raw_ids, "target_schema": schema},
+        )
+        spec_id = identifier(spec["id"])
     try:
         for raw_id in raw_ids:
             if (

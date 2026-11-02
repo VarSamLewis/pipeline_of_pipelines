@@ -187,7 +187,8 @@ uv run pop run mappings/orders_schema-2-mapping.json \
 ```
 
 Every upload receives a timestamp and its own storage key, including repeat
-uploads of the same filename. The original filename is retained for display.
+uploads of the same filename. The `_timestamp` suffix is applied only to the
+object name in storage; the original filename is retained for display.
 If a schema has multiple target tables, its deliverables include one CSV per
 table (`customers.csv`, `orders.csv`) instead of a single `results.csv`.
 The website Upload form also accepts multiple schema JSON files, and the API

@@ -15,9 +15,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import uuid
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import BinaryIO
 
@@ -142,15 +141,12 @@ def build_storage_key(
     client_id: str,
     original_filename: str,
     uploaded_at: datetime | None = None,
-    upload_id: uuid.UUID | None = None,
 ) -> str:
-    """Build a readable, collision-resistant key for one immutable raw upload."""
+    """Append the UTC upload timestamp to the stored object's name only."""
     uploaded_at = uploaded_at or datetime.now(UTC)
     if uploaded_at.tzinfo is None:
         uploaded_at = uploaded_at.replace(tzinfo=UTC)
     timestamp = uploaded_at.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    if upload_id is None:
-        upload_id = uuid.uuid4()
     path = Path(original_filename)
     stem = _storage_segment(path.stem) or "file"
     extension = re.sub(r"[^A-Za-z0-9.]", "", path.suffix.lower())
@@ -158,8 +154,34 @@ def build_storage_key(
     client = _storage_segment(client_name) or "client"
     return (
         f"organizations/{organization}--{organization_id}/"
-        f"clients/{client}--{client_id}/raw/{stem}_{timestamp}_{upload_id}{extension}"
+        f"clients/{client}--{client_id}/raw/{stem}_{timestamp}{extension}"
     )
+
+
+def store_raw_upload(
+    object_store: ObjectStore,
+    organization_name: str,
+    organization_id: str,
+    client_name: str,
+    client_id: str,
+    original_filename: str,
+    contents: bytes,
+) -> str:
+    """Keep repeat uploads distinct even if the clock reports the same microsecond."""
+    uploaded_at = datetime.now(UTC)
+    while True:
+        key = build_storage_key(
+            organization_name,
+            organization_id,
+            client_name,
+            client_id,
+            original_filename,
+            uploaded_at=uploaded_at,
+        )
+        if not object_store.exists(key):
+            object_store.put(key, contents)
+            return key
+        uploaded_at += timedelta(microseconds=1)
 
 
 def _storage_segment(value: str) -> str:

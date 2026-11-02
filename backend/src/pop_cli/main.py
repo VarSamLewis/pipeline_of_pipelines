@@ -121,11 +121,9 @@ def propose(
                 for index, path in enumerate(schema, start=1)
             ]
         )
-        for source, destination in zip(schema, paths, strict=True):
+        for source in schema:
             if not source.is_file():
                 raise ValueError(f"Target schema does not exist: {source}")
-            if destination.exists():
-                raise ValueError(f"Mapping output already exists: {destination}")
         with Api() as api:
             for source, destination in zip(schema, paths, strict=True):
                 mapping = propose_mapping(
