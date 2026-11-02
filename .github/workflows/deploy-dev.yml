@@ -31,7 +31,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --extra dev
       - run: uv run ruff check backend/src tests
-      - run: uv run pytest
+      - run: bash scripts/test-integration.sh
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}

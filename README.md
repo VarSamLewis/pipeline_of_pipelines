@@ -226,20 +226,20 @@ python examples/complex_client/generate_fixture.py
 
 ## Testing
 
-Install the locked development dependencies and start PostgreSQL:
+Run the integration suite with a single command (requires Docker):
 
 ```bash
-uv sync --extra dev
-docker compose up -d postgres
-docker compose exec -T postgres psql -U postgres -d postgres -c 'CREATE DATABASE pipeline_test'
-uv run pytest
+bash scripts/test-integration.sh
 ```
 
-Create `pipeline_test` only once. The integration suite requires a reachable
-PostgreSQL database whose name ends in `_test` and fails rather than silently
-skipping when it is unavailable. Tests exercise the API, website, and CLI
-against that database; only outbound LLM calls are stubbed. They do not run a
-browser or hit a deployed service.
+The script locates the repository regardless of the calling directory, builds
+the CI image if needed, starts PostgreSQL, creates `pipeline_test` if needed,
+and runs pytest in the CI image. GitHub CI and deployment workflows run this
+same script.
+The integration suite fails rather than silently skipping when PostgreSQL is
+unavailable. Tests exercise the API, website, and CLI against that database;
+only outbound LLM calls are stubbed. They do not run a browser or hit a deployed
+service.
 
 Run the complete local quality suite:
 

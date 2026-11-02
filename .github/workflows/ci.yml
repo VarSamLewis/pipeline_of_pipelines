@@ -20,7 +20,7 @@ jobs:
       - run: uv sync --frozen --extra dev
       - run: uv run ruff check backend/src tests scripts
       - run: uv run mypy backend/src
-      - run: uv run pytest
+      - run: bash scripts/test-integration.sh
       - run: git diff --check
       - run: docker build --tag pipeline-of-pipelines:ci .
 
