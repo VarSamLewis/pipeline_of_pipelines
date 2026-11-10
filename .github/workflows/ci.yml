@@ -25,6 +25,9 @@ jobs:
       - name: Install Chromium for browser tests
         run: uv run playwright install --with-deps chromium
       - name: Browser integration test
+        env:
+          # The containerized integration suite may leave data/ owned by root.
+          PIPELINE_DATA_DIR: ${{ runner.temp }}/pipeline-browser-data
         run: uv run pytest -q -m browser
       - run: git diff --check
       - run: docker build --tag pipeline-of-pipelines:ci .
