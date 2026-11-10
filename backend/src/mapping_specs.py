@@ -159,6 +159,7 @@ def load_mapping_spec(spec_id: uuid.UUID) -> dict[str, Any]:
             "source_raw_file_ids": [
                 str(value) for value in spec.source_raw_file_ids
             ],
+            "context_evidence_ids": spec.context_evidence_ids,
             "target_schema_json": spec.target_schema_json,
             "source_catalogs": source_catalogs,
             "description": spec.description,

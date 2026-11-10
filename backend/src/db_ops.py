@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 import uuid
 from collections.abc import Sequence
-from datetime import UTC
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from config import get_settings
@@ -131,7 +133,7 @@ def create_pgvector_extension(engine: Engine | None = None) -> None:
 
 
 def create_tables(engine: Engine | None = None) -> None:
-    """Create all SQLModel tables and apply lightweight additive upgrades."""
+    """Legacy schema bootstrap, invoked only by the Alembic baseline revision."""
     if engine is None:
         engine = get_engine()
     create_application_schema(engine)
@@ -297,6 +299,27 @@ def create_tables(engine: Engine | None = None) -> None:
                 run.organization_id = run_client.organization_id
                 session.add(run)
         session.commit()
+
+
+def upgrade_database(engine: Engine | None = None) -> None:
+    """Serialize and apply versioned schema upgrades across app instances."""
+    from alembic import command
+    from alembic.config import Config
+
+    engine = engine or get_engine()
+    create_application_schema(engine)
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    with engine.connect() as connection:
+        connection.execute(text("SELECT pg_advisory_lock(5381764)"))
+        connection.commit()
+        try:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+            connection.commit()
+        finally:
+            connection.rollback()
+            connection.execute(text("SELECT pg_advisory_unlock(5381764)"))
+            connection.commit()
 
 
 def get_session(engine: Engine | None = None) -> Session:
@@ -520,7 +543,7 @@ def _parse_raw_file(
     chunks = extract_evidence_chunks(parsed, str(raw_file.id))
     for chunk in chunks:
         embedding = get_embedding(chunk["content"], api_key=api_key, base_url=base_url)
-        create_extracted_evidence(
+        evidence = create_extracted_evidence(
             session=session,
             client_id=raw_file.client_id,
             raw_file_id=raw_file.id,
@@ -532,6 +555,7 @@ def _parse_raw_file(
             metadata=chunk.get("metadata") or {},
             commit=False,
         )
+        _supersede_matching_chunks(session, evidence)
     # The caller commits the profile, chunks, and final status together.
 
 
@@ -654,6 +678,7 @@ def create_extracted_evidence(
         evidence_type=evidence_type,
         content=content,
         embedding=embedding,
+        embedding_model=_settings.embedding_model if embedding is not None else None,
         page_ref=page_ref,
         chunk_index=chunk_index,
         meta=metadata,
@@ -663,6 +688,56 @@ def create_extracted_evidence(
         session.commit()
         session.refresh(evidence)
     return evidence
+
+
+def _supersede_matching_chunks(
+    session: Session, replacement: ExtractedEvidence
+) -> None:
+    """Retire confident matches from the same client's active context only."""
+    active = (
+        ExtractedEvidence.client_id == replacement.client_id,
+        ExtractedEvidence.active == True,  # noqa: E712 - SQLAlchemy expression
+        ExtractedEvidence.evidence_type == replacement.evidence_type,
+        ExtractedEvidence.raw_file_id != replacement.raw_file_id,
+    )
+    # Exact matches remain safe to supersede across embedding-model upgrades.
+    exact = session.exec(
+        select(ExtractedEvidence).where(
+            *active, ExtractedEvidence.content == replacement.content
+        )
+    ).all()
+    matches = list(exact)
+    vector = replacement.embedding
+    norm = sum(value * value for value in vector) if vector else 0.0
+    if not matches and vector and math.isfinite(norm) and norm > 0:
+        embedding_column = cast(Any, ExtractedEvidence.embedding)
+        distance = embedding_column.cosine_distance(vector)
+        neighbors = session.exec(
+            select(ExtractedEvidence, distance)
+            .where(
+                *active,
+                ExtractedEvidence.embedding_model == replacement.embedding_model,
+                embedding_column.is_not(None),
+            )
+            .order_by(distance)
+            .limit(2)
+        ).all()
+        if neighbors:
+            best, score = neighbors[0]
+            second_score = neighbors[1][1] if len(neighbors) > 1 else None
+            # An equally close second chunk makes the replacement ambiguous.
+            if (
+                score is not None
+                and math.isfinite(score)
+                and score <= 0.03
+                and (second_score is None or second_score - score >= 0.03)
+            ):
+                matches = [best]
+    for old in matches:
+        old.active = False
+        old.superseded_by_id = replacement.id
+        old.superseded_at = datetime.now(UTC).replace(tzinfo=None)
+        session.add(old)
 
 
 def search_evidence(
@@ -676,7 +751,10 @@ def search_evidence(
     distance = embedding_column.cosine_distance(query_embedding)
     statement = (
         select(ExtractedEvidence, distance.label("distance"))
-        .where(ExtractedEvidence.client_id == client_id)
+        .where(
+            ExtractedEvidence.client_id == client_id,
+            ExtractedEvidence.active == True,  # noqa: E712 - SQLAlchemy expression
+        )
         .order_by(distance)
     )
     statement = statement.limit(top_k)

@@ -459,6 +459,12 @@ class ExtractedEvidence(SQLModel, table=True):
         default=None,
         sa_column=Column("embedding", Vector(1536)),
     )
+    active: bool = SQLField(default=True, index=True)
+    superseded_by_id: uuid.UUID | None = SQLField(
+        default=None, foreign_key="extractedevidence.id"
+    )
+    superseded_at: datetime.datetime | None = SQLField(default=None)
+    embedding_model: str | None = SQLField(default=None)
     page_ref: str | None = SQLField(default=None)
     chunk_index: int | None = SQLField(default=None)
     meta: dict[str, Any] = SQLField(default={}, sa_column=Column("meta", JSON))
@@ -497,6 +503,9 @@ class MappingSpec(SQLModel, table=True):
     source_raw_file_ids: list[uuid.UUID] = SQLField(
         default_factory=list,
         sa_column=Column(JSON),
+    )
+    context_evidence_ids: list[str] = SQLField(
+        default_factory=list, sa_column=Column(JSON)
     )
     target_schema_json: dict[str, Any] = SQLField(
         default={},

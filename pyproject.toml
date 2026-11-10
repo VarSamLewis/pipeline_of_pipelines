@@ -47,6 +47,7 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "types-openpyxl>=3.1.5",
+    "playwright>=1.57,<2",
 ]
 
 [tool.setuptools]
@@ -87,3 +88,5 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 pythonpath = ["backend/src"]
 testpaths = ["tests"]
+addopts = "-m 'not browser'"
+markers = ["browser: browser-level integration test with Chromium"]

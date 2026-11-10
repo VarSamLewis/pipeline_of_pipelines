@@ -19,9 +19,13 @@ jobs:
           version: 0.10.9
           enable-cache: true
       - run: uv sync --frozen --extra dev
-      - run: uv run ruff check backend/src tests scripts
+      - run: uv run ruff check backend/src migrations tests scripts
       - run: uv run mypy backend/src
       - run: bash scripts/test-integration.sh
+      - name: Install Chromium for browser tests
+        run: uv run playwright install --with-deps chromium
+      - name: Browser integration test
+        run: uv run pytest -q -m browser
       - run: git diff --check
       - run: docker build --tag pipeline-of-pipelines:ci .
 
