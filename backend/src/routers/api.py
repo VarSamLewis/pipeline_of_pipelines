@@ -898,8 +898,7 @@ def parse_raw_file(
         get_organization_provider_base_url,
         validate_provider_base_url,
     )
-    from db_ops import _parse_raw_file, update_raw_file_status
-    from models import FileStatus
+    from db_ops import parse_raw_file_with_status
 
     with get_session() as session:
         raw_file = get_raw_file_by_id(session, raw_file_id)
@@ -931,7 +930,7 @@ def parse_raw_file(
         file_type = detect_file_type(raw_file.original_filename, file_bytes)
 
         try:
-            _parse_raw_file(
+            parse_raw_file_with_status(
                 session,
                 raw_file,
                 file_bytes,
@@ -939,12 +938,7 @@ def parse_raw_file(
                 api_key=api_key,
                 base_url=base_url,
             )
-            update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
         except Exception as exc:
-            update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-            raw_file.meta = {"error": str(exc)}
-            session.add(raw_file)
-            session.commit()
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         profile = get_spreadsheet_profile(session, raw_file.id)
