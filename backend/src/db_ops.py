@@ -1,13 +1,13 @@
 """Database operations for metadata, evidence search, and lineage.
 
-This module handles all interactions with the database. For the initial
-implementation it uses SQLite (via SQLModel) so the backend can run without
-a Postgres container. The schema is designed to migrate to PostgreSQL + pgvector
-later.
+This module handles PostgreSQL metadata, profiles, and pgvector evidence search.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import time
 import uuid
 from collections.abc import Sequence
 from datetime import UTC
@@ -59,6 +59,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 _settings = get_settings()
 DEFAULT_DATABASE_URL = _settings.database_url
+INGEST_LOGGER = logging.getLogger("pipeline.ingestion")
 
 
 def get_embedding(
@@ -460,7 +461,7 @@ def ingest_client_folder(
         raw_file_ids.append(raw_file.id)
 
         try:
-            _parse_raw_file(
+            parse_raw_file_with_status(
                 session,
                 raw_file,
                 file_bytes,
@@ -468,13 +469,8 @@ def ingest_client_folder(
                 api_key=api_key,
                 base_url=base_url,
             )
-            update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
             parsed_count += 1
-        except Exception as exc:
-            update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-            raw_file.meta = {"error": str(exc)}
-            session.add(raw_file)
-            session.commit()
+        except Exception:
             failed_count += 1
 
     return FolderIngestionResult(
@@ -508,6 +504,7 @@ def _parse_raw_file(
             session,
             raw_file.id,
             catalog.model_dump(mode="json"),
+            commit=False,
         )
 
     parsed: dict[str, Any] = {}
@@ -535,8 +532,65 @@ def _parse_raw_file(
             metadata=chunk.get("metadata") or {},
             commit=False,
         )
-    if chunks:
-        session.commit()
+    # The caller commits the profile, chunks, and final status together.
+
+
+def parse_raw_file_with_status(
+    session: Session,
+    raw_file: RawFile,
+    file_bytes: bytes,
+    file_type: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> None:
+    """Publish a complete parse or roll back partial profiles and chunks."""
+    if raw_file.status == FileStatus.PARSED:
+        return
+    started = time.perf_counter()
+    update_raw_file_status(session, raw_file.id, FileStatus.PARSING)
+    try:
+        _parse_raw_file(
+            session,
+            raw_file,
+            file_bytes,
+            file_type,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
+        INGEST_LOGGER.info(
+            json.dumps(
+                {
+                    "event": "raw_file_parsed",
+                    "client_id": str(raw_file.client_id),
+                    "raw_file_id": str(raw_file.id),
+                    "embedding_model": _settings.embedding_model,
+                    "duration_ms": round((time.perf_counter() - started) * 1000),
+                }
+            )
+        )
+    except Exception as exc:
+        session.rollback()
+        failed_file = session.get(RawFile, raw_file.id)
+        if failed_file is not None:
+            failed_file.status = FileStatus.FAILED
+            failed_file.meta = {
+                **failed_file.meta,
+                "parse_error": {"code": "parse_failed", "message": str(exc)},
+            }
+            session.add(failed_file)
+            session.commit()
+        INGEST_LOGGER.warning(
+            json.dumps(
+                {
+                    "event": "raw_file_parse_failed",
+                    "client_id": str(raw_file.client_id),
+                    "raw_file_id": str(raw_file.id),
+                    "duration_ms": round((time.perf_counter() - started) * 1000),
+                }
+            )
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -548,6 +602,8 @@ def create_spreadsheet_profile(
     session: Session,
     raw_file_id: uuid.UUID,
     profile_json: dict[str, Any],
+    *,
+    commit: bool = True,
 ) -> SpreadsheetProfile:
     """Store a spreadsheet profile extracted from a raw file."""
     profile = get_spreadsheet_profile(session, raw_file_id)
@@ -556,8 +612,11 @@ def create_spreadsheet_profile(
     else:
         profile.profile_json = profile_json
     session.add(profile)
-    session.commit()
-    session.refresh(profile)
+    if commit:
+        session.commit()
+        session.refresh(profile)
+    else:
+        session.flush()
     return profile
 
 
@@ -609,15 +668,17 @@ def create_extracted_evidence(
 def search_evidence(
     session: Session,
     query_embedding: list[float],
-    client_id: uuid.UUID | None,
+    client_id: uuid.UUID,
     top_k: int = 5,
 ) -> Sequence[ExtractedEvidence]:
     """Perform vector similarity search over extracted evidence using pgvector."""
     embedding_column = cast(Any, ExtractedEvidence.embedding)
     distance = embedding_column.cosine_distance(query_embedding)
-    statement = select(ExtractedEvidence, distance.label("distance")).order_by(distance)
-    if client_id:
-        statement = statement.where(ExtractedEvidence.client_id == client_id)
+    statement = (
+        select(ExtractedEvidence, distance.label("distance"))
+        .where(ExtractedEvidence.client_id == client_id)
+        .order_by(distance)
+    )
     statement = statement.limit(top_k)
     results = session.exec(statement).all()
     return [r[0] for r in results]
@@ -626,7 +687,7 @@ def search_evidence(
 def search_evidence_by_text(
     session: Session,
     query: str,
-    client_id: uuid.UUID | None,
+    client_id: uuid.UUID,
     top_k: int = 5,
     api_key: str | None = None,
     base_url: str | None = None,

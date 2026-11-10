@@ -573,6 +573,128 @@ def test_cli_proposes_two_mappings_against_real_api(
     )
 
 
+def test_failed_parse_rolls_back_chunks_and_can_be_retried(
+    client: TestClient, registered_client: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed embedding cannot publish half of an upload's context."""
+    import db_ops
+    from db_ops import get_session
+    from models import ExtractedEvidence
+    from sqlmodel import select
+
+    client_id = registered_client["id"]
+    batch = client.post(f"/clients/{client_id}/batches", json={"label": "retry"})
+    assert batch.status_code == 200
+    uploaded = client.post(
+        f"/clients/{client_id}/batches/{batch.json()['id']}/files",
+        files={"file": ("notes.txt", b"a" * 1200, "text/plain")},
+    )
+    assert uploaded.status_code == 200
+    file_id = uploaded.json()["id"]
+    attempts = 0
+
+    def embedding(_content: str, **_kwargs) -> list[float]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise RuntimeError("Embedding service temporarily unavailable")
+        return [1.0] + [0.0] * 1535
+
+    monkeypatch.setattr(db_ops, "get_embedding", embedding)
+    headers = {
+        "X-OpenAI-Api-Key": "test-byok-key",
+        "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+    }
+    failed = client.post(f"/raw-files/{file_id}/parse", headers=headers)
+    assert failed.status_code == 500
+    assert client.get(f"/raw-files/{file_id}").json()["status"] == "failed"
+    with get_session() as session:
+        evidence = session.exec(
+            select(ExtractedEvidence).where(
+                ExtractedEvidence.raw_file_id == uuid.UUID(file_id)
+            )
+        ).all()
+        assert evidence == []
+
+    retry = client.post(f"/raw-files/{file_id}/parse", headers=headers)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "parsed"
+    with get_session() as session:
+        evidence = session.exec(
+            select(ExtractedEvidence).where(
+                ExtractedEvidence.raw_file_id == uuid.UUID(file_id)
+            )
+        ).all()
+        assert len(evidence) == 2
+    assert (
+        client.post(f"/raw-files/{file_id}/parse", headers=headers).status_code == 200
+    )
+    with get_session() as session:
+        assert (
+            len(
+                session.exec(
+                    select(ExtractedEvidence).where(
+                        ExtractedEvidence.raw_file_id == uuid.UUID(file_id)
+                    )
+                ).all()
+            )
+            == 2
+        )
+
+
+def test_evidence_search_is_scoped_to_one_client(
+    client: TestClient, registered_client: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Matching vectors from another client must never enter retrieval results."""
+    import db_ops
+
+    monkeypatch.setattr(
+        db_ops, "get_embedding", lambda *_args, **_kwargs: [1.0] + [0.0] * 1535
+    )
+    second = client.post(
+        "/clients",
+        json={
+            "name": "Other client",
+            "organization_id": registered_client["organization_id"],
+        },
+    )
+    assert second.status_code == 200
+    client_ids = [registered_client["id"], second.json()["id"]]
+    headers = {
+        "X-OpenAI-Api-Key": "test-byok-key",
+        "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+    }
+    file_ids = []
+    for client_id in client_ids:
+        batch = client.post(f"/clients/{client_id}/batches", json={"label": "scope"})
+        assert batch.status_code == 200
+        uploaded = client.post(
+            f"/clients/{client_id}/batches/{batch.json()['id']}/files",
+            files={"file": ("notes.txt", b"shared topic", "text/plain")},
+        )
+        assert uploaded.status_code == 200
+        file_id = uploaded.json()["id"]
+        file_ids.append(file_id)
+        assert (
+            client.post(f"/raw-files/{file_id}/parse", headers=headers).status_code
+            == 200
+        )
+
+    for client_id, file_id in zip(client_ids, file_ids, strict=True):
+        response = client.get(
+            "/evidence/search",
+            params={"query": "shared topic", "client_id": client_id},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()
+        assert {item["raw_file_id"] for item in response.json()} == {file_id}
+    assert (
+        client.get("/evidence/search?query=shared%20topic", headers=headers).status_code
+        == 422
+    )
+
+
 @pytest.fixture
 def client() -> TestClient:
     """Return a FastAPI TestClient."""

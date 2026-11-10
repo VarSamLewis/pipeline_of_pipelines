@@ -29,15 +29,14 @@ from codegen import (
 )
 from config import get_settings
 from db_ops import (
-    _parse_raw_file,
     approve_mapping_spec,
     create_mapping_spec,
     create_raw_file,
     get_mapping_spec,
     get_raw_file_by_id,
     get_session,
+    parse_raw_file_with_status,
     update_mapping_spec_status,
-    update_raw_file_status,
 )
 from dependencies import get_artifact_store, get_object_store
 from file_ops import (
@@ -637,7 +636,7 @@ def ingest_and_propose_many(
             data = object_store.get(raw_file.storage_key)
             file_type = detect_file_type(raw_file.original_filename, data)
             try:
-                _parse_raw_file(
+                parse_raw_file_with_status(
                     session,
                     raw_file,
                     data,
@@ -645,18 +644,9 @@ def ingest_and_propose_many(
                     api_key=api_key,
                     base_url=base_url,
                 )
-                update_raw_file_status(session, raw_file.id, FileStatus.PARSED)
-            except Exception as exc:
-                update_raw_file_status(session, raw_file.id, FileStatus.FAILED)
-                raw_file.meta = {
-                    **raw_file.meta,
-                    "parse_error": {
-                        "code": "parse_failed",
-                        "message": str(exc),
-                    },
-                }
-                session.add(raw_file)
-                session.commit()
+            except Exception:
+                # The failed upload remains visible and can be retried.
+                continue
 
         spec_ids = []
         for target_schema in target_schemas:
