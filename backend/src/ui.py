@@ -18,8 +18,9 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
-from auth_service import require_role, require_ui_auth
+from auth_service import require_client_membership, require_role, require_ui_auth
 from config import get_settings
+from db_ops import get_session
 from dependencies import get_artifact_store
 from fastapi import (
     APIRouter,
@@ -33,6 +34,24 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from google_drive import (
+    GoogleDriveError,
+    connection_for_user,
+    import_drive_file,
+    picker_access_token,
+)
+from google_drive import (
+    authorization_url as google_authorization_url,
+)
+from google_drive import (
+    connect_callback as google_connect_callback,
+)
+from google_drive import (
+    disconnect as disconnect_google,
+)
+from google_drive import (
+    new_state as new_google_state,
+)
 from workflow import (
     PartialProposalError,
     approve_mapping_and_execute,
@@ -86,6 +105,8 @@ def _user_context(request: Request, user: Any) -> dict[str, Any]:
 @router.get("/upload")
 def upload_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
     """Render the upload form with a client dropdown."""
+    with get_session() as session:
+        google_connection = connection_for_user(session, user.id)
     return templates.TemplateResponse(
         request,
         "upload.html",
@@ -94,7 +115,95 @@ def upload_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
             "organizations": list_organizations(user),
             "clients": list_visible_clients(user),
             "max_source_files": get_settings().max_source_files,
+            "google_connection": google_connection,
+            "google_picker_api_key": get_settings().google_picker_api_key,
         },
+    )
+
+
+@router.get("/google/connect")
+def google_connect(request: Request, user: Any = Depends(require_ui_auth)) -> Response:
+    """Begin a Google authorization bound to the current Clerk user session."""
+    state = new_google_state()
+    request.session["google_oauth_state"] = state
+    request.session["google_oauth_user_id"] = str(user.id)
+    try:
+        return RedirectResponse(google_authorization_url(state), status_code=303)
+    except GoogleDriveError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get("/google/status")
+def google_status(user: Any = Depends(require_ui_auth)) -> dict[str, Any]:
+    """Return non-sensitive connection status; never return OAuth credentials."""
+    with get_session() as session:
+        connection = connection_for_user(session, user.id)
+    return {
+        "connected": connection is not None and connection.status.value == "active",
+        "status": connection.status.value if connection is not None else "disconnected",
+        "email": connection.google_email if connection is not None else None,
+        "scopes": connection.granted_scopes if connection is not None else [],
+    }
+
+
+@router.get("/google/callback")
+def google_callback(
+    request: Request,
+    state: str = "",
+    code: str = "",
+    user: Any = Depends(require_ui_auth),
+) -> Response:
+    """Complete Google OAuth only when its state and original Clerk user match."""
+    expected_state = request.session.pop("google_oauth_state", None)
+    expected_user_id = request.session.pop("google_oauth_user_id", None)
+    if (
+        not state
+        or not code
+        or state != expected_state
+        or expected_user_id != str(user.id)
+    ):
+        raise HTTPException(400, "Invalid Google authorization state")
+    try:
+        google_connect_callback(user.id, code)
+    except GoogleDriveError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return RedirectResponse("/upload", status_code=303)
+
+
+@router.post("/google/disconnect")
+def google_disconnect(user: Any = Depends(require_ui_auth)) -> Response:
+    disconnect_google(user.id)
+    return RedirectResponse("/upload", status_code=303)
+
+
+@router.get("/google/picker-token")
+def google_picker_token(user: Any = Depends(require_ui_auth)) -> dict[str, str]:
+    """Provide a short-lived access token exclusively to launch Google Picker."""
+    try:
+        return {"access_token": picker_access_token(user.id)}
+    except GoogleDriveError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.post("/clients/{client_id}/google-drive/import")
+def google_drive_import(
+    client_id: uuid.UUID,
+    drive_file_id: str = Form(""),
+    user: Any = Depends(require_ui_auth),
+) -> Any:
+    """Import one explicitly selected Drive file as an immutable client snapshot."""
+    if not drive_file_id.strip():
+        raise HTTPException(422, "Select a Drive file first")
+    with get_session() as session:
+        require_client_membership(session, user, client_id)
+    try:
+        audit = import_drive_file(
+            user_id=user.id, client_id=client_id, drive_file_id=drive_file_id.strip()
+        )
+    except GoogleDriveError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return HTMLResponse(
+        f"<span class='save-note'>Imported snapshot {audit.raw_file_id}</span>"
     )
 
 
@@ -349,9 +458,7 @@ def invite_user_from_settings_endpoint(
     """Invite a user to the selected organization from Settings."""
     try:
         parsed_organization_id = (
-            None
-            if organization_id == "create-own"
-            else uuid.UUID(organization_id)
+            None if organization_id == "create-own" else uuid.UUID(organization_id)
         )
         invite_organization_reviewer(parsed_organization_id, email, user)
         return HTMLResponse("<span class='save-note'>Invitation sent</span>")

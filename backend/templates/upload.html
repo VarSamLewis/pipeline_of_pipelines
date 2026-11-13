@@ -43,6 +43,19 @@
     </div>
 
     <div class="form-group">
+      <label>Google Drive</label>
+      {% if google_connection and google_connection.status.value == 'active' %}
+        <p class="muted">Connected{% if google_connection.google_email %} as {{ google_connection.google_email }}{% endif %}. Select a client, then choose a file to import a read-only snapshot.</p>
+        <input id="google_drive_file_id" type="hidden">
+        <button class="btn" type="button" onclick="openGooglePicker()">Import from Drive</button>
+        <button class="btn" type="submit" form="google-disconnect-form">Disconnect Google</button>
+      {% else %}
+        <p class="muted">Connect your own Google account to import CSV, Excel, or Google Sheets. Google Sheets are read through the Sheets API.</p>
+        <a class="btn" href="/google/connect">Connect Google Drive</a>
+      {% endif %}
+    </div>
+
+    <div class="form-group">
       <label for="source_files">Add new source files</label>
       <input type="file" id="source_files" name="source_files" multiple
              accept=".csv,.xlsx,.xls,.pdf,.txt,.eml,.msg,.docx">
@@ -63,11 +76,15 @@
       <span class="spinner" aria-hidden="true"></span>
       Uploading files, profiling sources, and proposing mappings...
     </div>
-  </form>
+</form>
+{% if google_connection and google_connection.status.value == 'active' %}
+<form id="google-disconnect-form" action="/google/disconnect" method="post"></form>
+{% endif %}
   <div id="upload-result" style="margin-top: 1rem;"></div>
 </div>
 
 <script>
+const GOOGLE_PICKER_API_KEY = {{ google_picker_api_key|tojson }};
 function toggleNewClient(select) {
   const fields = document.getElementById('new-client-fields');
   if (select.value === '') {
@@ -103,6 +120,41 @@ function filterClients() {
   clearClientFiles(
     organizationId ? 'Select a client to view its files.' : 'Select an organization first.'
   );
+}
+async function importGoogleDriveFile() {
+  const clientId = document.getElementById('client_select').value;
+  const fileId = document.getElementById('google_drive_file_id').value.trim();
+  if (!clientId || !fileId) { alert('Select an existing client and a Drive file first.'); return; }
+  const body = new FormData(); body.append('drive_file_id', fileId);
+  const response = await fetch(`/clients/${clientId}/google-drive/import`, { method: 'POST', body });
+  const message = response.ok ? await response.text() : (await response.json()).detail;
+  document.getElementById('upload-result').innerHTML = message;
+  if (response.ok) loadClientFiles(clientId);
+}
+async function openGooglePicker() {
+  if (!GOOGLE_PICKER_API_KEY) { alert('Google Picker is not configured.'); return; }
+  const tokenResponse = await fetch('/google/picker-token');
+  if (!tokenResponse.ok) { alert((await tokenResponse.json()).detail); return; }
+  const { access_token } = await tokenResponse.json();
+  await new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = 'https://apis.google.com/js/api.js'; script.onload = resolve;
+    document.head.appendChild(script);
+  });
+  gapi.load('picker', {
+    callback: () => {
+      const view = new google.picker.DocsView();
+      view.setMimeTypes('text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.google-apps.spreadsheet');
+      const picker = new google.picker.PickerBuilder().setDeveloperKey(GOOGLE_PICKER_API_KEY)
+        .setOAuthToken(access_token).addView(view).setCallback((data) => {
+          if (data.action === google.picker.Action.PICKED) {
+            document.getElementById('google_drive_file_id').value = data.docs[0].id;
+            importGoogleDriveFile();
+          }
+        }).build();
+      picker.setVisible(true);
+    },
+  });
 }
 </script>
 {% endblock %}

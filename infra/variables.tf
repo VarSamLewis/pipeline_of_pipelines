@@ -41,10 +41,11 @@ variable "secret_ids" {
   description = "Secret Manager secret IDs keyed by their application purpose."
   type        = map(string)
   default = {
-    "database-url"        = "database-url"
-    "session-secret-key"  = "session-secret-key"
-    "byok-encryption-key" = "byok-encryption-key"
-    "clerk-secret-key"    = "clerk-secret-key"
+    "database-url"               = "database-url"
+    "session-secret-key"         = "session-secret-key"
+    "byok-encryption-key"        = "byok-encryption-key"
+    "clerk-secret-key"           = "clerk-secret-key"
+    "google-oauth-client-secret" = "google-oauth-client-secret"
   }
 }
 
@@ -81,6 +82,30 @@ variable "clerk_secret_key" {
   description = "Clerk backend secret key used to send account invitations."
   type        = string
   sensitive   = true
+}
+
+variable "google_oauth_client_id" {
+  description = "Google OAuth web-client ID for this deployment environment."
+  type        = string
+  default     = ""
+}
+
+variable "google_oauth_client_secret" {
+  description = "Google OAuth web-client secret. Supply outside source control."
+  type        = string
+  sensitive   = true
+}
+
+variable "google_oauth_redirect_uri" {
+  description = "Exact registered Google OAuth callback URI, ending in /google/callback."
+  type        = string
+  default     = ""
+}
+
+variable "google_picker_api_key" {
+  description = "Browser-restricted Google API key used only by Google Picker."
+  type        = string
+  default     = ""
 }
 
 variable "clerk_issuer" {

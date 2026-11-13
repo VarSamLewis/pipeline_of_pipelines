@@ -34,6 +34,22 @@ class FileStatus(str, enum.Enum):
     ARCHIVED = "archived"
 
 
+class GoogleConnectionStatus(str, enum.Enum):
+    """Lifecycle states for a user's separate Google authorization."""
+
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    DISCONNECTED = "disconnected"
+
+
+class GoogleImportStatus(str, enum.Enum):
+    """Lifecycle states for an explicit Drive import."""
+
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class MappingSpecStatus(str, enum.Enum):
     """Lifecycle states for a mapping specification version."""
 
@@ -428,6 +444,43 @@ class RawFile(SQLModel, table=True):
     uploaded_at: datetime.datetime = SQLField(
         default_factory=datetime.datetime.utcnow,
     )
+
+
+class GoogleConnection(SQLModel, table=True):
+    """A Google grant owned by exactly one application user.
+
+    The refresh token is encrypted at rest.  Access tokens and OAuth state are
+    intentionally never persisted.
+    """
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True, unique=True)
+    google_account_id: str = SQLField(index=True)
+    google_email: str | None = SQLField(default=None)
+    granted_scopes: list[str] = SQLField(default_factory=list, sa_column=Column(JSON))
+    encrypted_refresh_token: str = SQLField(sa_column=Column(Text))
+    status: GoogleConnectionStatus = SQLField(default=GoogleConnectionStatus.ACTIVE)
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+    updated_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+    revoked_at: datetime.datetime | None = SQLField(default=None)
+
+
+class GoogleDriveImport(SQLModel, table=True):
+    """Audit row for one deliberate Drive snapshot import."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True)
+    connection_id: uuid.UUID = SQLField(foreign_key="googleconnection.id", index=True)
+    client_id: uuid.UUID = SQLField(foreign_key="client.id", index=True)
+    raw_file_id: uuid.UUID | None = SQLField(default=None, foreign_key="rawfile.id")
+    drive_file_id: str = SQLField(index=True)
+    drive_mime_type: str
+    drive_modified_time: datetime.datetime | None = SQLField(default=None)
+    imported_checksum: str | None = SQLField(default=None)
+    status: GoogleImportStatus = SQLField(default=GoogleImportStatus.PENDING)
+    error_code: str | None = SQLField(default=None)
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+    completed_at: datetime.datetime | None = SQLField(default=None)
 
 
 class SpreadsheetProfile(SQLModel, table=True):
