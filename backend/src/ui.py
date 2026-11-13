@@ -97,6 +97,16 @@ def _user_context(request: Request, user: Any) -> dict[str, Any]:
     return {"request": request, "user": user}
 
 
+@router.get("/privacy")
+def privacy_page(request: Request) -> Any:
+    """Render the public privacy notice required by third-party OAuth providers."""
+    return templates.TemplateResponse(
+        request,
+        "privacy.html",
+        {"request": request, "user": None},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Page 1: Upload
 # ---------------------------------------------------------------------------

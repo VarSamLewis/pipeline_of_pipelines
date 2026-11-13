@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Privacy Notice - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<h1>Privacy Notice</h1>
+<p class="muted">Last updated: November 13, 2026</p>
+
+<div class="card" style="max-width: 800px;">
+  <h2>Information we process</h2>
+  <p>Pipeline of Pipelines processes account information, organization and client information, and the source files users upload or explicitly import to provide data-mapping and transformation services.</p>
+
+  <h2>Google Drive connection</h2>
+  <p>When a user connects Google Drive, the user explicitly selects files with Google Picker. The service uses file-scoped Google Drive access to import those selected files. It does not use the connection to browse a user’s Drive or to publish, modify, or delete Google Drive files.</p>
+  <p>Google authorization refresh tokens are encrypted at rest and are used only to access files the user selects through the application. Users can disconnect Google Drive from the upload page.</p>
+
+  <h2>How information is used</h2>
+  <p>We use the information described above to authenticate users, enforce organization access controls, import and retain source-file snapshots, generate requested transformation outputs, and maintain audit records for those operations. We do not sell Google user data.</p>
+
+  <h2>Storage and access</h2>
+  <p>Source-file snapshots, generated artifacts, and associated audit records are retained in the service’s configured storage systems. Access is limited to authorized users in the relevant organization and to service infrastructure required to operate the application.</p>
+
+  <h2>Your choices</h2>
+  <p>Users can disconnect a Google account to prevent future imports with that connection. For questions about data access, retention, or deletion, contact <a href="mailto:samlewis1999.sl@gmail.com">samlewis1999.sl@gmail.com</a>.</p>
+
+  <h2>Changes to this notice</h2>
+  <p>We may update this notice as the service changes. The current version will be published at this URL.</p>
+</div>
+{% endblock %}

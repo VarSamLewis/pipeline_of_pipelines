@@ -69,6 +69,16 @@ main {
   padding: 0 1.5rem;
 }
 
+footer {
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 0 1.5rem 2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+footer a { color: inherit; }
+
 h1, h2, h3 { margin-top: 0; }
 
 .card {
