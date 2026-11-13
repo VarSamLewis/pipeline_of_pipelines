@@ -41,7 +41,7 @@ ALLOWED_DRIVE_MIMES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     GOOGLE_SHEETS_MIME,
 }
-SCOPES = "openid email https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets.readonly"
+SCOPES = "openid email https://www.googleapis.com/auth/drive.file"
 GoogleQueryValue = str | int | float | bool | None
 GoogleQueryParams = (
     dict[str, GoogleQueryValue | list[GoogleQueryValue]]
