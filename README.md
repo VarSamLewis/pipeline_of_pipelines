@@ -81,6 +81,17 @@ The default connection URL is:
 postgresql+psycopg://postgres:postgres@localhost:5432/pipeline
 ```
 
+## Google Drive import setup
+
+See [Google Drive OAuth setup](docs/google-oauth.md) for the development
+consent screen, OAuth client, Google Picker key, GitHub environment, Secret
+Manager, and verification steps.
+
+## Clerk setup
+
+See [Clerk setup](docs/clerk.md) for Clerk dashboard, JWT template, CLI OAuth,
+GitHub environment, Secret Manager, and verification steps.
+
 ## Running the server
 
 Organizations add their own OpenAI-compatible API key through Settings before
