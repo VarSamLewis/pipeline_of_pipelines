@@ -16,6 +16,8 @@ locals {
     "sqladmin.googleapis.com",
     "storage.googleapis.com",
     "aiplatform.googleapis.com",
+    "drive.googleapis.com",
+    "sheets.googleapis.com",
   ])
 }
 
@@ -238,6 +240,14 @@ resource "google_secret_manager_secret_version" "clerk_secret_key" {
   secret_data = var.clerk_secret_key
 }
 
+# OAuth client credentials are supplied per environment. Google OAuth brands
+# and consent screens are organization-level resources and must be reviewed
+# before provisioning; they are not Cloud Run service-account credentials.
+resource "google_secret_manager_secret_version" "google_oauth_client_secret" {
+  secret      = google_secret_manager_secret.runtime["google-oauth-client-secret"].id
+  secret_data = var.google_oauth_client_secret
+}
+
 resource "google_project_iam_member" "runtime" {
   for_each = toset([
     "roles/aiplatform.user",
@@ -412,16 +422,29 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.clerk_jwt_template
       }
       env {
+        name  = "GOOGLE_OAUTH_CLIENT_ID"
+        value = var.google_oauth_client_id
+      }
+      env {
+        name  = "GOOGLE_OAUTH_REDIRECT_URI"
+        value = var.google_oauth_redirect_uri
+      }
+      env {
+        name  = "GOOGLE_PICKER_API_KEY"
+        value = var.google_picker_api_key
+      }
+      env {
         name  = "BOOTSTRAP_ADMIN_EMAILS"
         value = join(",", var.bootstrap_admin_emails)
       }
 
       dynamic "env" {
         for_each = {
-          DATABASE_URL        = google_secret_manager_secret.runtime["database-url"].secret_id
-          SESSION_SECRET_KEY  = google_secret_manager_secret.runtime["session-secret-key"].secret_id
-          BYOK_ENCRYPTION_KEY = google_secret_manager_secret.runtime["byok-encryption-key"].secret_id
-          CLERK_SECRET_KEY    = google_secret_manager_secret.runtime["clerk-secret-key"].secret_id
+          DATABASE_URL               = google_secret_manager_secret.runtime["database-url"].secret_id
+          SESSION_SECRET_KEY         = google_secret_manager_secret.runtime["session-secret-key"].secret_id
+          BYOK_ENCRYPTION_KEY        = google_secret_manager_secret.runtime["byok-encryption-key"].secret_id
+          CLERK_SECRET_KEY           = google_secret_manager_secret.runtime["clerk-secret-key"].secret_id
+          GOOGLE_OAUTH_CLIENT_SECRET = google_secret_manager_secret.runtime["google-oauth-client-secret"].secret_id
         }
         content {
           name = env.key

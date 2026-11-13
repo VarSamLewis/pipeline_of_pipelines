@@ -59,6 +59,10 @@ class Settings:
     byok_encryption_key: str | None
     bootstrap_admin_emails: frozenset[str]
     gcs_bucket: str
+    google_oauth_client_id: str
+    google_oauth_client_secret: str | None
+    google_oauth_redirect_uri: str
+    google_picker_api_key: str
 
     @classmethod
     def from_env(
@@ -146,6 +150,10 @@ class Settings:
             byok_encryption_key=values.get("BYOK_ENCRYPTION_KEY"),
             bootstrap_admin_emails=bootstrap_admin_emails,
             gcs_bucket=values.get("GCS_BUCKET", ""),
+            google_oauth_client_id=values.get("GOOGLE_OAUTH_CLIENT_ID", ""),
+            google_oauth_client_secret=values.get("GOOGLE_OAUTH_CLIENT_SECRET"),
+            google_oauth_redirect_uri=values.get("GOOGLE_OAUTH_REDIRECT_URI", ""),
+            google_picker_api_key=values.get("GOOGLE_PICKER_API_KEY", ""),
         )
 
 
