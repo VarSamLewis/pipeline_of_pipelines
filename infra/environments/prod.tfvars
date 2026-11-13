@@ -11,10 +11,11 @@ terraform_state_bucket_name = "replace-with-prod-gcp-project-id-pipeline-prod-tf
 serverless_vpc_subnet_cidr  = "10.8.0.0/26"
 
 secret_ids = {
-  "database-url"        = "pipeline-prod-database-url"
-  "session-secret-key"  = "pipeline-prod-session-secret-key"
-  "byok-encryption-key" = "pipeline-prod-byok-encryption-key"
-  "clerk-secret-key"    = "pipeline-prod-clerk-secret-key"
+  "database-url"               = "pipeline-prod-database-url"
+  "session-secret-key"         = "pipeline-prod-session-secret-key"
+  "byok-encryption-key"        = "pipeline-prod-byok-encryption-key"
+  "clerk-secret-key"           = "pipeline-prod-clerk-secret-key"
+  "google-oauth-client-secret" = "pipeline-prod-google-oauth-client-secret"
 }
 
 # GitHub Actions replaces this with the immutable image built for each commit.
