@@ -25,6 +25,10 @@ jobs:
       TF_VAR_session_secret_key: ${{ secrets.SESSION_SECRET_KEY }}
       TF_VAR_byok_encryption_key: ${{ secrets.BYOK_ENCRYPTION_KEY }}
       TF_VAR_clerk_secret_key: ${{ secrets.CLERK_SECRET_KEY }}
+      TF_VAR_google_oauth_client_id: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+      TF_VAR_google_oauth_client_secret: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+      TF_VAR_google_oauth_redirect_uri: ${{ vars.GOOGLE_OAUTH_REDIRECT_URI }}
+      TF_VAR_google_picker_api_key: ${{ vars.GOOGLE_PICKER_API_KEY }}
       BOOTSTRAP_ADMIN_EMAILS: ${{ vars.BOOTSTRAP_ADMIN_EMAILS }}
     steps:
       - uses: actions/checkout@v4
