@@ -42,6 +42,11 @@ ALLOWED_DRIVE_MIMES = {
     GOOGLE_SHEETS_MIME,
 }
 SCOPES = "openid email https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets.readonly"
+GoogleQueryValue = str | int | float | bool | None
+GoogleQueryParams = (
+    dict[str, GoogleQueryValue | list[GoogleQueryValue]]
+    | list[tuple[str, GoogleQueryValue]]
+)
 
 
 class GoogleDriveError(ValueError):
@@ -204,7 +209,10 @@ def _access_token(session: Session, connection: GoogleConnection) -> str:
 
 
 def _google_get(
-    url: str, token: str, *, params: dict[str, str] | None = None
+    url: str,
+    token: str,
+    *,
+    params: GoogleQueryParams | None = None,
 ) -> httpx.Response:
     response = httpx.get(
         url, headers={"Authorization": f"Bearer {token}"}, params=params, timeout=60
@@ -231,13 +239,18 @@ def _native_sheet_xlsx(file_id: str, token: str) -> bytes:
     sheets = metadata.get("sheets", []) if isinstance(metadata, dict) else []
     ranges = [sheet.get("properties", {}).get("title") for sheet in sheets]
     ranges = [title for title in ranges if isinstance(title, str)]
+    range_params: list[tuple[str, GoogleQueryValue]] = [
+        ("ranges", title) for title in ranges
+    ]
     values = _google_get(
         f"https://sheets.googleapis.com/v4/spreadsheets/{file_id}/values:batchGet",
         token,
-        params=[("ranges", title) for title in ranges],
+        params=range_params,
     ).json()
     workbook = Workbook()
-    workbook.remove(workbook.active)
+    active_sheet = workbook.active
+    if active_sheet is not None:
+        workbook.remove(active_sheet)
     total_cells = 0
     for title, value_range in zip(ranges, values.get("valueRanges", []), strict=False):
         worksheet = workbook.create_sheet(title=title[:31] or "Sheet")
