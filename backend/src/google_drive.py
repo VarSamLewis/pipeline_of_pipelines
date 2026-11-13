@@ -222,7 +222,10 @@ def _google_get(
             "Google denied access to this file; select it again or reconnect"
         )
     if response.status_code == 404:
-        raise GoogleDriveError("The selected Drive file no longer exists")
+        raise GoogleDriveError(
+            "The selected Drive file is unavailable to this connection; "
+            "reconnect Google Drive and select it again"
+        )
     try:
         response.raise_for_status()
     except httpx.HTTPError as exc:

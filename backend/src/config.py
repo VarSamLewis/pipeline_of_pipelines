@@ -63,6 +63,7 @@ class Settings:
     google_oauth_client_secret: str | None
     google_oauth_redirect_uri: str
     google_picker_api_key: str
+    google_picker_app_id: str
 
     @classmethod
     def from_env(
@@ -154,6 +155,7 @@ class Settings:
             google_oauth_client_secret=values.get("GOOGLE_OAUTH_CLIENT_SECRET"),
             google_oauth_redirect_uri=values.get("GOOGLE_OAUTH_REDIRECT_URI", ""),
             google_picker_api_key=values.get("GOOGLE_PICKER_API_KEY", ""),
+            google_picker_app_id=values.get("GOOGLE_PICKER_APP_ID", ""),
         )
 
 

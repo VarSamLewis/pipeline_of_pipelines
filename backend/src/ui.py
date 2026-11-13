@@ -127,6 +127,7 @@ def upload_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
             "max_source_files": get_settings().max_source_files,
             "google_connection": google_connection,
             "google_picker_api_key": get_settings().google_picker_api_key,
+            "google_picker_app_id": get_settings().google_picker_app_id,
         },
     )
 

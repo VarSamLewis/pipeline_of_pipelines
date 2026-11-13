@@ -85,6 +85,7 @@
 
 <script>
 const GOOGLE_PICKER_API_KEY = {{ google_picker_api_key|tojson }};
+const GOOGLE_PICKER_APP_ID = {{ google_picker_app_id|tojson }};
 function toggleNewClient(select) {
   const fields = document.getElementById('new-client-fields');
   if (select.value === '') {
@@ -132,7 +133,7 @@ async function importGoogleDriveFile() {
   if (response.ok) loadClientFiles(clientId);
 }
 async function openGooglePicker() {
-  if (!GOOGLE_PICKER_API_KEY) { alert('Google Picker is not configured.'); return; }
+  if (!GOOGLE_PICKER_API_KEY || !GOOGLE_PICKER_APP_ID) { alert('Google Picker is not configured.'); return; }
   const tokenResponse = await fetch('/google/picker-token');
   if (!tokenResponse.ok) { alert((await tokenResponse.json()).detail); return; }
   const { access_token } = await tokenResponse.json();
@@ -146,7 +147,7 @@ async function openGooglePicker() {
       const view = new google.picker.DocsView();
       view.setMimeTypes('text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.google-apps.spreadsheet');
       const picker = new google.picker.PickerBuilder().setDeveloperKey(GOOGLE_PICKER_API_KEY)
-        .setOAuthToken(access_token).addView(view).setCallback((data) => {
+        .setAppId(GOOGLE_PICKER_APP_ID).setOAuthToken(access_token).addView(view).setCallback((data) => {
           if (data.action === google.picker.Action.PICKED) {
             document.getElementById('google_drive_file_id').value = data.docs[0].id;
             importGoogleDriveFile();

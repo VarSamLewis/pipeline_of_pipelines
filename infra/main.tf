@@ -434,6 +434,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.google_picker_api_key
       }
       env {
+        name  = "GOOGLE_PICKER_APP_ID"
+        value = data.google_project.current.number
+      }
+      env {
         name  = "BOOTSTRAP_ADMIN_EMAILS"
         value = join(",", var.bootstrap_admin_emails)
       }
