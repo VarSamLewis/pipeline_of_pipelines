@@ -29,6 +29,7 @@
             packages = with pkgs; [
               python313
               uv
+              gh
               docker
               docker-compose
               postgresql_16
