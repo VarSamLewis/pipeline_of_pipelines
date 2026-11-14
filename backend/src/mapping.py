@@ -276,6 +276,7 @@ def build_mapping_prompt(
     evidence_items: list[ExtractedEvidence],
     business_rules: list[BusinessRule],
     raw_file_summary: list[dict[str, Any]],
+    reviewer_feedback: list[dict[str, str]] | None = None,
 ) -> list[dict[str, str]]:
     """Build a composite-key-grounded mapping prompt."""
     evidence_entries = [
@@ -283,6 +284,13 @@ def build_mapping_prompt(
     ]
     evidence_text = "\n---\n".join(evidence_entries)
     rules_text = "\n".join(f"- {r.rule_text}" for r in business_rules)
+    feedback_text = (
+        "\n".join(
+            f"- {item['target_column']}: {item['comment']}"
+            for item in reviewer_feedback or []
+        )
+        or "None"
+    )
 
     col_index = _build_catalog_index(source_catalogs)
     tbl_index = _build_table_index(source_catalogs)
@@ -311,6 +319,7 @@ def build_mapping_prompt(
         f"Evidence retrieved from the vector database for this mapping:\n"
         f"{evidence_text}\n\n"
         f"Business rules:\n{rules_text}\n\n"
+        f"Reviewer feedback from the prior proposal:\n{feedback_text}\n\n"
         'Return JSON with this shape: {"mappings": [{"target_table": "...", '
         '"target_column": "...", "source_columns": [{"source_table": '
         '"filename::sheet", "source_column": "column_name"}], '
@@ -549,6 +558,7 @@ def propose_mapping_spec(
     api_key: str | None = None,
     base_url: str | None = None,
     top_k_evidence: int = 10,
+    reviewer_feedback: list[dict[str, str]] | None = None,
 ) -> MappingSpec:
     """Generate a proposed mapping specification from evidence and profiles."""
     from db_ops import (
@@ -620,6 +630,7 @@ def propose_mapping_spec(
         evidence_items,
         business_rules,
         raw_file_summary,
+        reviewer_feedback,
     )
     response = call_mapping_llm(
         messages,

@@ -69,7 +69,9 @@ from workflow import (
     list_visible_clients,
     reject_mapping,
     reject_result,
+    rerun_mapping_with_feedback,
     revoke_organization_reviewer_invitation,
+    save_mapping_feedback,
 )
 from workflow import (
     save_organization_key as save_organization_key_record,
@@ -83,6 +85,7 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(get_settings().templates_dir))
 
 CSV_DISP_COUNT = 10
+LOCAL_UI_PREVIEW = get_settings().ui_preview_local
 
 
 def _htmx_redirect(request: Request, url: str) -> Response:
@@ -112,9 +115,10 @@ def privacy_page(request: Request) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/upload")
-def upload_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
-    """Render the upload form with a client dropdown."""
+@router.get("/mapping")
+@router.get("/upload", include_in_schema=False)
+def mapping_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
+    """Render the source-selection form for a new mapping."""
     with get_session() as session:
         google_connection = connection_for_user(session, user.id)
     return templates.TemplateResponse(
@@ -242,6 +246,9 @@ def upload_submit(
     organization_id = uuid.UUID(organization_select)
     valid_source_files = [f for f in source_files if f.filename]
 
+    if LOCAL_UI_PREVIEW:
+        return _htmx_redirect(request, "/mapping/preview")
+
     try:
         if not target_schema or any(not schema.filename for schema in target_schema):
             raise ValueError("At least one target schema file is required")
@@ -307,6 +314,21 @@ def upload_submit(
     )
 
 
+@router.get("/mapping/preview")
+def local_mapping_preview_page(
+    request: Request,
+    user: Any = Depends(require_ui_auth),
+) -> Any:
+    """Render a static mapping-review screen for local UI development only."""
+    if not LOCAL_UI_PREVIEW:
+        raise HTTPException(404, "Mapping review not found")
+    return templates.TemplateResponse(
+        request,
+        "mapping_preview.html",
+        _user_context(request, user),
+    )
+
+
 @router.get("/clients/{client_id}/files")
 def client_files_page(
     request: Request,
@@ -322,6 +344,21 @@ def client_files_page(
         request,
         "files.html",
         {**_user_context(request, user), "library": library},
+    )
+
+
+@router.get("/results/preview")
+def local_results_preview_page(
+    request: Request,
+    user: Any = Depends(require_ui_auth),
+) -> Any:
+    """Render a static results-review screen for local UI development only."""
+    if not LOCAL_UI_PREVIEW:
+        raise HTTPException(404, "Results review not found")
+    return templates.TemplateResponse(
+        request,
+        "results_preview.html",
+        _user_context(request, user),
     )
 
 
@@ -602,6 +639,46 @@ def update_mapping_column_from_editor(
     return HTMLResponse("<span class='save-note'>Saved</span>")
 
 
+@router.post("/mapping/{spec_id}/columns/{column_id}/feedback")
+def save_mapping_feedback_from_review(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    comment: str = Form(...),
+    user: Any = Depends(require_role("reviewer")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Persist reviewer feedback for one proposed mapping field."""
+    try:
+        save_mapping_feedback(
+            spec_id,
+            column_id,
+            author_user_id=user.id,
+            comment=comment,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return HTMLResponse("<span class='save-note'>Feedback saved</span>")
+
+
+@router.post("/mapping/{spec_id}/rerun")
+def rerun_mapping_from_review(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_role("reviewer")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Create and propose a revision using the saved field feedback."""
+    try:
+        revision_id = rerun_mapping_with_feedback(spec_id)
+    except (RuntimeError, ValueError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, f"/mapping/{revision_id}")
+
+
 @router.post("/mapping/{spec_id}/confirm")
 def mapping_confirm(
     request: Request,
@@ -664,6 +741,8 @@ def results_csv_page(
     run_id: uuid.UUID,
     page: int = Query(1, ge=1),
     file: str | None = Query(None),
+    search: str = Query(""),
+    column: str | None = Query(None),
     user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
@@ -684,6 +763,24 @@ def results_csv_page(
         return HTMLResponse("<p class='muted'>No results CSV found.</p>")
 
     df = pl.read_csv(io.BytesIO(csv_content))
+    if column is not None and column not in df.columns:
+        raise HTTPException(422, "Selected filter column is not in the result CSV")
+    search = search.strip()
+    if search:
+        searchable_columns = [column] if column else df.columns
+        matching_rows = [
+            row
+            for row in df.iter_rows(named=True)
+            if any(
+                search.casefold() in str(row[name]).casefold()
+                for name in searchable_columns
+            )
+        ]
+        df = (
+            pl.DataFrame(matching_rows, schema=df.schema)
+            if matching_rows
+            else df.head(0)
+        )
     total_rows = len(df)
     total_pages = max(1, (total_rows + CSV_DISP_COUNT - 1) // CSV_DISP_COUNT)
     page = min(page, total_pages)
@@ -706,7 +803,36 @@ def results_csv_page(
             "start_row": start + 1,
             "end_row": end,
             "total_rows": total_rows,
+            "search": search,
+            "selected_column": column,
         },
+    )
+
+
+@router.get("/results/{run_id}/csv/download")
+def download_results_csv(
+    run_id: uuid.UUID,
+    file: str | None = Query(None),
+    user: Any = Depends(require_ui_auth),
+    _: None = Depends(require_execution_run_access),
+) -> Response:
+    """Download one generated CSV after validating run access."""
+    paths = get_result_review(run_id)
+    if file is not None and file not in paths["csv_files"]:
+        raise HTTPException(404, "Result CSV not found")
+    filename = file or next(iter(paths["csv_files"]), None)
+    if filename is None:
+        raise HTTPException(404, "No result CSV found")
+    try:
+        content = get_artifact_store().read_artifact(
+            paths["run"].mapping_spec_id, filename
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Result CSV not found") from exc
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

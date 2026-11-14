@@ -138,6 +138,17 @@
       <span id="save-status-{{ column.id }}" aria-live="polite"></span>
     </div>
   </form>
+  <form class="mapping-feedback"
+        hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}/feedback"
+        hx-target="#feedback-status-{{ column.id }}"
+        hx-swap="innerHTML">
+    <label for="feedback-{{ column.id }}">Request a change</label>
+    <textarea id="feedback-{{ column.id }}" name="comment" required placeholder="Explain what should change in this field's mapping."></textarea>
+    <div class="mapping-editor-footer">
+      <button class="btn btn-sm" type="submit">Save feedback</button>
+      <span id="feedback-status-{{ column.id }}" aria-live="polite"></span>
+    </div>
+  </form>
   {% else %}
   <p class="muted">No proposed mappings are available to edit.</p>
   {% endfor %}
@@ -149,6 +160,19 @@
 </details>
 
 <div class="card">
+  <form
+    hx-post="/mapping/{{ spec_id }}/rerun"
+    hx-target="#mapping-result"
+    hx-swap="innerHTML"
+    hx-indicator="#rerun-progress"
+    style="display:inline;"
+  >
+    <button class="btn btn-primary" type="submit">Rerun mapping with feedback</button>
+    <span id="rerun-progress" class="htmx-indicator progress-indicator" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      Creating a revised proposal...
+    </span>
+  </form>
   <form
     hx-post="/mapping/{{ spec_id }}/confirm"
     hx-target="#mapping-result"

@@ -144,9 +144,7 @@ def authenticate_clerk_session(token: str) -> Any:
             email=email,
             name=name,
             platform_role=(
-                PlatformRole.PLATFORM_ADMIN
-                if is_bootstrap_admin
-                else PlatformRole.USER
+                PlatformRole.PLATFORM_ADMIN if is_bootstrap_admin else PlatformRole.USER
             ),
             last_login_at=now,
         )
@@ -225,6 +223,24 @@ def _synthetic_local_user() -> Any:
         name="Local Developer",
         platform_role=PlatformRole.PLATFORM_ADMIN,
     )
+
+
+def provision_synthetic_local_user() -> None:
+    """Persist the local bypass identity so it can own local organizations.
+
+    Local mode deliberately avoids Clerk, but organization memberships still
+    retain their normal foreign-key and ownership constraints.
+    """
+    if not AUTH_BYPASS_LOCAL:
+        return
+    from db_ops import get_session
+    from models import User
+
+    user = _synthetic_local_user()
+    with get_session() as session:
+        if session.get(User, user.id) is None:
+            session.add(user)
+            session.commit()
 
 
 def _record_request_actor(request: Request, user: Any) -> None:

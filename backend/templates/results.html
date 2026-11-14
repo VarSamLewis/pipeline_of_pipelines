@@ -11,6 +11,7 @@
     <div>
       {% for csv_file in csv_files %}
       <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1&amp;file={{ csv_file | urlencode }}" hx-target="#results-view" hx-indicator="#results-progress">View {{ csv_file }}</button>
+      <a class="btn btn-sm" href="/results/{{ run_id }}/csv/download?file={{ csv_file | urlencode }}">Download {{ csv_file }}</a>
       {% endfor %}
       <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-progress">View code</button>
     </div>

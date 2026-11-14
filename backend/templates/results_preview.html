@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Results preview - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<section class="mapping-page">
+  <header class="mapping-header">
+    <p class="eyebrow">Local UI preview</p>
+    <h1>Review results</h1>
+    <p class="muted">This page uses sample output only. No pipeline was executed.</p>
+  </header>
+
+  <div class="mapping-layout">
+    <div class="mapping-workflow">
+      <section class="card">
+        <h2>Run summary</h2>
+        <div class="client-file-summary">
+          <div><strong>Status</strong><span>Completed</span></div>
+          <div><strong>Output tables</strong><span>2</span></div>
+          <div><strong>Validation</strong><span>1 warning</span></div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="results-table-header">
+          <div><h2>customers</h2><p id="results-row-count" class="muted">Showing 3 sample rows of 1,248 output rows</p></div>
+          <button class="btn btn-sm" type="button" onclick="downloadPreviewCsv()">Download CSV</button>
+        </div>
+        <div class="results-filter-controls">
+          <label class="results-search" for="results-column-filter">
+            <span>Column</span>
+            <select id="results-column-filter" onchange="filterResults()">
+              <option value="all">All columns</option>
+              <option value="0">customer_id</option>
+              <option value="1">customer_name</option>
+              <option value="2">delivery_region</option>
+            </select>
+          </label>
+          <label class="results-search" for="results-search-input">
+            <span>Search output</span>
+            <input id="results-search-input" type="search" placeholder="Search output" oninput="filterResults()">
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table id="results-table">
+            <thead><tr><th>customer_id</th><th>customer_name</th><th>delivery_region</th></tr></thead>
+            <tbody>
+              <tr><td>C-1001</td><td>Northwind Trading</td><td>North</td></tr>
+              <tr><td>C-1002</td><td>Contoso Ltd</td><td>West</td></tr>
+              <tr><td>C-1003</td><td>Adventure Works</td><td>—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="card warning-panel">
+        <h2>Review item</h2>
+        <p>1 output row has no delivery region. Confirm whether this is acceptable before approving results.</p>
+      </section>
+    </div>
+    <aside class="mapping-summary card">
+      <p class="eyebrow">Preview mode</p>
+      <h2>Result actions</h2>
+      <p class="muted">These actions are visual previews only in local UI mode.</p>
+      <a class="btn btn-primary" href="/mapping">Create another mapping</a>
+      <a class="btn" href="/mapping/preview">Back to mapping preview</a>
+    </aside>
+  </div>
+</section>
+<script>
+function filterResults() {
+  const query = document.getElementById('results-search-input').value.trim().toLowerCase();
+  const column = document.getElementById('results-column-filter').value;
+  const rows = Array.from(document.querySelectorAll('#results-table tbody tr'));
+  let shown = 0;
+  rows.forEach(row => {
+    const searchableText = column === 'all'
+      ? row.textContent
+      : row.cells[Number(column)].textContent;
+    const matches = searchableText.toLowerCase().includes(query);
+    row.hidden = !matches;
+    if (matches) shown += 1;
+  });
+  document.getElementById('results-row-count').textContent = query
+    ? `Showing ${shown} matching sample row${shown === 1 ? '' : 's'} of 1,248 output rows`
+    : 'Showing 3 sample rows of 1,248 output rows';
+}
+function downloadPreviewCsv() {
+  const rows = Array.from(document.querySelectorAll('#results-table tr')).map(row =>
+    Array.from(row.cells).map(cell => `"${cell.textContent.trim().replaceAll('"', '""')}"`).join(',')
+  );
+  const url = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'customers-preview.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}

@@ -107,6 +107,8 @@ from workflow import (
     propose_mapping,
     reject_mapping,
     reject_result,
+    rerun_mapping_with_feedback,
+    save_mapping_feedback,
 )
 
 app = APIRouter()
@@ -1517,6 +1519,45 @@ def update_mapping_column_endpoint(
             "polars_expression": column.polars_expression,
             "tests": column.tests,
         }
+
+
+@app.post(
+    "/mapping-specs/{spec_id}/columns/{column_id}/feedback",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def save_mapping_feedback_endpoint(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    payload: dict[str, Any],
+    user: Any = Depends(require_role("reviewer")),
+) -> dict[str, str]:
+    """Persist reviewer feedback for one proposed mapping field."""
+    try:
+        feedback = save_mapping_feedback(
+            spec_id,
+            column_id,
+            author_user_id=user.id,
+            comment=str(payload.get("comment", "")),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"id": str(feedback.id), "status": "saved"}
+
+
+@app.post(
+    "/mapping-specs/{spec_id}/rerun",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def rerun_mapping_with_feedback_endpoint(
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_role("reviewer")),
+) -> dict[str, str]:
+    """Create and propose a new mapping-spec revision using saved feedback."""
+    try:
+        revision_id = rerun_mapping_with_feedback(spec_id)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"id": str(revision_id), "status": "proposed"}
 
 
 # ---------------------------------------------------------------------------

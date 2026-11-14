@@ -1,168 +1,233 @@
 {% extends "base.html" %}
 
-{% block title %}Upload - Pipeline of Pipelines{% endblock %}
+{% block title %}Create mapping - Pipeline of Pipelines{% endblock %}
 
 {% block content %}
-<h1>Upload data</h1>
+<section class="mapping-page">
+  <header class="mapping-header">
+    <p class="eyebrow">Create mapping</p>
+    <h1>Choose data, then propose a mapping.</h1>
+    <p class="muted">Every mapping is scoped to an organization and client. Source files remain immutable snapshots.</p>
+    <ol class="workflow-steps" aria-label="Mapping workflow">
+      <li><span>1</span> Workspace</li>
+      <li><span>2</span> Source files</li>
+      <li><span>3</span> Target schema</li>
+      <li><span>4</span> Review</li>
+    </ol>
+  </header>
 
-<div class="card" style="max-width: 700px;">
-  <form
-    hx-post="/upload"
-    hx-encoding="multipart/form-data"
-    hx-target="#upload-result"
-    hx-swap="innerHTML"
-    hx-indicator="#upload-progress"
-  >
-    <div class="form-group">
-      <label for="organization_select">Organization</label>
-      <select id="organization_select" name="organization_select" onchange="filterClients()" required>
-        <option value="">-- Select organization --</option>
-        {% for organization in organizations %}
-          <option value="{{ organization.id }}">{{ organization.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="form-group">
-      <label for="client_select">Client</label>
-      <select id="client_select" name="client_select" onchange="toggleNewClient(this)" disabled>
-        <option value="">-- Create new client --</option>
-        {% for client in clients %}
-          <option value="{{ client.id }}" data-organization="{{ client.organization_id }}">{{ client.name }}</option>
-        {% endfor %}
-      </select>
+  <form id="mapping-form" class="mapping-layout"
+    hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#upload-result"
+    hx-swap="innerHTML" hx-indicator="#upload-progress">
+    <div class="mapping-workflow">
+      <section class="mapping-step card">
+        <div class="step-heading"><span>1</span><div><h2>Choose a workspace</h2><p>Select the organization and client for this mapping.</p></div></div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="organization_select">Organization</label>
+            <select id="organization_select" name="organization_select" onchange="filterClients()" required>
+              <option value="">Select an organization</option>
+              {% for organization in organizations %}
+                <option value="{{ organization.id }}">{{ organization.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="client_select">Client</label>
+            <select id="client_select" name="client_select" onchange="toggleNewClient(this)" disabled>
+              <option value="">Create a new client</option>
+              {% for client in clients %}
+                <option value="{{ client.id }}" data-organization="{{ client.organization_id }}">{{ client.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div id="new-client-fields" class="new-client-fields">
+          <div class="form-group">
+            <label for="new_client_name">New client name</label>
+            <input id="new_client_name" name="new_client_name" placeholder="e.g. Acme Ltd" type="text">
+          </div>
+        </div>
+      </section>
+
+      <section class="mapping-step card">
+        <div class="step-heading"><span>2</span><div><h2>Select source files</h2><p>Use stored snapshots, upload files, or import a file from Google Drive.</p></div></div>
+        <div class="source-file-block">
+          <h3>Select stored files</h3>
+          <p class="muted">Choose one or more snapshots already stored for this client.</p>
+          <div id="client-files-panel" class="client-files-panel-placeholder">
+            <p class="muted">Select an existing client to view its stored files.</p>
+          </div>
+        </div>
+
+        <div class="source-file-block">
+          <h3>Add files</h3>
+          <p class="muted">Choose a computer file or explicitly select a file from Google Drive.</p>
+          <div class="source-choice-grid">
+              <label class="source-choice" for="source_files">
+                <strong>Upload from computer</strong>
+                <span>CSV, Excel, PDF, text, email, or Word files</span>
+                <input type="file" id="source_files" name="source_files" multiple
+                  accept=".csv,.xlsx,.xls,.pdf,.txt,.eml,.msg,.docx">
+              </label>
+              <div class="source-choice">
+                <strong>Google Drive</strong>
+                {% if google_connection and google_connection.status.value == 'active' %}
+                  <span>Connected{% if google_connection.google_email %} as {{ google_connection.google_email }}{% endif %}.</span>
+                  <input id="google_drive_file_id" type="hidden">
+                  <div><button class="btn btn-sm" type="button" onclick="openGooglePicker()">Choose a Drive file</button>
+                  <button class="text-button" type="submit" form="google-disconnect-form">Disconnect</button></div>
+                {% else %}
+                  <span>Import a selected CSV, Excel workbook, or Google Sheet.</span>
+                  <a class="btn btn-sm" href="/google/connect">Connect Google Drive</a>
+                {% endif %}
+              </div>
+            </div>
+          <p class="muted">Up to {{ max_source_files }} sources in total. Individual and total size limits apply.</p>
+        </div>
+      </section>
+
+      <section class="mapping-step card">
+        <div class="step-heading"><span>3</span><div><h2>Add a target schema</h2><p>Each schema creates a separate reviewable mapping and output.</p></div></div>
+        <label class="file-dropzone" for="target_schema">
+          <strong>Choose target schema JSON files</strong>
+          <span>Select one or more JSON schema files</span>
+          <input type="file" id="target_schema" name="target_schema" accept=".json" multiple required>
+        </label>
+        <ul id="selected-schemas" class="selected-file-names" aria-live="polite"></ul>
+      </section>
     </div>
 
-    <div id="new-client-fields">
-      <div class="form-group">
-        <label for="new_client_name">New client name</label>
-        <input id="new_client_name" name="new_client_name" placeholder="e.g. Acme Ltd" type="text">
+    <aside class="mapping-summary card" aria-live="polite">
+      <p class="eyebrow">Ready to propose</p>
+      <h2>Mapping summary</h2>
+      <dl>
+        <div><dt>Organization</dt><dd id="summary-organization">Not selected</dd></div>
+        <div><dt>Client</dt><dd id="summary-client">Not selected</dd></div>
+        <div><dt>Source files</dt><dd id="summary-source-count">0 selected</dd></div>
+        <div><dt>Target schemas</dt><dd id="summary-schema-count">0 selected</dd></div>
+      </dl>
+      <ul id="selected-sources" class="selected-file-names"></ul>
+      <p id="proposal-hint" class="muted">Select an organization, client, source file, and target schema to continue.</p>
+      <button id="propose-button" class="btn btn-primary" type="submit" disabled>Propose mappings</button>
+      <div id="upload-progress" class="htmx-indicator progress-indicator" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        Preparing source files and proposing mappings...
       </div>
-    </div>
-    <div id="client-files-panel" class="client-files-panel-placeholder">
-      <p class="muted">Select a client to view its files.</p>
-    </div>
-
-    <div class="form-group">
-      <label>Google Drive</label>
-      {% if google_connection and google_connection.status.value == 'active' %}
-        <p class="muted">Connected{% if google_connection.google_email %} as {{ google_connection.google_email }}{% endif %}. Select a client, then choose a file to import a read-only snapshot.</p>
-        <input id="google_drive_file_id" type="hidden">
-        <button class="btn" type="button" onclick="openGooglePicker()">Import from Drive</button>
-        <button class="btn" type="submit" form="google-disconnect-form">Disconnect Google</button>
-      {% else %}
-        <p class="muted">Connect your own Google account to import CSV, Excel, or Google Sheets. Google Sheets are read through the Sheets API.</p>
-        <a class="btn" href="/google/connect">Connect Google Drive</a>
-      {% endif %}
-    </div>
-
-    <div class="form-group">
-      <label for="source_files">Add new source files</label>
-      <input type="file" id="source_files" name="source_files" multiple
-             accept=".csv,.xlsx,.xls,.pdf,.txt,.eml,.msg,.docx">
-      <p class="muted">Optionally add new raw files alongside selected stored files.</p>
-      <p class="muted">Up to {{ max_source_files }} source files in total. Individual and total upload limits are enforced.</p>
-    </div>
-
-    <div class="form-group">
-      <label for="target_schema">Target schema JSON files</label>
-      <input type="file" id="target_schema" name="target_schema" accept=".json" multiple required>
-      <p class="muted">Choose one or more schemas. Each produces a separate mapping and output from the same source files.</p>
-    </div>
-
-    <button class="btn btn-primary" type="submit">
-      Propose mappings
-    </button>
-    <div id="upload-progress" class="htmx-indicator progress-indicator" aria-live="polite">
-      <span class="spinner" aria-hidden="true"></span>
-      Uploading files, profiling sources, and proposing mappings...
-    </div>
-</form>
-{% if google_connection and google_connection.status.value == 'active' %}
-<form id="google-disconnect-form" action="/google/disconnect" method="post"></form>
-{% endif %}
-  <div id="upload-result" style="margin-top: 1rem;"></div>
-</div>
+      <div id="upload-result" class="mapping-result"></div>
+    </aside>
+  </form>
+  {% if google_connection and google_connection.status.value == 'active' %}
+    <form id="google-disconnect-form" action="/google/disconnect" method="post"></form>
+  {% endif %}
+</section>
 
 <script>
 const GOOGLE_PICKER_API_KEY = {{ google_picker_api_key|tojson }};
 const GOOGLE_PICKER_APP_ID = {{ google_picker_app_id|tojson }};
+const mappingForm = document.getElementById('mapping-form');
+const organizationSelect = document.getElementById('organization_select');
+const clientSelect = document.getElementById('client_select');
+const sourceFilesInput = document.getElementById('source_files');
+const targetSchemaInput = document.getElementById('target_schema');
+
+function selectedFileNames(input) { return Array.from(input.files).map(file => file.name); }
+function setText(id, value) { document.getElementById(id).textContent = value; }
+function renderFileNames(id, names) {
+  const list = document.getElementById(id);
+  list.replaceChildren(...names.map(name => {
+    const item = document.createElement('li');
+    item.textContent = name;
+    return item;
+  }));
+}
+function selectedStoredNames() {
+  return Array.from(document.querySelectorAll('input[name="stored_raw_file_ids"]:checked')).map(input =>
+    input.closest('label').querySelector('strong').textContent
+  );
+}
+function updateMappingSummary() {
+  const organization = organizationSelect.options[organizationSelect.selectedIndex];
+  const client = clientSelect.options[clientSelect.selectedIndex];
+  const stored = selectedStoredNames();
+  const uploads = selectedFileNames(sourceFilesInput);
+  const schemas = selectedFileNames(targetSchemaInput);
+  const hasClient = Boolean(clientSelect.value || document.getElementById('new_client_name').value.trim());
+  const hasSources = stored.length + uploads.length > 0;
+  const canPropose = Boolean(organizationSelect.value && hasClient && hasSources && schemas.length);
+  setText('summary-organization', organizationSelect.value ? organization.textContent : 'Not selected');
+  setText('summary-client', clientSelect.value ? client.textContent : (hasClient ? 'New client' : 'Not selected'));
+  setText('summary-source-count', `${stored.length + uploads.length} selected`);
+  setText('summary-schema-count', `${schemas.length} selected`);
+  renderFileNames('selected-sources', [...stored, ...uploads]);
+  renderFileNames('selected-schemas', schemas);
+  document.getElementById('propose-button').disabled = !canPropose;
+  setText('proposal-hint', canPropose ? 'Ready to generate mapping proposals.' : 'Select an organization, client, source file, and target schema to continue.');
+}
 function toggleNewClient(select) {
   const fields = document.getElementById('new-client-fields');
-  if (select.value === '') {
-    fields.style.display = 'block';
-    fields.querySelectorAll('input').forEach(i => i.required = true);
-    clearClientFiles('Create the client by selecting a target schema and adding source files.');
-  } else {
-    fields.style.display = 'none';
-    fields.querySelectorAll('input').forEach(i => i.required = false);
-    loadClientFiles(select.value);
-  }
+  const creating = select.value === '';
+  fields.hidden = !creating;
+  fields.querySelectorAll('input').forEach(input => { input.required = creating; });
+  if (creating) clearClientFiles('Create the client, then add source files below.');
+  else loadClientFiles(select.value);
+  updateMappingSummary();
 }
 function clearClientFiles(message) {
   document.getElementById('client-files-panel').innerHTML = `<p class="muted">${message}</p>`;
 }
 async function loadClientFiles(clientId, selectedRawFileId = null) {
   const panel = document.getElementById('client-files-panel');
-  panel.innerHTML = '<p class="muted">Loading client files...</p>';
+  panel.innerHTML = '<p class="muted">Loading stored files...</p>';
   const response = await fetch(`/clients/${clientId}/files/panel`);
-  panel.innerHTML = response.ok
-    ? await response.text()
-    : '<p class="muted">Client files could not be loaded.</p>';
+  panel.innerHTML = response.ok ? await response.text() : '<p class="muted">Stored files could not be loaded.</p>';
   if (response.ok && selectedRawFileId) {
     panel.querySelectorAll('input[name="stored_raw_file_ids"]').forEach(input => {
       if (input.value === selectedRawFileId) input.checked = true;
     });
   }
+  panel.querySelectorAll('input[name="stored_raw_file_ids"]').forEach(input => input.addEventListener('change', updateMappingSummary));
+  updateMappingSummary();
 }
 function filterClients() {
-  const organizationId = document.getElementById('organization_select').value;
-  const clientSelect = document.getElementById('client_select');
+  const organizationId = organizationSelect.value;
   clientSelect.value = '';
   clientSelect.disabled = !organizationId;
   clientSelect.querySelectorAll('option[data-organization]').forEach(option => {
     option.hidden = option.dataset.organization !== organizationId;
   });
   toggleNewClient(clientSelect);
-  clearClientFiles(
-    organizationId ? 'Select a client to view its files.' : 'Select an organization first.'
-  );
+  if (!organizationId) clearClientFiles('Select an organization to view its clients and stored files.');
+  updateMappingSummary();
 }
 async function importGoogleDriveFile() {
-  const clientId = document.getElementById('client_select').value;
+  const clientId = clientSelect.value;
   const fileId = document.getElementById('google_drive_file_id').value.trim();
   if (!clientId || !fileId) { alert('Select an existing client and a Drive file first.'); return; }
   const body = new FormData(); body.append('drive_file_id', fileId);
   const response = await fetch(`/clients/${clientId}/google-drive/import`, { method: 'POST', body });
   const message = response.ok ? await response.text() : (await response.json()).detail;
   document.getElementById('upload-result').innerHTML = message;
-  if (response.ok) {
-    await loadClientFiles(clientId, response.headers.get('X-Imported-Raw-File-ID'));
-  }
+  if (response.ok) await loadClientFiles(clientId, response.headers.get('X-Imported-Raw-File-ID'));
 }
 async function openGooglePicker() {
   if (!GOOGLE_PICKER_API_KEY || !GOOGLE_PICKER_APP_ID) { alert('Google Picker is not configured.'); return; }
+  if (!clientSelect.value) { alert('Select an existing client before importing a Drive file.'); return; }
   const tokenResponse = await fetch('/google/picker-token');
   if (!tokenResponse.ok) { alert((await tokenResponse.json()).detail); return; }
   const { access_token } = await tokenResponse.json();
-  await new Promise((resolve) => {
-    const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js'; script.onload = resolve;
-    document.head.appendChild(script);
-  });
-  gapi.load('picker', {
-    callback: () => {
-      const view = new google.picker.DocsView();
-      view.setMimeTypes('text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.google-apps.spreadsheet');
-      const picker = new google.picker.PickerBuilder().setDeveloperKey(GOOGLE_PICKER_API_KEY)
-        .setAppId(GOOGLE_PICKER_APP_ID).setOAuthToken(access_token).addView(view).setCallback((data) => {
-          if (data.action === google.picker.Action.PICKED) {
-            document.getElementById('google_drive_file_id').value = data.docs[0].id;
-            importGoogleDriveFile();
-          }
-        }).build();
-      picker.setVisible(true);
-    },
-  });
+  await new Promise(resolve => { const script = document.createElement('script'); script.src = 'https://apis.google.com/js/api.js'; script.onload = resolve; document.head.appendChild(script); });
+  gapi.load('picker', { callback: () => {
+    const view = new google.picker.DocsView();
+    view.setMimeTypes('text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.google-apps.spreadsheet');
+    const picker = new google.picker.PickerBuilder().setDeveloperKey(GOOGLE_PICKER_API_KEY).setAppId(GOOGLE_PICKER_APP_ID).setOAuthToken(access_token).addView(view).setCallback(data => {
+      if (data.action === google.picker.Action.PICKED) { document.getElementById('google_drive_file_id').value = data.docs[0].id; importGoogleDriveFile(); }
+    }).build();
+    picker.setVisible(true);
+  }});
 }
+mappingForm.addEventListener('change', updateMappingSummary);
+document.getElementById('new_client_name').addEventListener('input', updateMappingSummary);
+updateMappingSummary();
 </script>
 {% endblock %}
