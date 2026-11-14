@@ -574,6 +574,39 @@ def mapping_review_page(
         for table in source_tables
         for warning in table.get("warnings", [])
     )
+    target_columns = {
+        (table.get("name"), column.get("name")): column
+        for table in mapping["target_schema_json"].get("tables", [])
+        for column in table.get("columns", [])
+    }
+    catalog_columns = {
+        (str(table.get("source_table_id")), str(column.get("source_column_id"))): (
+            table,
+            column,
+        )
+        for table in source_tables
+        for column in table.get("columns", [])
+    }
+    review_columns = []
+    for mapping_column in mapping.get("columns", []):
+        column = dict(mapping_column)
+        target = target_columns.get(
+            (column["target_table"], column["target_column"]), {}
+        )
+        source: dict[str, Any] = next(iter(column.get("source_columns", [])), {})
+        source_table, source_column = catalog_columns.get(
+            (str(source.get("source_table_id")), str(source.get("source_column_id"))),
+            ({}, {}),
+        )
+        column["target_definition"] = target
+        column["source"] = source
+        column["source_table_display"] = source_table.get("display_name")
+        column["source_column_display"] = source_column.get(
+            "normalized_name"
+        ) or source_column.get("original_name")
+        column["source_profile"] = source_column
+        column["is_unmapped"] = not source
+        review_columns.append(column)
     return templates.TemplateResponse(
         request,
         "mapping.html",
@@ -584,9 +617,10 @@ def mapping_review_page(
             "target_schema_json": json.dumps(
                 mapping["target_schema_json"], indent=2, default=str
             ),
-            "mapping_columns": mapping.get("columns", []),
+            "mapping_columns": review_columns,
             "source_tables": source_tables,
             "parse_warnings": parse_warnings,
+            "mapping": mapping,
         },
     )
 
