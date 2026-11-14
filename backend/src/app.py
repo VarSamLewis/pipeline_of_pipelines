@@ -19,7 +19,7 @@ from auth_service import (
     provision_synthetic_local_user,
 )
 from config import get_settings
-from db_ops import create_tables, get_engine
+from db_ops import get_engine, upgrade_database
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from request_audit import REQUEST_AUDIT_LOGGER, request_id_for
@@ -33,7 +33,7 @@ from ui import router as ui_router
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize durable infrastructure for the application lifetime."""
-    create_tables(get_engine())
+    upgrade_database(get_engine())
     provision_synthetic_local_user()
     yield
 

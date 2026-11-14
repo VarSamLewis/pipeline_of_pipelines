@@ -20,7 +20,7 @@ os.environ.setdefault(
 os.environ.setdefault("AUTH_BYPASS_LOCAL", "true")
 os.environ.setdefault("BYOK_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
-from db_ops import create_tables, get_engine  # noqa: E402
+from db_ops import get_engine, upgrade_database  # noqa: E402
 
 
 def _postgres_available() -> bool:
@@ -49,7 +49,7 @@ def setup_test_database() -> None:
             "PostgreSQL test database unavailable. Start `docker compose up -d "
             "postgres` and create `pipeline_test` (see README)."
         )
-    create_tables()
+    upgrade_database()
     yield
 
 

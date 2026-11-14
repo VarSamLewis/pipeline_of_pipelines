@@ -1,19 +1,23 @@
 """Add user-owned Google Drive read connections and import audit trail.
 
 Revision ID: 0004_google_drive_read_import
-Revises: 0003_closed_beta_authorization
+Revises: 0002_context_chunks
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "0004_google_drive_read_import"
-down_revision = "0003_closed_beta_authorization"
+down_revision = "0002_context_chunks"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
+    # The baseline bootstraps existing installations from current ORM metadata,
+    # which may already include these tables.
+    if sa.inspect(op.get_bind()).has_table("googleconnection", schema="pipeline"):
+        return
     op.create_table(
         "googleconnection",
         sa.Column("id", sa.Uuid(), primary_key=True),

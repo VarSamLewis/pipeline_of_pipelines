@@ -694,6 +694,8 @@ def propose_mapping_spec(
     ]
     from db_ops import create_mapping_columns
 
+    spec.context_evidence_ids = [str(item.id) for item in evidence_items]
+    session.add(spec)
     create_mapping_columns(session, mapping_spec_id, columns)
     update_mapping_spec_status(
         session,
