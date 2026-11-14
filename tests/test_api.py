@@ -695,6 +695,175 @@ def test_evidence_search_is_scoped_to_one_client(
     )
 
 
+def test_chunk_partial_updates_and_ambiguous_matches(
+    client: TestClient, registered_client: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New chunks replace only confident matches among this client's active chunks."""
+    import math
+
+    import db_ops
+    from db_ops import get_session
+    from models import ExtractedEvidence
+    from sqlmodel import select
+
+    client_id = registered_client["id"]
+
+    def embedding(text: str, **_kwargs) -> list[float]:
+        text = text.lower()
+        angle = (
+            90
+            if "policy" in text
+            else 20
+            if "right" in text
+            else 10
+            if "new value" in text
+            else 0
+        )
+        radians = math.radians(angle)
+        return [math.cos(radians), math.sin(radians)] + [0.0] * 1534
+
+    monkeypatch.setattr(db_ops, "get_embedding", embedding)
+    headers = {
+        "X-OpenAI-Api-Key": "test-byok-key",
+        "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+    }
+
+    def upload(text: str, selected_client: str = client_id) -> str:
+        batch = client.post(
+            f"/clients/{selected_client}/batches", json={"label": "context"}
+        )
+        assert batch.status_code == 200, batch.text
+        response = client.post(
+            f"/clients/{selected_client}/batches/{batch.json()['id']}/files",
+            files={"file": ("context.txt", text.encode(), "text/plain")},
+        )
+        assert response.status_code == 200, response.text
+        file_id = response.json()["id"]
+        parsed = client.post(f"/raw-files/{file_id}/parse", headers=headers)
+        assert parsed.status_code == 200, parsed.text
+        return file_id
+
+    old_file = upload("Product price is 10")
+    policy_file = upload("Policy: retain records")
+    new_file = upload("Product price is 20")
+    with get_session() as session:
+        chunks = session.exec(
+            select(ExtractedEvidence).where(
+                ExtractedEvidence.raw_file_id.in_(
+                    [uuid.UUID(old_file), uuid.UUID(policy_file), uuid.UUID(new_file)]
+                )
+            )
+        ).all()
+        by_file = {str(chunk.raw_file_id): chunk for chunk in chunks}
+        assert not by_file[old_file].active
+        assert by_file[old_file].superseded_by_id == by_file[new_file].id
+        assert by_file[new_file].active and by_file[policy_file].active
+
+    found = client.get(
+        "/evidence/search",
+        params={"query": "price", "client_id": client_id, "top_k": 10},
+        headers=headers,
+    )
+    assert found.status_code == 200, found.text
+    assert old_file not in {item["raw_file_id"] for item in found.json()}
+    assert new_file in {item["raw_file_id"] for item in found.json()}
+
+    # Both candidates are equally close to the new chunk, so neither retires.
+    separate = client.post(
+        "/clients",
+        json={
+            "name": "Ambiguous context",
+            "organization_id": registered_client["organization_id"],
+        },
+    )
+    assert separate.status_code == 200
+    separate_client = separate.json()["id"]
+    left = upload("left value", separate_client)
+    right = upload("right value", separate_client)
+    ambiguous = upload("new value", separate_client)
+    with get_session() as session:
+        by_file = {
+            str(chunk.raw_file_id): chunk
+            for chunk in session.exec(
+                select(ExtractedEvidence).where(
+                    ExtractedEvidence.raw_file_id.in_(
+                        [uuid.UUID(left), uuid.UUID(right), uuid.UUID(ambiguous)]
+                    )
+                )
+            ).all()
+        }
+        assert by_file[left].active and by_file[right].active
+        assert by_file[ambiguous].active
+
+
+def test_mapping_keeps_its_context_snapshot_after_supersession(
+    client: TestClient,
+    registered_client: dict,
+    ingested_batch: dict,
+    simple_schema_file: Path,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old reviews keep the evidence they saw; new retrieval hides it."""
+    import json
+
+    import db_ops
+    from db_ops import get_session
+    from models import ExtractedEvidence
+    from sqlmodel import select
+
+    monkeypatch.setattr(
+        db_ops, "get_embedding", lambda *_args, **_kwargs: [1.0] + [0.0] * 1535
+    )
+    client_id = registered_client["id"]
+    headers = {
+        "X-OpenAI-Api-Key": "test-byok-key",
+        "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+    }
+
+    def upload(text: str) -> str:
+        batch = client.post(f"/clients/{client_id}/batches", json={"label": "snapshot"})
+        uploaded = client.post(
+            f"/clients/{client_id}/batches/{batch.json()['id']}/files",
+            files={"file": ("facts.txt", text.encode(), "text/plain")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        file_id = uploaded.json()["id"]
+        parsed = client.post(f"/raw-files/{file_id}/parse", headers=headers)
+        assert parsed.status_code == 200, parsed.text
+        return file_id
+
+    original_file = upload("Customer account fee is 10")
+    with get_session() as session:
+        old = session.exec(
+            select(ExtractedEvidence).where(
+                ExtractedEvidence.raw_file_id == uuid.UUID(original_file)
+            )
+        ).one()
+        old_id = str(old.id)
+    created = client.post(
+        f"/clients/{client_id}/mapping-specs",
+        json={
+            "source_raw_file_ids": ingested_batch["raw_file_ids"],
+            "target_schema": json.loads(simple_schema_file.read_text()),
+        },
+    )
+    assert created.status_code == 200, created.text
+    spec_id = created.json()["id"]
+    proposed = client.post(f"/mapping-specs/{spec_id}/propose", headers=headers)
+    assert proposed.status_code == 200, proposed.text
+    assert old_id in client.get(f"/mapping-specs/{spec_id}").json()[
+        "context_evidence_ids"
+    ]
+
+    upload("Customer account fee is 20")
+    with get_session() as session:
+        assert session.get(ExtractedEvidence, uuid.UUID(old_id)).active is False
+    assert old_id in client.get(f"/mapping-specs/{spec_id}").json()[
+        "context_evidence_ids"
+    ]
+
+
 @pytest.fixture
 def client() -> TestClient:
     """Return a FastAPI TestClient."""
