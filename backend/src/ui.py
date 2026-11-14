@@ -18,7 +18,12 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
-from auth_service import require_client_membership, require_role, require_ui_auth
+from auth_service import (
+    AUTH_BYPASS_LOCAL,
+    require_client_membership,
+    require_role,
+    require_ui_auth,
+)
 from config import get_settings
 from db_ops import get_session
 from dependencies import get_artifact_store
@@ -112,9 +117,10 @@ def privacy_page(request: Request) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/upload")
-def upload_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
-    """Render the upload form with a client dropdown."""
+@router.get("/mapping")
+@router.get("/upload", include_in_schema=False)
+def mapping_page(request: Request, user: Any = Depends(require_ui_auth)) -> Any:
+    """Render the source-selection form for a new mapping."""
     with get_session() as session:
         google_connection = connection_for_user(session, user.id)
     return templates.TemplateResponse(
@@ -242,6 +248,9 @@ def upload_submit(
     organization_id = uuid.UUID(organization_select)
     valid_source_files = [f for f in source_files if f.filename]
 
+    if AUTH_BYPASS_LOCAL:
+        return _htmx_redirect(request, "/mapping/preview")
+
     try:
         if not target_schema or any(not schema.filename for schema in target_schema):
             raise ValueError("At least one target schema file is required")
@@ -307,6 +316,21 @@ def upload_submit(
     )
 
 
+@router.get("/mapping/preview")
+def local_mapping_preview_page(
+    request: Request,
+    user: Any = Depends(require_ui_auth),
+) -> Any:
+    """Render a static mapping-review screen for local UI development only."""
+    if not AUTH_BYPASS_LOCAL:
+        raise HTTPException(404, "Mapping review not found")
+    return templates.TemplateResponse(
+        request,
+        "mapping_preview.html",
+        _user_context(request, user),
+    )
+
+
 @router.get("/clients/{client_id}/files")
 def client_files_page(
     request: Request,
@@ -322,6 +346,21 @@ def client_files_page(
         request,
         "files.html",
         {**_user_context(request, user), "library": library},
+    )
+
+
+@router.get("/results/preview")
+def local_results_preview_page(
+    request: Request,
+    user: Any = Depends(require_ui_auth),
+) -> Any:
+    """Render a static results-review screen for local UI development only."""
+    if not AUTH_BYPASS_LOCAL:
+        raise HTTPException(404, "Results review not found")
+    return templates.TemplateResponse(
+        request,
+        "results_preview.html",
+        _user_context(request, user),
     )
 
 

@@ -16,6 +16,7 @@ from auth_service import (
     SESSION_COOKIE_SECURE,
     SESSION_MAX_AGE_SECONDS,
     SESSION_SECRET_KEY,
+    provision_synthetic_local_user,
 )
 from config import get_settings
 from db_ops import create_tables, get_engine
@@ -33,6 +34,7 @@ from ui import router as ui_router
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize durable infrastructure for the application lifetime."""
     create_tables(get_engine())
+    provision_synthetic_local_user()
     yield
 
 

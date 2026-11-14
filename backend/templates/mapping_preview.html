@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}Mapping preview - Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+<section class="mapping-page">
+  <header class="mapping-header">
+    <p class="eyebrow">Local UI preview</p>
+    <h1>Review mapping</h1>
+    <p class="muted">This page uses sample data only. No files were parsed and no provider or LLM request was made.</p>
+  </header>
+
+  <div class="mapping-layout">
+    <div class="mapping-workflow">
+      <section class="card">
+        <h2>Mapping overview</h2>
+        <div class="client-file-summary">
+          <div><strong>Client</strong><span>Local Test Client</span></div>
+          <div><strong>Target schema</strong><span>Customer delivery v1.2</span></div>
+          <div><strong>Source snapshots</strong><span>2 files · immutable</span></div>
+          <div><strong>Fields proposed</strong><span>3 of 3 required fields</span></div>
+          <div><strong>Review state</strong><span>2 ready · 1 needs review</span></div>
+          <div><strong>Mapping version</strong><span>Draft 1 · sample data</span></div>
+        </div>
+      </section>
+      <section class="card">
+        <div class="mapping-view-header">
+          <div><h2>Proposed fields</h2><p class="muted">Review the sample source, transformation, confidence, and any warnings.</p></div>
+          <div class="view-toggle" role="tablist" aria-label="Proposed field views">
+            <button class="btn btn-sm is-active" id="list-view-tab" type="button" role="tab" aria-selected="true" aria-controls="list-view" onclick="showMappingView('list')">List</button>
+            <button class="btn btn-sm" id="table-view-tab" type="button" role="tab" aria-selected="false" aria-controls="table-view" onclick="showMappingView('table')">Table</button>
+          </div>
+        </div>
+
+        <div id="list-view" role="tabpanel" aria-labelledby="list-view-tab">
+          <div class="mapping-card">
+            <div class="mapping-card-heading">
+              <div><div class="target">customer_id</div><p class="muted">Required · string · unique identifier</p></div>
+              <span class="mapping-status ready">Ready</span>
+            </div>
+            <dl class="mapping-details">
+              <div><dt>Source</dt><dd>Customers.csv → <code>Customer ID</code></dd></div>
+              <div><dt>Source type</dt><dd>string · 1,248 non-null values</dd></div>
+              <div><dt>Logic</dt><dd><code>trim(Customer ID)</code></dd></div>
+              <div><dt>Evidence</dt><dd>Exact name match; values are unique in the sample.</dd></div>
+              <div><dt>Validation</dt><dd>Required, non-empty, unique</dd></div>
+              <div><dt>Confidence</dt><dd>High · 98%</dd></div>
+            </dl>
+            <div class="mapping-feedback-actions">
+              <button class="btn btn-sm" type="button" onclick="openMappingFeedback('customer_id')">Request change</button>
+            </div>
+            <div id="list-feedback-customer_id"></div>
+          </div>
+          <div class="mapping-card">
+            <div class="mapping-card-heading">
+              <div><div class="target">customer_name</div><p class="muted">Required · string · display name</p></div>
+              <span class="mapping-status ready">Ready</span>
+            </div>
+            <dl class="mapping-details">
+              <div><dt>Source</dt><dd>Customers.csv → <code>Full name</code></dd></div>
+              <div><dt>Source type</dt><dd>string · 1,248 non-null values</dd></div>
+              <div><dt>Logic</dt><dd><code>trim(Full name)</code></dd></div>
+              <div><dt>Evidence</dt><dd>Semantic name match; all sample values are populated.</dd></div>
+              <div><dt>Validation</dt><dd>Required, non-empty</dd></div>
+              <div><dt>Confidence</dt><dd>High · 95%</dd></div>
+            </dl>
+            <div class="mapping-feedback-actions">
+              <button class="btn btn-sm" type="button" onclick="openMappingFeedback('customer_name')">Request change</button>
+            </div>
+            <div id="list-feedback-customer_name"></div>
+          </div>
+          <div class="mapping-card warning-panel">
+            <div class="mapping-card-heading">
+              <div><div class="target">delivery_region</div><p class="muted">Optional · string · sales region</p></div>
+              <span class="mapping-status warning">Needs review</span>
+            </div>
+            <dl class="mapping-details">
+              <div><dt>Source</dt><dd>Address.csv → <code>Region</code></dd></div>
+              <div><dt>Source type</dt><dd>string · 1,196 present · 52 null</dd></div>
+              <div><dt>Logic</dt><dd><code>trim(Region) ?? null</code></dd></div>
+              <div><dt>Evidence</dt><dd>Semantic name match; source values match known region labels.</dd></div>
+              <div><dt>Validation</dt><dd>Optional; allowed values not yet configured</dd></div>
+              <div><dt>Confidence</dt><dd>Medium · 74%</dd></div>
+            </dl>
+            <p class="mapping-note"><strong>Review note:</strong> Confirm whether rows without a region should remain null, use a fallback, or be rejected.</p>
+            <div class="mapping-feedback-actions">
+              <button class="btn btn-sm" type="button" onclick="openMappingFeedback('delivery_region')">Request change</button>
+            </div>
+            <div id="list-feedback-delivery_region"></div>
+          </div>
+        </div>
+
+        <div id="table-view" role="tabpanel" aria-labelledby="table-view-tab" hidden>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Target field</th><th>Target requirements</th><th>Source</th><th>Source profile</th><th>Logic</th><th>Evidence</th><th>Validation</th><th>Confidence</th><th>Review</th><th>Feedback</th></tr></thead>
+              <tbody>
+                <tr><td><strong>customer_id</strong></td><td>Required<br>string<br>unique identifier</td><td>Customers.csv → Customer ID</td><td>string<br>1,248 non-null</td><td><code>trim(Customer ID)</code></td><td>Exact name; unique sample values</td><td>Required, non-empty, unique</td><td>High · 98%</td><td><span class="mapping-status ready">Ready</span></td><td class="mapping-table-actions"><button class="btn btn-sm" type="button" onclick="openTableFeedback('customer_id')">Request change</button></td></tr>
+                <tr id="table-feedback-customer_id" class="mapping-feedback-row" hidden><td colspan="10"><form class="mapping-feedback" onsubmit="saveTableFeedback(event, 'customer_id')"><label for="table-comment-customer_id">Feedback for customer_id</label><textarea id="table-comment-customer_id" required placeholder="Describe the requested mapping change."></textarea><div class="mapping-feedback-actions"><button class="btn btn-primary btn-sm" type="submit">Save feedback</button></div><p class="muted" aria-live="polite"></p></form></td></tr>
+                <tr><td><strong>customer_name</strong></td><td>Required<br>string<br>display name</td><td>Customers.csv → Full name</td><td>string<br>1,248 non-null</td><td><code>trim(Full name)</code></td><td>Semantic name; populated sample</td><td>Required, non-empty</td><td>High · 95%</td><td><span class="mapping-status ready">Ready</span></td><td class="mapping-table-actions"><button class="btn btn-sm" type="button" onclick="openTableFeedback('customer_name')">Request change</button></td></tr>
+                <tr id="table-feedback-customer_name" class="mapping-feedback-row" hidden><td colspan="10"><form class="mapping-feedback" onsubmit="saveTableFeedback(event, 'customer_name')"><label for="table-comment-customer_name">Feedback for customer_name</label><textarea id="table-comment-customer_name" required placeholder="Describe the requested mapping change."></textarea><div class="mapping-feedback-actions"><button class="btn btn-primary btn-sm" type="submit">Save feedback</button></div><p class="muted" aria-live="polite"></p></form></td></tr>
+                <tr><td><strong>delivery_region</strong></td><td>Optional<br>string<br>sales region</td><td>Address.csv → Region</td><td>string<br>1,196 present · 52 null</td><td><code>trim(Region) ?? null</code></td><td>Semantic name; known region labels</td><td>Optional; allowed values unset</td><td>Medium · 74%</td><td><span class="mapping-status warning">Needs review</span><br><small>Decide null handling</small></td><td class="mapping-table-actions"><button class="btn btn-sm" type="button" onclick="openTableFeedback('delivery_region')">Request change</button></td></tr>
+                <tr id="table-feedback-delivery_region" class="mapping-feedback-row" hidden><td colspan="10"><form class="mapping-feedback" onsubmit="saveTableFeedback(event, 'delivery_region')"><label for="table-comment-delivery_region">Feedback for delivery_region</label><textarea id="table-comment-delivery_region" required placeholder="Describe the requested mapping change."></textarea><div class="mapping-feedback-actions"><button class="btn btn-primary btn-sm" type="submit">Save feedback</button></div><p class="muted" aria-live="polite"></p></form></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <form id="mapping-feedback" class="mapping-feedback" hidden onsubmit="saveMappingFeedback(event)">
+          <div class="mapping-feedback-header">
+            <div><h3>Feedback for <span id="feedback-field"></span></h3><p class="muted">This is saved only in the local UI preview.</p></div>
+          </div>
+          <label for="feedback-comment">What should change?</label>
+          <textarea id="feedback-comment" required placeholder="For example: use Billing region when Region is empty."></textarea>
+          <div class="mapping-feedback-actions"><button class="btn btn-primary btn-sm" type="submit">Save feedback</button></div>
+          <p id="feedback-status" class="muted" aria-live="polite"></p>
+        </form>
+      </section>
+    </div>
+    <aside class="mapping-summary card">
+      <p class="eyebrow">Preview mode</p>
+      <h2>Next action</h2>
+      <p class="muted">Use this screen to develop and test the mapping-review layout. Production review runs after source parsing and mapping proposal.</p>
+      <button id="rerun-mapping-button" class="btn btn-primary" type="button" onclick="rerunMappingWithFeedback()">Rerun mapping with feedback</button>
+      <p id="rerun-mapping-status" class="muted mapping-action-status" aria-live="polite"></p>
+      <a class="btn btn-primary" href="/results/preview">Run mapping</a>
+      <a class="btn" href="/mapping">Create another mapping</a>
+    </aside>
+  </div>
+</section>
+<script>
+function showMappingView(view) {
+  const list = view === 'list';
+  document.getElementById('list-view').hidden = !list;
+  document.getElementById('table-view').hidden = list;
+  document.getElementById('list-view-tab').classList.toggle('is-active', list);
+  document.getElementById('table-view-tab').classList.toggle('is-active', !list);
+  document.getElementById('list-view-tab').setAttribute('aria-selected', String(list));
+  document.getElementById('table-view-tab').setAttribute('aria-selected', String(!list));
+}
+let feedbackField = '';
+function openMappingFeedback(field) {
+  feedbackField = field;
+  const placeholder = document.getElementById(`list-feedback-${field}`);
+  const form = document.getElementById('mapping-feedback');
+  if (form.parentElement === placeholder && !form.hidden) {
+    form.hidden = true;
+    return;
+  }
+  placeholder.appendChild(form);
+  document.getElementById('feedback-field').textContent = field;
+  document.getElementById('feedback-status').textContent = '';
+  form.hidden = false;
+  document.getElementById('feedback-comment').focus();
+}
+function saveMappingFeedback(event) {
+  event.preventDefault();
+  document.getElementById('feedback-status').textContent = `Feedback recorded for ${feedbackField} in this local preview.`;
+}
+function openTableFeedback(field) {
+  const selectedRow = document.getElementById(`table-feedback-${field}`);
+  if (!selectedRow.hidden) {
+    selectedRow.hidden = true;
+    return;
+  }
+  document.querySelectorAll('.mapping-feedback-row').forEach(row => { row.hidden = true; });
+  selectedRow.hidden = false;
+  selectedRow.querySelector('textarea').focus();
+}
+function saveTableFeedback(event, field) {
+  event.preventDefault();
+  event.currentTarget.querySelector('[aria-live="polite"]').textContent = `Feedback recorded for ${field} in this local preview.`;
+}
+function rerunMappingWithFeedback() {
+  const button = document.getElementById('rerun-mapping-button');
+  button.disabled = true;
+  button.textContent = 'Rerunning mapping…';
+  document.getElementById('rerun-mapping-status').textContent = 'Local preview: feedback would be submitted and the mapping proposal rerun.';
+}
+</script>
+{% endblock %}

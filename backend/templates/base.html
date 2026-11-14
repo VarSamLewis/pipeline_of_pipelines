@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Pipeline of Pipelines{% endblock %}</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
@@ -12,7 +13,7 @@
     <a class="brand" href="/">Pipeline of Pipelines</a>
     <div class="user">
       {% if user %}
-        <a href="/upload">Upload</a>
+        <a href="/mapping">Create mapping</a>
         <a href="/client-library">Clients</a>
         <a href="/runs">Runs</a>
         <a href="/documentation">Documentation</a>
