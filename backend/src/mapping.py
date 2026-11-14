@@ -110,13 +110,15 @@ def resolve_composite_keys(
     ``source_table``, and ``source_column`` on each ``SourceColumnRef``.
     Also resolves ``lookup_source_table`` and ``aggregation_source_table``.
 
-    Returns a list of error strings (empty on success).
+    Returns a list of error strings. An unavailable source is represented as an
+    unmapped field rather than rejecting the entire proposal.
     """
     col_index = _build_catalog_index(source_catalogs)
     tbl_index = _build_table_index(source_catalogs)
     errors: list[str] = []
 
     for mapping in mappings:
+        unavailable_source = False
         for ref in mapping.source_columns:
             table_key = ref.source_table
             col_name = ref.source_column
@@ -159,9 +161,7 @@ def resolve_composite_keys(
                         break
 
             if col_entry is None:
-                errors.append(
-                    f"source column {col_name!r} not found for key {table_key!r}"
-                )
+                unavailable_source = True
                 continue
 
             table, col = col_entry
@@ -185,13 +185,27 @@ def resolve_composite_keys(
                 continue
             table_entry = _resolve_table_key(table_key, tbl_index)
             if table_entry is None:
-                available_tables = ", ".join(sorted(tbl_index)) or "none"
-                errors.append(
-                    f"{field_name} {table_key!r} is not in the catalog; "
-                    f"available tables: {available_tables}"
-                )
+                unavailable_source = True
                 continue
             setattr(mapping, field_name, table_entry.get("source_table_id", ""))
+
+        if unavailable_source:
+            mapping.source_columns = []
+            mapping.transformation_type = "expression"
+            mapping.transformation_logic = (
+                "Unmapped: no selected source column or table matches "
+                "this target field."
+            )
+            mapping.polars_expression = None
+            mapping.aggregation_source_table = None
+            mapping.aggregation_expression = None
+            mapping.aggregation_group_key = None
+            mapping.lookup_source_table = None
+            mapping.lookup_key = None
+            mapping.lookup_value = None
+            mapping.filter_expression = None
+            mapping.tests = []
+            mapping.confidence = 0.0
 
     return errors
 
@@ -305,8 +319,8 @@ def build_mapping_prompt(
             "propose source-to-target column mappings. Each mapping may use one or "
             "more source columns. Reference sources using composite keys in the "
             "format filename::sheet::column (e.g. data.csv::Orders::Revenue). "
-            "Never invent a composite key. Use evidence IDs to cite support for "
-            "each mapping. Return valid JSON with a 'mappings' array."
+            "Never invent a composite key or source table. Use evidence IDs to cite "
+            "support for each mapping. Return valid JSON with a 'mappings' array."
         ),
     }
     user_content = (
@@ -361,8 +375,10 @@ def build_mapping_prompt(
         "lookup_source_table, lookup_key, and lookup_value. lookup_source_table "
         "must exactly match one entry in Available source tables. Do not invent "
         "a lookup table from evidence, target-schema names, or business rules; "
-        "if no listed source table is appropriate, use an expression mapping and "
-        "omit lookup_source_table. Example: "
+        "if no listed source table is appropriate, emit an unmapped field with "
+        '"source_columns": [], "polars_expression": null, and '
+        '"transformation_logic": "Unmapped: no selected source matches". '
+        "Do not create a lookup to an unselected file. Example: "
         '"lookup_source_table": "data.csv::LookupTable", "lookup_key": "prod_sku", '
         '"lookup_value": "prod_name". '
         "For lookups the source_columns should reference the column in the "
