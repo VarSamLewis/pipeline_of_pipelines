@@ -214,7 +214,9 @@ def google_drive_import(
     except GoogleDriveError as exc:
         raise HTTPException(422, str(exc)) from exc
     return HTMLResponse(
-        f"<span class='save-note'>Imported snapshot {audit.raw_file_id}</span>"
+        "<span class='save-note'>Imported Drive snapshot. It is selected below "
+        "and ready to include in a mapping.</span>",
+        headers={"X-Imported-Raw-File-ID": str(audit.raw_file_id)},
     )
 
 

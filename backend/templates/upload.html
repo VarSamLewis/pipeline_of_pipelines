@@ -101,13 +101,18 @@ function toggleNewClient(select) {
 function clearClientFiles(message) {
   document.getElementById('client-files-panel').innerHTML = `<p class="muted">${message}</p>`;
 }
-async function loadClientFiles(clientId) {
+async function loadClientFiles(clientId, selectedRawFileId = null) {
   const panel = document.getElementById('client-files-panel');
   panel.innerHTML = '<p class="muted">Loading client files...</p>';
   const response = await fetch(`/clients/${clientId}/files/panel`);
   panel.innerHTML = response.ok
     ? await response.text()
     : '<p class="muted">Client files could not be loaded.</p>';
+  if (response.ok && selectedRawFileId) {
+    panel.querySelectorAll('input[name="stored_raw_file_ids"]').forEach(input => {
+      if (input.value === selectedRawFileId) input.checked = true;
+    });
+  }
 }
 function filterClients() {
   const organizationId = document.getElementById('organization_select').value;
@@ -130,7 +135,9 @@ async function importGoogleDriveFile() {
   const response = await fetch(`/clients/${clientId}/google-drive/import`, { method: 'POST', body });
   const message = response.ok ? await response.text() : (await response.json()).detail;
   document.getElementById('upload-result').innerHTML = message;
-  if (response.ok) loadClientFiles(clientId);
+  if (response.ok) {
+    await loadClientFiles(clientId, response.headers.get('X-Imported-Raw-File-ID'));
+  }
 }
 async function openGooglePicker() {
   if (!GOOGLE_PICKER_API_KEY || !GOOGLE_PICKER_APP_ID) { alert('Google Picker is not configured.'); return; }
