@@ -3,48 +3,66 @@
 {% block title %}Review results - Pipeline of Pipelines{% endblock %}
 
 {% block content %}
-<h1>Review results</h1>
+<section class="mapping-page">
+  <header class="mapping-header">
+    <p class="eyebrow">Mapping run</p>
+    <h1>Review results</h1>
+    <p class="muted">Inspect generated output, search individual tables, and download the complete CSV artifact.</p>
+  </header>
 
-<div class="card">
-  <div class="card-header">
-    <h2>Output</h2>
-    <div>
-      {% for csv_file in csv_files %}
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1&amp;file={{ csv_file | urlencode }}" hx-target="#results-view" hx-indicator="#results-progress">View {{ csv_file }}</button>
-      <a class="btn btn-sm" href="/results/{{ run_id }}/csv/download?file={{ csv_file | urlencode }}">Download {{ csv_file }}</a>
-      {% endfor %}
-      <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-progress">View code</button>
+  <div class="mapping-layout">
+    <div class="mapping-workflow">
+      <section class="card">
+        <h2>Run summary</h2>
+        <div class="client-file-summary">
+          <div><strong>Status</strong><span>{{ run.status.value|title }}</span></div>
+          <div><strong>Output tables</strong><span>{{ csv_files|length }}</span></div>
+          <div><strong>Validation results</strong><span>{{ validation_results|length }}</span></div>
+          <div><strong>Mapping version</strong><span>{{ run.mapping_spec_id }}</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="results-table-header">
+          <div><h2>Output tables</h2><p class="muted">Choose an output table to search, inspect, or download.</p></div>
+          <button class="btn btn-sm" hx-get="/results/{{ run_id }}/code" hx-target="#results-view" hx-indicator="#results-progress">View pipeline code</button>
+        </div>
+        {% if csv_files %}
+        <div class="result-file-actions">
+          {% for csv_file in csv_files %}
+          <button class="btn btn-sm" hx-get="/results/{{ run_id }}/csv?page=1&amp;file={{ csv_file | urlencode }}" hx-target="#results-view" hx-indicator="#results-progress">View {{ csv_file }}</button>
+          <a class="btn btn-sm" href="/results/{{ run_id }}/csv/download?file={{ csv_file | urlencode }}">Download CSV</a>
+          {% endfor %}
+        </div>
+        <div id="results-view" class="results-view" hx-get="/results/{{ run_id }}/csv?page=1&amp;file={{ csv_files[0] | urlencode }}" hx-trigger="load" hx-indicator="#results-progress">
+          <p class="muted">Loading output…</p>
+        </div>
+        {% else %}
+        <div id="results-view" class="results-view"><p class="muted">No CSV output was generated for this run.</p></div>
+        {% endif %}
+        <span id="results-progress" class="htmx-indicator progress-indicator" aria-live="polite"><span class="spinner" aria-hidden="true"></span>Loading output…</span>
+      </section>
+
+      {% if validation_results %}
+      <section class="card warning-panel">
+          <h2>Validation review</h2>
+          <ul class="warning-list">
+          {% for result in validation_results %}
+          <li><strong>{{ "Passed" if result.passed else "Failed" }} · {{ result.test_name }}</strong> — {{ result.severity|title }}{% if result.details.message %}: {{ result.details.message }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
     </div>
+
+    <aside class="mapping-summary card">
+      <p class="eyebrow">Result actions</p>
+      <h2>Next action</h2>
+      <p class="muted">Confirm when the generated output and validation results are ready for delivery.</p>
+      <form hx-post="/results/{{ run_id }}/confirm" hx-target="#results-action-result" hx-swap="innerHTML"><button class="btn btn-primary" type="submit">Confirm results</button></form>
+      <form hx-post="/results/{{ run_id }}/reject" hx-target="#results-action-result" hx-swap="innerHTML"><button class="btn" type="submit">Return to mapping review</button></form>
+      <div id="results-action-result" class="mapping-result"></div>
+    </aside>
   </div>
-
-  <div id="results-view" style="margin-top: 1rem;">
-    <p class="muted">Select a view above to see the generated CSV or pipeline code.</p>
-  </div>
-  <span id="results-progress" class="htmx-indicator progress-indicator" aria-live="polite">
-    <span class="spinner" aria-hidden="true"></span>
-    Loading output...
-  </span>
-</div>
-
-<div class="card">
-  <form
-    hx-post="/results/{{ run_id }}/confirm"
-    hx-target="#results-action-result"
-    hx-swap="innerHTML"
-    style="display:inline;"
-  >
-    <button class="btn btn-success" type="submit">Confirm</button>
-  </form>
-
-  <form
-    hx-post="/results/{{ run_id }}/reject"
-    hx-target="#results-action-result"
-    hx-swap="innerHTML"
-    style="display:inline; margin-left: 0.5rem;"
-  >
-    <button class="btn btn-danger" type="submit">Reject & review mapping</button>
-  </form>
-
-  <div id="results-action-result" style="margin-top: 1rem;"></div>
-</div>
+</section>
 {% endblock %}

@@ -3,201 +3,119 @@
 {% block title %}Review mapping - Pipeline of Pipelines{% endblock %}
 
 {% block content %}
-<h1>Review mapping</h1>
+<section class="mapping-page">
+  <header class="mapping-header">
+    <p class="eyebrow">Mapping review · version {{ mapping.version }}</p>
+    <h1>Review mapping</h1>
+    <p class="muted">Review the proposed source, transformation, validation, and confidence for every target field.</p>
+  </header>
 
-<div class="card">
-  <h2>Discovered source tables</h2>
-  <p class="muted">These exact files, sheets, ranges, and parser decisions will be used when the pipeline runs.</p>
-  {% if source_tables %}
-  <div class="table-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th>Source</th>
-          <th>Location</th>
-          <th>Header</th>
-          <th>Rows</th>
-          <th>Confidence</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for table in source_tables %}
-        <tr>
-          <td>
-            <strong>{{ table.display_name }}</strong><br>
-            <span class="muted">{{ table.original_filename }}</span>
-          </td>
-          <td>
-            {% if table.location.sheet_name %}{{ table.location.sheet_name }}{% endif %}
-            {% if table.location.cell_range %}!{{ table.location.cell_range }}{% else %}CSV{% endif %}
-          </td>
-          <td>Row {{ table.location.header_row }}</td>
-          <td>{{ table.row_count }}</td>
-          <td>{{ "%.0f"|format(table.confidence * 100) }}%</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="mapping-layout">
+    <div class="mapping-workflow">
+      <section class="card">
+        <h2>Mapping overview</h2>
+        <div class="client-file-summary">
+          <div><strong>Client</strong><span>{{ mapping.client_name }}</span></div>
+          <div><strong>Target schema</strong><span>{{ mapping.target_schema_json.name }}</span></div>
+          <div><strong>Source snapshots</strong><span>{{ source_tables|length }} tables · immutable</span></div>
+          <div><strong>Fields proposed</strong><span>{{ mapping_columns|length }} fields</span></div>
+          <div><strong>Warnings</strong><span>{{ parse_warnings|length }} review items</span></div>
+          <div><strong>Status</strong><span>{{ mapping.status|title }}</span></div>
+        </div>
+      </section>
+
+      {% if parse_warnings %}
+      <section class="card warning-panel" role="alert">
+        <h2>Source warnings</h2>
+        <ul class="warning-list">
+          {% for warning in parse_warnings %}
+          <li class="warning-{{ warning.severity }}"><strong>{{ warning.source }}:</strong> {{ warning.message }}</li>
+          {% endfor %}
+        </ul>
+      </section>
+      {% endif %}
+
+      <section class="card">
+        <div class="mapping-view-header">
+          <div><h2>Proposed fields</h2><p class="muted">Request a change on an individual field, then rerun the proposal using saved feedback.</p></div>
+          <div class="view-toggle" role="tablist" aria-label="Proposed field views">
+            <button class="btn btn-sm is-active" id="list-view-tab" type="button" role="tab" aria-selected="true" aria-controls="list-view" onclick="showMappingView('list')">List</button>
+            <button class="btn btn-sm" id="table-view-tab" type="button" role="tab" aria-selected="false" aria-controls="table-view" onclick="showMappingView('table')">Table</button>
+          </div>
+        </div>
+
+        <div id="list-view" role="tabpanel" aria-labelledby="list-view-tab">
+          {% for column in mapping_columns %}
+          <article class="mapping-card {% if column.is_unmapped %}warning-panel{% endif %}">
+            <div class="mapping-card-heading">
+              <div>
+                <div class="target">{{ column.target_table }}.{{ column.target_column }}</div>
+                <p class="muted">{{ "Required" if column.target_definition.required else "Optional" }} · {{ column.target_definition.dtype or "Unspecified type" }}{% if column.target_definition.description %} · {{ column.target_definition.description }}{% endif %}</p>
+              </div>
+              <span class="mapping-status {% if column.is_unmapped %}warning{% else %}ready{% endif %}">{{ "Needs review" if column.is_unmapped else "Proposed" }}</span>
+            </div>
+            <dl class="mapping-details">
+              <div><dt>Source</dt><dd>{% if column.source %}{{ column.source_table_display }} → <code>{{ column.source_column_display }}</code>{% else %}No source selected{% endif %}</dd></div>
+              <div><dt>Source profile</dt><dd>{% if column.source_profile %}{{ column.source_profile.inferred_type or "Unknown" }} · {{ column.source_profile.null_count or 0 }} null{% else %}No source profile{% endif %}</dd></div>
+              <div><dt>Logic</dt><dd><code>{{ column.polars_expression or column.transformation_logic or "No transformation proposed" }}</code></dd></div>
+              <div><dt>Evidence</dt><dd>{{ column.evidence_ids|length }} cited item{{ "s" if column.evidence_ids|length != 1 else "" }} · {{ column.transformation_type|title }}</dd></div>
+              <div><dt>Validation</dt><dd>{% if column.tests %}{{ column.tests|join(", ") }}{% elif column.target_definition.required %}Required target field{% else %}No validation proposed{% endif %}</dd></div>
+              <div><dt>Confidence</dt><dd>{% if column.confidence is not none %}{{ "%.0f"|format(column.confidence * 100) }}%{% else %}Not scored{% endif %}</dd></div>
+            </dl>
+            <details class="mapping-advanced">
+              <summary>Edit mapping</summary>
+              <form class="mapping-editor-row" hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}" hx-target="#save-status-{{ column.id }}" hx-swap="innerHTML">
+                <div class="form-group"><label for="source-{{ column.id }}">Source column</label><select id="source-{{ column.id }}" name="source_ref"><option value="">No source column / constant value</option>{% for table in source_tables %}{% for source_column in table.columns %}<option value="{{ table.source_table_id }}|{{ source_column.source_column_id }}" {% if column.source.source_table_id == table.source_table_id and column.source.source_column_id == source_column.source_column_id %}selected{% endif %}>{{ table.display_name }} · {{ source_column.normalized_name }}</option>{% endfor %}{% endfor %}</select></div>
+                <div class="form-group"><label for="logic-{{ column.id }}">Transformation logic</label><input id="logic-{{ column.id }}" name="transformation_logic" value="{{ column.transformation_logic }}"></div>
+                <div class="form-group"><label for="expression-{{ column.id }}">Polars expression</label><textarea id="expression-{{ column.id }}" name="polars_expression">{{ column.polars_expression or "" }}</textarea></div>
+                <input name="transformation_type" type="hidden" value="{{ column.transformation_type }}"><input name="lookup_source_table" type="hidden" value="{{ column.lookup_source_table or "" }}"><input name="lookup_key" type="hidden" value="{{ column.lookup_key or "" }}"><input name="lookup_value" type="hidden" value="{{ column.lookup_value or "" }}">
+                <div class="mapping-editor-footer"><button class="btn btn-sm" type="submit">Save mapping</button><span id="save-status-{{ column.id }}" aria-live="polite"></span></div>
+              </form>
+            </details>
+            <div class="mapping-feedback-actions"><button class="btn btn-sm" type="button" onclick="toggleFeedback('list-feedback-{{ column.id }}')">Request change</button></div>
+            <form id="list-feedback-{{ column.id }}" class="mapping-feedback" hidden hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}/feedback" hx-target="#feedback-status-{{ column.id }}" hx-swap="innerHTML">
+              <label for="feedback-{{ column.id }}">What should change?</label><textarea id="feedback-{{ column.id }}" name="comment" required placeholder="Describe the requested mapping change."></textarea><div class="mapping-feedback-actions"><button class="btn btn-primary btn-sm" type="submit">Save feedback</button><span id="feedback-status-{{ column.id }}" aria-live="polite"></span></div>
+            </form>
+          </article>
+          {% else %}<p class="muted">No proposed mappings are available to review.</p>{% endfor %}
+        </div>
+
+        <div id="table-view" role="tabpanel" aria-labelledby="table-view-tab" hidden>
+          <div class="table-wrap"><table><thead><tr><th>Target field</th><th>Target requirements</th><th>Source</th><th>Source profile</th><th>Logic</th><th>Evidence</th><th>Validation</th><th>Confidence</th><th>Review</th><th>Feedback</th></tr></thead><tbody>
+            {% for column in mapping_columns %}
+            <tr><td><strong>{{ column.target_table }}.{{ column.target_column }}</strong></td><td>{{ "Required" if column.target_definition.required else "Optional" }}<br>{{ column.target_definition.dtype or "Unspecified" }}</td><td>{% if column.source %}{{ column.source_table_display }} → {{ column.source_column_display }}{% else %}No source selected{% endif %}</td><td>{% if column.source_profile %}{{ column.source_profile.inferred_type or "Unknown" }}<br>{{ column.source_profile.null_count or 0 }} null{% else %}—{% endif %}</td><td><code>{{ column.polars_expression or column.transformation_logic or "—" }}</code></td><td>{{ column.evidence_ids|length }} cited item{{ "s" if column.evidence_ids|length != 1 else "" }}</td><td>{% if column.tests %}{{ column.tests|join(", ") }}{% elif column.target_definition.required %}Required{% else %}—{% endif %}</td><td>{% if column.confidence is not none %}{{ "%.0f"|format(column.confidence * 100) }}%{% else %}—{% endif %}</td><td><span class="mapping-status {% if column.is_unmapped %}warning{% else %}ready{% endif %}">{{ "Needs review" if column.is_unmapped else "Proposed" }}</span></td><td class="mapping-table-actions"><button class="btn btn-sm" type="button" onclick="toggleFeedback('table-feedback-{{ column.id }}')">Request change</button></td></tr>
+            <tr id="table-feedback-{{ column.id }}" class="mapping-feedback-row" hidden><td colspan="10"><form class="mapping-feedback" hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}/feedback" hx-target="#table-feedback-status-{{ column.id }}" hx-swap="innerHTML"><label for="table-comment-{{ column.id }}">Feedback for {{ column.target_column }}</label><textarea id="table-comment-{{ column.id }}" name="comment" required placeholder="Describe the requested mapping change."></textarea><div class="mapping-feedback-actions"><button class="btn btn-primary btn-sm" type="submit">Save feedback</button><span id="table-feedback-status-{{ column.id }}" aria-live="polite"></span></div></form></td></tr>
+            {% endfor %}
+          </tbody></table></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="mapping-summary card">
+      <p class="eyebrow">Mapping version {{ mapping.version }}</p><h2>Next action</h2>
+      <p class="muted">Saved feedback is included when a revised proposal is generated.</p>
+      <form hx-post="/mapping/{{ spec_id }}/rerun" hx-target="#mapping-result" hx-swap="innerHTML" hx-indicator="#rerun-progress"><button class="btn btn-primary" type="submit">Rerun mapping with feedback</button><span id="rerun-progress" class="htmx-indicator progress-indicator"><span class="spinner" aria-hidden="true"></span>Creating a revised proposal…</span></form>
+      <form hx-post="/mapping/{{ spec_id }}/confirm" hx-target="#mapping-result" hx-swap="innerHTML" hx-indicator="#mapping-progress"><button class="btn" type="submit">Run mapping</button><span id="mapping-progress" class="htmx-indicator progress-indicator"><span class="spinner" aria-hidden="true"></span>Generating and running…</span></form>
+      <a class="btn" href="/mapping">Create another mapping</a><div id="mapping-result" class="mapping-result"></div>
+    </aside>
   </div>
-  {% else %}
-  <p class="muted">No tabular sources were catalogued.</p>
-  {% endif %}
-</div>
-
-{% if parse_warnings %}
-<div class="card warning-panel" role="alert">
-  <h2>Parsing warnings</h2>
-  <p>Review these warnings before approving the mapping.</p>
-  <ul class="warning-list">
-    {% for warning in parse_warnings %}
-    <li class="warning-{{ warning.severity }}">
-      <strong>{{ warning.source }}: {{ warning.code }}</strong>
-      — {{ warning.message }}
-      {% if warning.location %}<span class="muted">({{ warning.location }})</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-</div>
-{% endif %}
-
-<details class="card">
-  <summary><strong>Target schema</strong> <span class="muted">File for this mapping</span></summary>
-  <p><a href="/mapping/{{ spec_id }}/target-schema.json">Download target_schema.json</a></p>
-  <pre class="code-editor">{{ target_schema_json }}</pre>
-</details>
-
-<div class="card">
-  <h2>Mapping editor</h2>
-  <p class="muted">Review each proposed target mapping below. Select a catalogued source, explain the transformation, and optionally refine the generated Polars expression.</p>
-  {% for column in mapping_columns %}
-  {% set source = column.source_columns[0] if column.source_columns else {} %}
-  <form class="mapping-editor-row"
-        hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}"
-        hx-target="#save-status-{{ column.id }}"
-        hx-swap="innerHTML">
-    <div class="mapping-editor-heading">
-      <div><span class="muted">Target</span><strong>{{ column.target_table }}.{{ column.target_column }}</strong></div>
-      <span class="badge badge-proposed">{{ "%.0f"|format((column.confidence or 0) * 100) }}% confidence</span>
-    </div>
-    <div class="grid grid-2">
-      <div class="form-group">
-        <label for="source-{{ column.id }}">Source column</label>
-        <select id="source-{{ column.id }}" name="source_ref">
-          <option value="">No source column / constant value</option>
-          {% for table in source_tables %}
-            {% for source_column in table.columns %}
-            <option value="{{ table.source_table_id }}|{{ source_column.source_column_id }}"
-              {% if source.source_table_id == table.source_table_id and source.source_column_id == source_column.source_column_id %}selected{% endif %}>
-              {{ table.display_name }} · {{ source_column.normalized_name }}
-            </option>
-            {% endfor %}
-          {% endfor %}
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="type-{{ column.id }}">Transformation type</label>
-        <select id="type-{{ column.id }}" name="transformation_type">
-          {% for type in ["expression", "lookup", "aggregation", "filter"] %}
-          <option value="{{ type }}" {% if column.transformation_type == type %}selected{% endif %}>{{ type|title }}</option>
-          {% endfor %}
-        </select>
-      </div>
-    </div>
-    <div class="form-group">
-      <label for="logic-{{ column.id }}">Transformation logic</label>
-      <input id="logic-{{ column.id }}" name="transformation_logic" value="{{ column.transformation_logic }}">
-    </div>
-    <details class="mapping-advanced">
-      <summary>Optional expression and lookup settings</summary>
-      <div class="form-group">
-        <label for="expression-{{ column.id }}">Polars expression</label>
-        <textarea id="expression-{{ column.id }}" name="polars_expression" placeholder="col('source').cast(String)">{{ column.polars_expression or "" }}</textarea>
-      </div>
-      <div class="grid grid-3">
-        <div class="form-group">
-          <label for="lookup-table-{{ column.id }}">Lookup table</label>
-          <select id="lookup-table-{{ column.id }}" name="lookup_source_table">
-            <option value="">No lookup table</option>
-            {% for table in source_tables %}
-            <option value="{{ table.source_table_id }}" {% if column.lookup_source_table == table.source_table_id %}selected{% endif %}>{{ table.display_name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="lookup-key-{{ column.id }}">Lookup key</label>
-          <input id="lookup-key-{{ column.id }}" name="lookup_key" value="{{ column.lookup_key or "" }}">
-        </div>
-        <div class="form-group">
-          <label for="lookup-value-{{ column.id }}">Lookup value</label>
-          <input id="lookup-value-{{ column.id }}" name="lookup_value" value="{{ column.lookup_value or "" }}">
-        </div>
-      </div>
-    </details>
-    <div class="mapping-editor-footer">
-      <button class="btn btn-primary btn-sm" type="submit">Save mapping</button>
-      <span id="save-status-{{ column.id }}" aria-live="polite"></span>
-    </div>
-  </form>
-  <form class="mapping-feedback"
-        hx-post="/mapping/{{ spec_id }}/columns/{{ column.id }}/feedback"
-        hx-target="#feedback-status-{{ column.id }}"
-        hx-swap="innerHTML">
-    <label for="feedback-{{ column.id }}">Request a change</label>
-    <textarea id="feedback-{{ column.id }}" name="comment" required placeholder="Explain what should change in this field's mapping."></textarea>
-    <div class="mapping-editor-footer">
-      <button class="btn btn-sm" type="submit">Save feedback</button>
-      <span id="feedback-status-{{ column.id }}" aria-live="polite"></span>
-    </div>
-  </form>
-  {% else %}
-  <p class="muted">No proposed mappings are available to edit.</p>
-  {% endfor %}
-</div>
-
-<details class="card">
-  <summary><strong>Raw mapping JSON</strong> <span class="muted">Advanced review</span></summary>
-  <pre class="code-editor">{{ mapping_json }}</pre>
-</details>
-
-<div class="card">
-  <form
-    hx-post="/mapping/{{ spec_id }}/rerun"
-    hx-target="#mapping-result"
-    hx-swap="innerHTML"
-    hx-indicator="#rerun-progress"
-    style="display:inline;"
-  >
-    <button class="btn btn-primary" type="submit">Rerun mapping with feedback</button>
-    <span id="rerun-progress" class="htmx-indicator progress-indicator" aria-live="polite">
-      <span class="spinner" aria-hidden="true"></span>
-      Creating a revised proposal...
-    </span>
-  </form>
-  <form
-    hx-post="/mapping/{{ spec_id }}/confirm"
-    hx-target="#mapping-result"
-    hx-swap="innerHTML"
-    hx-indicator="#mapping-progress"
-    style="display:inline;"
-  >
-    <button class="btn btn-success" type="submit">
-      Approve mapping & generate output
-    </button>
-    <span id="mapping-progress" class="htmx-indicator progress-indicator" aria-live="polite">
-      <span class="spinner" aria-hidden="true"></span>
-      Generating and running the approved pipeline...
-    </span>
-  </form>
-
-  <form
-    hx-post="/mapping/{{ spec_id }}/reject"
-    hx-target="#mapping-result"
-    hx-swap="innerHTML"
-    style="display:inline; margin-left: 0.5rem;"
-  >
-    <button class="btn btn-danger" type="submit">Reject & re-upload</button>
-  </form>
-
-  <div id="mapping-result" style="margin-top: 1rem;"></div>
-</div>
+</section>
+<script>
+function showMappingView(view) {
+  const list = view === 'list';
+  document.getElementById('list-view').hidden = !list;
+  document.getElementById('table-view').hidden = list;
+  document.getElementById('list-view-tab').classList.toggle('is-active', list);
+  document.getElementById('table-view-tab').classList.toggle('is-active', !list);
+  document.getElementById('list-view-tab').setAttribute('aria-selected', String(list));
+  document.getElementById('table-view-tab').setAttribute('aria-selected', String(!list));
+}
+function toggleFeedback(id) {
+  const panel = document.getElementById(id);
+  const wasOpen = !panel.hidden;
+  document.querySelectorAll('.mapping-feedback, .mapping-feedback-row').forEach(item => { item.hidden = true; });
+  panel.hidden = wasOpen;
+  if (!wasOpen) panel.querySelector('textarea').focus();
+}
+</script>
 {% endblock %}
