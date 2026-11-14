@@ -90,6 +90,22 @@ h1, h2, h3 { margin-top: 0; }
   box-shadow: var(--shadow);
 }
 
+.home-hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 1.5rem;
+  padding: 2.5rem;
+}
+
+.home-hero-public { max-width: 760px; margin: 4rem auto; }
+.home-hero h1 { font-size: clamp(2rem, 5vw, 3rem); margin-bottom: 0.75rem; }
+.eyebrow { color: var(--primary); font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.home-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+.home-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.home-grid .card { margin-bottom: 0; }
+
 .card-header {
   display: flex;
   align-items: center;

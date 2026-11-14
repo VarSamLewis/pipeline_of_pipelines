@@ -42,6 +42,7 @@ from auth_service import (
     authenticate_clerk_session,
     clear_session,
     create_session,
+    get_current_user,
     require_auth,
     require_client_membership,
     require_role,
@@ -79,6 +80,7 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
+from fastapi.templating import Jinja2Templates
 from file_ops import (
     compute_sha256,
     detect_file_type,
@@ -109,6 +111,7 @@ from workflow import (
 )
 
 app = APIRouter()
+templates = Jinja2Templates(directory=str(get_settings().templates_dir))
 
 
 @app.get("/health")
@@ -205,9 +208,16 @@ def login_page(request: Request) -> RedirectResponse:
 
 
 @app.get("/")
-def root(request: Request) -> RedirectResponse:
-    """Redirect the root URL to the upload page."""
-    return RedirectResponse(url="/upload")
+def root(
+    request: Request,
+    user: Any | None = Depends(get_current_user),
+) -> Response:
+    """Render the public landing page or the signed-in workflow dashboard."""
+    return templates.TemplateResponse(
+        request,
+        "home.html",
+        {"request": request, "user": user},
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline of Pipelines{% endblock %}
+
+{% block content %}
+{% if user %}
+  <section class="home-hero">
+    <p class="eyebrow">Workspace</p>
+    <h1>Welcome back{% if user.name %}, {{ user.name }}{% endif %}</h1>
+    <p class="muted">Start a new mapping, continue working with a client, or review completed runs.</p>
+    <div class="home-actions">
+      <a class="btn btn-primary" href="/upload">Create a new mapping</a>
+      <a class="btn" href="/client-library">View clients</a>
+      <a class="btn" href="/runs">View runs</a>
+    </div>
+  </section>
+
+  <section class="home-grid" aria-label="Workspace actions">
+    <article class="card">
+      <h2>1. Add source files</h2>
+      <p>Choose a client, select stored snapshots, upload files, or import an explicitly selected Google Drive file.</p>
+      <a href="/upload">Open upload workflow</a>
+    </article>
+    <article class="card">
+      <h2>2. Review mappings</h2>
+      <p>Review proposed source-to-target transformations and resolve warnings before approval.</p>
+      <a href="/client-library">Browse clients and mappings</a>
+    </article>
+    <article class="card">
+      <h2>3. Review results</h2>
+      <p>Inspect generated tables, validation outcomes, and execution history before confirming outputs.</p>
+      <a href="/runs">Open run history</a>
+    </article>
+  </section>
+{% else %}
+  <section class="home-hero home-hero-public">
+    <p class="eyebrow">Auditable data transformations</p>
+    <h1>Turn client files into reviewable data pipelines.</h1>
+    <p class="muted">Import source data, approve mappings, and retain an auditable record of every transformation.</p>
+    <div class="home-actions">
+      <a class="btn btn-primary" href="/login">Sign in</a>
+      <a class="btn" href="/privacy">Privacy notice</a>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}
