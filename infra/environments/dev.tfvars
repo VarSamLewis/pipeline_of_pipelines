@@ -32,3 +32,12 @@ bootstrap_admin_emails    = ["samlewis1999.sl@gmail.com"]
 
 min_instances = 0
 max_instances = 3
+
+# Pause the dev database outside working hours (00:00-07:00 UTC). Stopping
+# preserves all data, backups, and settings; only compute billing pauses.
+db_stop_schedule  = "0 0 * * *"
+db_start_schedule = "0 7 * * *"
+
+# One level down from db-custom-1-3840: shared core, 1.7 GB RAM, ~50-connection
+# cap (3 Cloud Run instances x 15 pooled connections). ~$26/mo vs ~$51/mo.
+db_tier = "db-g1-small"
