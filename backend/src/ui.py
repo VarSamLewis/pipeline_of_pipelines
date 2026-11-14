@@ -74,7 +74,9 @@ from workflow import (
     list_visible_clients,
     reject_mapping,
     reject_result,
+    rerun_mapping_with_feedback,
     revoke_organization_reviewer_invitation,
+    save_mapping_feedback,
 )
 from workflow import (
     save_organization_key as save_organization_key_record,
@@ -639,6 +641,46 @@ def update_mapping_column_from_editor(
         raise HTTPException(422, str(exc)) from exc
 
     return HTMLResponse("<span class='save-note'>Saved</span>")
+
+
+@router.post("/mapping/{spec_id}/columns/{column_id}/feedback")
+def save_mapping_feedback_from_review(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    comment: str = Form(...),
+    user: Any = Depends(require_role("reviewer")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Persist reviewer feedback for one proposed mapping field."""
+    try:
+        save_mapping_feedback(
+            spec_id,
+            column_id,
+            author_user_id=user.id,
+            comment=comment,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return HTMLResponse("<span class='save-note'>Feedback saved</span>")
+
+
+@router.post("/mapping/{spec_id}/rerun")
+def rerun_mapping_from_review(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_role("reviewer")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Create and propose a revision using the saved field feedback."""
+    try:
+        revision_id = rerun_mapping_with_feedback(spec_id)
+    except (RuntimeError, ValueError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, f"/mapping/{revision_id}")
 
 
 @router.post("/mapping/{spec_id}/confirm")

@@ -602,6 +602,24 @@ class MappingColumn(SQLModel, table=True):
     sort_order: int = SQLField(default=0)
 
 
+class MappingFeedback(SQLModel, table=True):
+    """Reviewer feedback for one proposed mapping field."""
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    mapping_spec_id: uuid.UUID = SQLField(foreign_key="mappingspec.id", index=True)
+    mapping_column_id: uuid.UUID = SQLField(foreign_key="mappingcolumn.id", index=True)
+    author_user_id: uuid.UUID = SQLField(foreign_key="user.id", index=True)
+    comment: str = SQLField(sa_column=Column(Text))
+    rerun_mapping_spec_id: uuid.UUID | None = SQLField(
+        default=None,
+        foreign_key="mappingspec.id",
+        index=True,
+    )
+    created_at: datetime.datetime = SQLField(
+        default_factory=datetime.datetime.utcnow,
+    )
+
+
 class GeneratedArtifact(SQLModel, table=True):
     """Artifact generated from an approved mapping specification."""
 

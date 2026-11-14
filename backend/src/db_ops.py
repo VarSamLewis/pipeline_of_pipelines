@@ -31,6 +31,7 @@ from models import (
     FolderIngestionResult,
     GeneratedArtifact,
     MappingColumn,
+    MappingFeedback,
     MappingSpec,
     MappingSpecStatus,
     Organization,
@@ -765,10 +766,12 @@ def create_mapping_spec(
     source_raw_file_ids: list[uuid.UUID],
     target_schema: TargetSchema,
     description: str | None,
+    version: int = 1,
 ) -> MappingSpec:
     """Create a new mapping specification draft."""
     spec = MappingSpec(
         client_id=client_id,
+        version=version,
         source_raw_file_ids=[str(x) for x in source_raw_file_ids],
         target_schema_json=target_schema.model_dump(mode="json"),
         description=description,
@@ -785,6 +788,40 @@ def get_mapping_spec(
 ) -> MappingSpec | None:
     """Fetch a mapping specification by UUID."""
     return session.get(MappingSpec, mapping_spec_id)
+
+
+def create_mapping_feedback(
+    session: Session,
+    *,
+    mapping_spec_id: uuid.UUID,
+    mapping_column_id: uuid.UUID,
+    author_user_id: uuid.UUID,
+    comment: str,
+) -> MappingFeedback:
+    """Persist reviewer feedback for a proposed mapping column."""
+    feedback = MappingFeedback(
+        mapping_spec_id=mapping_spec_id,
+        mapping_column_id=mapping_column_id,
+        author_user_id=author_user_id,
+        comment=comment,
+    )
+    session.add(feedback)
+    session.commit()
+    session.refresh(feedback)
+    return feedback
+
+
+def list_mapping_feedback(
+    session: Session,
+    mapping_spec_id: uuid.UUID,
+) -> Sequence[MappingFeedback]:
+    """List feedback in creation order for a mapping revision."""
+    statement = (
+        select(MappingFeedback)
+        .where(MappingFeedback.mapping_spec_id == mapping_spec_id)
+        .order_by(cast(Any, MappingFeedback.created_at))
+    )
+    return session.exec(statement).all()
 
 
 def approve_mapping_spec(

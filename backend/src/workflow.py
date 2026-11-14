@@ -30,11 +30,13 @@ from codegen import (
 from config import get_settings
 from db_ops import (
     approve_mapping_spec,
+    create_mapping_feedback,
     create_mapping_spec,
     create_raw_file,
     get_mapping_spec,
     get_raw_file_by_id,
     get_session,
+    list_mapping_feedback,
     parse_raw_file_with_status,
     update_mapping_spec_status,
 )
@@ -54,6 +56,7 @@ from models import (
     FileStatus,
     GeneratedArtifact,
     MappingColumn,
+    MappingFeedback,
     MappingSpec,
     MappingSpecStatus,
     Organization,
@@ -706,6 +709,7 @@ def propose_mapping(
     api_key: str | None = None,
     base_url: str | None = None,
     top_k_evidence: int = 10,
+    reviewer_feedback: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Propose columns for an existing draft mapping specification."""
     settings = get_settings()
@@ -729,8 +733,76 @@ def propose_mapping(
             api_key=api_key or organization_api_key,
             base_url=base_url or organization_base_url,
             top_k_evidence=top_k_evidence,
+            reviewer_feedback=reviewer_feedback,
         )
     return get_mapping_review(spec_id)
+
+
+def save_mapping_feedback(
+    spec_id: uuid.UUID,
+    column_id: uuid.UUID,
+    *,
+    author_user_id: uuid.UUID,
+    comment: str,
+) -> MappingFeedback:
+    """Persist reviewer feedback after checking the column belongs to the spec."""
+    comment = comment.strip()
+    if not comment:
+        raise ValueError("Feedback is required")
+    with get_session() as session:
+        column = session.get(MappingColumn, column_id)
+        if column is None or column.mapping_spec_id != spec_id:
+            raise ValueError("Mapping column not found")
+        return create_mapping_feedback(
+            session,
+            mapping_spec_id=spec_id,
+            mapping_column_id=column_id,
+            author_user_id=author_user_id,
+            comment=comment,
+        )
+
+
+def rerun_mapping_with_feedback(spec_id: uuid.UUID) -> uuid.UUID:
+    """Create a new mapping-spec version and propose it using saved feedback."""
+    with get_session() as session:
+        spec = get_mapping_spec(session, spec_id)
+        if spec is None:
+            raise ValueError("Mapping spec not found")
+        feedback = list(list_mapping_feedback(session, spec_id))
+        if not feedback:
+            raise ValueError("Add field feedback before rerunning the mapping")
+        columns = {
+            column.id: column
+            for column in session.exec(
+                select(MappingColumn).where(MappingColumn.mapping_spec_id == spec_id)
+            ).all()
+        }
+        prompt_feedback = [
+            {
+                "target_column": columns[item.mapping_column_id].target_column,
+                "comment": item.comment,
+            }
+            for item in feedback
+            if item.mapping_column_id in columns
+        ]
+        target_schema = TargetSchema.model_validate(spec.target_schema_json)
+        revision = create_mapping_spec(
+            session,
+            client_id=spec.client_id,
+            source_raw_file_ids=[
+                uuid.UUID(str(item)) for item in spec.source_raw_file_ids
+            ],
+            target_schema=target_schema,
+            description=f"Revision {spec.version + 1} of mapping {spec.id}",
+            version=spec.version + 1,
+        )
+        for item in feedback:
+            item.rerun_mapping_spec_id = revision.id
+            session.add(item)
+        session.commit()
+
+    propose_mapping(revision.id, reviewer_feedback=prompt_feedback)
+    return revision.id
 
 
 def approve_mapping(
