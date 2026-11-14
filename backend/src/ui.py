@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from hashlib import sha256
 from html import escape
 from typing import Any
 
@@ -83,6 +84,10 @@ from workflow import (
 router = APIRouter()
 
 templates = Jinja2Templates(directory=str(get_settings().templates_dir))
+STATIC_CSS_VERSION = sha256(
+    (get_settings().static_dir / "style.css").read_bytes()
+).hexdigest()[:12]
+templates.env.globals["static_css_version"] = STATIC_CSS_VERSION
 
 CSV_DISP_COUNT = 10
 LOCAL_UI_PREVIEW = get_settings().ui_preview_local
