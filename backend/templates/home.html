@@ -10,6 +10,12 @@
     :root { color-scheme: light; font-family: system-ui, sans-serif; color: #172033; background: #f7f8fb; }
     * { box-sizing: border-box; }
     body { margin: 0; }
+    header { background: white; border-bottom: 1px solid #e0e5ed; }
+    .topbar { align-items: center; display: flex; justify-content: space-between; margin: 0 auto; max-width: 1080px; padding: 1rem 1.5rem; }
+    .brand { color: #172033; font-weight: 750; text-decoration: none; }
+    .topbar nav { display: flex; flex-wrap: wrap; gap: 1rem; }
+    .topbar nav a { color: #526078; font-size: .9rem; text-decoration: none; }
+    .topbar nav a:hover { color: #0759c7; }
     main { max-width: 1080px; margin: 0 auto; padding: 5rem 1.5rem 3rem; }
     .eyebrow { color: #0759c7; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     h1 { font-size: clamp(2.25rem, 6vw, 4.5rem); letter-spacing: -.04em; line-height: 1.05; margin: .5rem 0 1rem; max-width: 800px; }
@@ -27,6 +33,16 @@
   </style>
 </head>
 <body>
+  <header>
+    <div class="topbar">
+      <a class="brand" href="/">Pipeline of Pipelines</a>
+      <nav aria-label="Main navigation">
+        <a href="/upload">Start mapping</a>
+        <a href="/client-library">Clients</a>
+        <a href="/runs">Runs</a>
+      </nav>
+    </div>
+  </header>
   <main>
     <p class="eyebrow">Pipeline of Pipelines</p>
     <h1>Reviewable data transformations from client files.</h1>
