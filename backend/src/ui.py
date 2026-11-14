@@ -18,12 +18,7 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
-from auth_service import (
-    AUTH_BYPASS_LOCAL,
-    require_client_membership,
-    require_role,
-    require_ui_auth,
-)
+from auth_service import require_client_membership, require_role, require_ui_auth
 from config import get_settings
 from db_ops import get_session
 from dependencies import get_artifact_store
@@ -90,6 +85,7 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(get_settings().templates_dir))
 
 CSV_DISP_COUNT = 10
+LOCAL_UI_PREVIEW = get_settings().ui_preview_local
 
 
 def _htmx_redirect(request: Request, url: str) -> Response:
@@ -250,7 +246,7 @@ def upload_submit(
     organization_id = uuid.UUID(organization_select)
     valid_source_files = [f for f in source_files if f.filename]
 
-    if AUTH_BYPASS_LOCAL:
+    if LOCAL_UI_PREVIEW:
         return _htmx_redirect(request, "/mapping/preview")
 
     try:
@@ -324,7 +320,7 @@ def local_mapping_preview_page(
     user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Render a static mapping-review screen for local UI development only."""
-    if not AUTH_BYPASS_LOCAL:
+    if not LOCAL_UI_PREVIEW:
         raise HTTPException(404, "Mapping review not found")
     return templates.TemplateResponse(
         request,
@@ -357,7 +353,7 @@ def local_results_preview_page(
     user: Any = Depends(require_ui_auth),
 ) -> Any:
     """Render a static results-review screen for local UI development only."""
-    if not AUTH_BYPASS_LOCAL:
+    if not LOCAL_UI_PREVIEW:
         raise HTTPException(404, "Results review not found")
     return templates.TemplateResponse(
         request,

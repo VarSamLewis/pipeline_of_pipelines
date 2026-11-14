@@ -52,6 +52,7 @@ class Settings:
     session_max_age_seconds: int
     session_cookie_secure: bool
     auth_bypass_local: bool
+    ui_preview_local: bool
     pipeline_execution_timeout_seconds: int
     max_upload_size_bytes: int
     max_source_files: int
@@ -85,6 +86,7 @@ class Settings:
         app_environment = values.get("APP_ENVIRONMENT", "local").lower()
         session_secret_key = values.get("SESSION_SECRET_KEY")
         auth_bypass_local = _as_bool(values.get("AUTH_BYPASS_LOCAL"))
+        ui_preview_local = _as_bool(values.get("UI_PREVIEW_LOCAL"))
         session_cookie_secure = _as_bool(values.get("SESSION_COOKIE_SECURE"))
         bootstrap_admin_emails = frozenset(
             email.strip().lower()
@@ -140,6 +142,7 @@ class Settings:
             session_max_age_seconds=int(values.get("SESSION_MAX_AGE", "86400")),
             session_cookie_secure=session_cookie_secure,
             auth_bypass_local=auth_bypass_local,
+            ui_preview_local=ui_preview_local,
             pipeline_execution_timeout_seconds=int(
                 values.get("PIPELINE_EXECUTION_TIMEOUT_SECONDS", "120")
             ),
