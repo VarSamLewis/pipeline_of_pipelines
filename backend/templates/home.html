@@ -1,46 +1,47 @@
-{% extends "base.html" %}
-
-{% block title %}Pipeline of Pipelines{% endblock %}
-
-{% block content %}
-{% if user %}
-  <section class="home-hero">
-    <p class="eyebrow">Workspace</p>
-    <h1>Welcome back{% if user.name %}, {{ user.name }}{% endif %}</h1>
-    <p class="muted">Start a new mapping, continue working with a client, or review completed runs.</p>
-    <div class="home-actions">
-      <a class="btn btn-primary" href="/upload">Create a new mapping</a>
-      <a class="btn" href="/client-library">View clients</a>
-      <a class="btn" href="/runs">View runs</a>
-    </div>
-  </section>
-
-  <section class="home-grid" aria-label="Workspace actions">
-    <article class="card">
-      <h2>1. Add source files</h2>
-      <p>Choose a client, select stored snapshots, upload files, or import an explicitly selected Google Drive file.</p>
-      <a href="/upload">Open upload workflow</a>
-    </article>
-    <article class="card">
-      <h2>2. Review mappings</h2>
-      <p>Review proposed source-to-target transformations and resolve warnings before approval.</p>
-      <a href="/client-library">Browse clients and mappings</a>
-    </article>
-    <article class="card">
-      <h2>3. Review results</h2>
-      <p>Inspect generated tables, validation outcomes, and execution history before confirming outputs.</p>
-      <a href="/runs">Open run history</a>
-    </article>
-  </section>
-{% else %}
-  <section class="home-hero home-hero-public">
-    <p class="eyebrow">Auditable data transformations</p>
-    <h1>Turn client files into reviewable data pipelines.</h1>
-    <p class="muted">Import source data, approve mappings, and retain an auditable record of every transformation.</p>
-    <div class="home-actions">
-      <a class="btn btn-primary" href="/login">Sign in</a>
-      <a class="btn" href="/privacy">Privacy notice</a>
-    </div>
-  </section>
-{% endif %}
-{% endblock %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Auditable data transformation workflows for client files.">
+  <link rel="icon" href="data:,">
+  <title>Pipeline of Pipelines</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #172033; background: #f7f8fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 1080px; margin: 0 auto; padding: 5rem 1.5rem 3rem; }
+    .eyebrow { color: #0759c7; font-size: .8rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { font-size: clamp(2.25rem, 6vw, 4.5rem); letter-spacing: -.04em; line-height: 1.05; margin: .5rem 0 1rem; max-width: 800px; }
+    .lede { color: #526078; font-size: 1.15rem; line-height: 1.6; max-width: 680px; }
+    .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 2rem 0 4rem; }
+    .button { border: 1px solid #cbd3e0; border-radius: .45rem; color: #172033; padding: .7rem 1rem; text-decoration: none; }
+    .button-primary { background: #0759c7; border-color: #0759c7; color: white; }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    article { background: white; border: 1px solid #e0e5ed; border-radius: .65rem; padding: 1.35rem; }
+    h2 { font-size: 1.05rem; margin-top: 0; }
+    p { line-height: 1.55; }
+    article p { color: #526078; min-height: 4.7rem; }
+    a { color: #0759c7; }
+    footer { color: #6d788b; font-size: .9rem; margin-top: 4rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Pipeline of Pipelines</p>
+    <h1>Reviewable data transformations from client files.</h1>
+    <p class="lede">Select source data, approve mappings, and retain an auditable record of each transformation.</p>
+    <nav class="actions" aria-label="Primary actions">
+      <a class="button button-primary" href="/upload">Start a mapping</a>
+      <a class="button" href="/client-library">Browse clients</a>
+      <a class="button" href="/runs">Review runs</a>
+    </nav>
+    <section class="grid" aria-label="Workflow overview">
+      <article><h2>1. Add source files</h2><p>Use stored snapshots, upload files, or explicitly import selected Google Drive files.</p><a href="/upload">Open upload workflow</a></article>
+      <article><h2>2. Review mappings</h2><p>Confirm source-to-target transformations and resolve warnings before approval.</p><a href="/client-library">View clients</a></article>
+      <article><h2>3. Review results</h2><p>Inspect output tables, validation outcomes, and execution history before confirmation.</p><a href="/runs">View runs</a></article>
+    </section>
+    <footer><a href="/privacy">Privacy notice</a></footer>
+  </main>
+</body>
+</html>

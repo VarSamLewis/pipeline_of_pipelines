@@ -42,7 +42,6 @@ from auth_service import (
     authenticate_clerk_session,
     clear_session,
     create_session,
-    get_current_user,
     require_auth,
     require_client_membership,
     require_role,
@@ -208,15 +207,12 @@ def login_page(request: Request) -> RedirectResponse:
 
 
 @app.get("/")
-def root(
-    request: Request,
-    user: Any | None = Depends(get_current_user),
-) -> Response:
-    """Render the public landing page or the signed-in workflow dashboard."""
+def root(request: Request) -> Response:
+    """Render a static, single-document landing page with workflow entry points."""
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"request": request, "user": user},
+        {"request": request},
     )
 
 
