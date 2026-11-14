@@ -24,6 +24,14 @@ jobs:
       - run: bash scripts/test-integration.sh
       - run: git diff --check
       - run: docker build --tag pipeline-of-pipelines:ci .
+      - name: Verify migrations in runtime image
+        run: |
+          docker run --rm --entrypoint python pipeline-of-pipelines:ci -c '
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          script = ScriptDirectory.from_config(Config("/app/alembic.ini"))
+          assert len(script.get_heads()) == 1
+          '
 
   terraform:
     runs-on: ubuntu-latest
