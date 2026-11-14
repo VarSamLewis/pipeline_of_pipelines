@@ -11,44 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-@pytest.fixture
-def client_with_schema(
-    client: TestClient,
-    registered_client: dict,
-    simple_schema_file: Path,
-) -> dict:
-    """Register a target schema for the test client."""
-    client_id = registered_client["id"]
-    with open(simple_schema_file, "rb") as f:
-        response = client.post(
-            f"/clients/{client_id}/target-schema",
-            files={"schema_file": ("target_schema.json", f, "application/json")},
-        )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-@pytest.fixture
-def ingested_batch(
-    client: TestClient,
-    registered_client: dict,
-    simple_data_folder: Path,
-    mock_openai: None,
-) -> dict:
-    """Ingest the simple data folder."""
-    client_id = registered_client["id"]
-    response = client.post(
-        f"/clients/{client_id}/ingest-folder",
-        data={"folder_path": str(simple_data_folder)},
-        headers={
-            "X-OpenAI-Api-Key": "test-byok-key",
-            "X-OpenAI-Base-Url": "https://api.openai.com/v1",
-        },
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
 def test_create_client(registered_client: dict) -> None:
     """Client creation should return a UUID without exposing a code."""
     assert uuid.UUID(registered_client["id"])
@@ -855,37 +817,9 @@ def test_mapping_keeps_its_context_snapshot_after_supersession(
     assert old_id in client.get(f"/mapping-specs/{spec_id}").json()[
         "context_evidence_ids"
     ]
-
     upload("Customer account fee is 20")
     with get_session() as session:
         assert session.get(ExtractedEvidence, uuid.UUID(old_id)).active is False
     assert old_id in client.get(f"/mapping-specs/{spec_id}").json()[
         "context_evidence_ids"
     ]
-
-
-@pytest.fixture
-def client() -> TestClient:
-    """Return a FastAPI TestClient."""
-    from app import app
-
-    return TestClient(app)
-
-
-@pytest.fixture
-def registered_client(client: TestClient) -> dict:
-    """Create a client and return its record."""
-    from db_ops import get_session
-    from models import Organization
-
-    with get_session() as session:
-        organization = Organization(name=f"Test organization {uuid.uuid4()}")
-        session.add(organization)
-        session.commit()
-        session.refresh(organization)
-    response = client.post(
-        "/clients",
-        json={"name": "Test Client", "organization_id": str(organization.id)},
-    )
-    assert response.status_code == 200, response.text
-    return {**response.json(), "organization_id": str(organization.id)}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Review candidate - Pipeline of Pipelines{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Review candidate {{ candidate.attempt }} of 3</h1>
+  <p>Status: {{ candidate.status }} · Mode: {{ candidate.mode }}</p>
+  <p>The input snapshots are identified by their SHA-256 hashes. The code below is the exact version tested in the isolated worker.</p>
+  <h2>Input snapshot hashes</h2>
+  <pre>{{ candidate.source_hashes | tojson(indent=2) }}</pre>
+  <h2>Preview and validation</h2>
+  <pre>{{ candidate.result | tojson(indent=2) }}</pre>
+  {% for name in candidate.result.get('outputs', []) %}
+  <p><a href="/mapping/{{ spec_id }}/candidate/{{ candidate.id }}/outputs/{{ name[:-4] }}.csv">Download {{ name }} preview</a></p>
+  {% endfor %}
+  <h2>Generated Python</h2>
+  <pre><code>{{ candidate.script }}</code></pre>
+  {% if candidate.status == "passed" %}
+  <form method="post" action="/mapping/{{ spec_id }}/candidate/{{ candidate.id }}/approve">
+    <button class="btn btn-primary" type="submit">Approve code and publish results</button>
+  </form>
+  {% endif %}
+  <a href="/mapping/{{ spec_id }}">Back to mapping review</a>
+</section>
+{% endblock %}

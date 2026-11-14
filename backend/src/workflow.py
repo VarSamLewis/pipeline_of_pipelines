@@ -835,6 +835,8 @@ def generate_artifacts(
     spec_id: uuid.UUID,
 ) -> tuple[Path, list[GeneratedArtifact]]:
     """Generate reviewable mapping and Python artifacts."""
+    if get_settings().candidate_worker_url:
+        raise ValueError("Use an isolated candidate preview and approval")
     store = get_artifact_store()
     output_folder = store.folder(spec_id)
     artifacts = generate_artifact_set(spec_id, output_folder)
@@ -847,6 +849,8 @@ def create_output_folder(
     output_folder: Path | None = None,
 ) -> PipelineOutputFolder:
     """Generate the complete deliverable through infrastructure adapters."""
+    if get_settings().candidate_worker_url:
+        raise ValueError("Use an isolated candidate preview and approval")
     store = get_artifact_store()
     folder = output_folder or store.folder(spec_id)
     output = generate_output_folder(spec_id, folder, get_object_store())
@@ -861,6 +865,8 @@ def execute_approved_mapping(
     output_folder: Path | None = None,
 ) -> dict[str, Any]:
     """Execute the approved generated artifact, validate, and record the run."""
+    if get_settings().candidate_worker_url:
+        raise ValueError("Use an isolated candidate preview and approval")
     from models import ExecutionStatus
 
     with get_session() as session:

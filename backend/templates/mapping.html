@@ -95,7 +95,15 @@
       <p class="eyebrow">Mapping version {{ mapping.version }}</p><h2>Next action</h2>
       <p class="muted">Saved feedback is included when a revised proposal is generated.</p>
       <form hx-post="/mapping/{{ spec_id }}/rerun" hx-target="#mapping-result" hx-swap="innerHTML" hx-indicator="#rerun-progress"><button class="btn btn-primary" type="submit">Rerun mapping with feedback</button><span id="rerun-progress" class="htmx-indicator progress-indicator"><span class="spinner" aria-hidden="true"></span>Creating a revised proposal…</span></form>
+      {% if candidate_worker_enabled %}
+      <p class="muted">Preview up to three isolated candidates, then review the exact code before publishing.</p>
+      <form hx-post="/mapping/{{ spec_id }}/candidate/prepare" hx-target="#mapping-result" hx-swap="innerHTML" hx-indicator="#mapping-progress"><button class="btn" type="submit">Prepare candidate for review</button><span id="mapping-progress" class="htmx-indicator progress-indicator"><span class="spinner" aria-hidden="true"></span>Testing candidate…</span></form>
+      {% for candidate in candidates %}
+      <p><a href="/mapping/{{ spec_id }}/candidate/{{ candidate.id }}">Candidate {{ candidate.attempt }} · {{ candidate.status }}</a></p>
+      {% endfor %}
+      {% else %}
       <form hx-post="/mapping/{{ spec_id }}/confirm" hx-target="#mapping-result" hx-swap="innerHTML" hx-indicator="#mapping-progress"><button class="btn" type="submit">Run mapping</button><span id="mapping-progress" class="htmx-indicator progress-indicator"><span class="spinner" aria-hidden="true"></span>Generating and running…</span></form>
+      {% endif %}
       <a class="btn" href="/mapping">Create another mapping</a><div id="mapping-result" class="mapping-result"></div>
     </aside>
   </div>

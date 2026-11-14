@@ -19,6 +19,7 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
+from adaptive_pipeline import approve_candidate, get_candidates, prepare_candidate
 from auth_service import require_client_membership, require_role, require_ui_auth
 from config import get_settings
 from db_ops import get_session
@@ -55,6 +56,7 @@ from google_drive import (
 )
 from workflow import (
     PartialProposalError,
+    approve_mapping,
     approve_mapping_and_execute,
     approve_result,
     create_organization,
@@ -621,6 +623,10 @@ def mapping_review_page(
             "source_tables": source_tables,
             "parse_warnings": parse_warnings,
             "mapping": mapping,
+            "candidates": (
+                get_candidates(spec_id) if get_settings().candidate_worker_url else []
+            ),
+            "candidate_worker_enabled": bool(get_settings().candidate_worker_url),
         },
     )
 
@@ -726,6 +732,8 @@ def mapping_confirm(
     _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Approve the reviewed mapping, then generate and execute its pipeline."""
+    if get_settings().candidate_worker_url:
+        raise HTTPException(422, "Review a candidate before publishing its results")
     try:
         run_id = approve_mapping_and_execute(spec_id)
     except (RuntimeError, ValueError) as exc:
@@ -735,6 +743,92 @@ def mapping_confirm(
             {**_user_context(request, user), "message": str(exc)},
         )
     return _htmx_redirect(request, f"/results/{run_id}")
+
+
+@router.post("/mapping/{spec_id}/candidate/prepare")
+def prepare_mapping_candidate(
+    request: Request,
+    spec_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Approve the mapping, preview bounded candidates, then show code for review."""
+    if not get_settings().candidate_worker_url:
+        raise HTTPException(503, "Isolated candidate worker is not configured")
+    try:
+        mapping = get_mapping_review(spec_id)
+        if mapping["status"] != "approved":
+            approve_mapping(spec_id, reviewer=str(user.id))
+        candidate = prepare_candidate(spec_id)
+    except (RuntimeError, ValueError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, f"/mapping/{spec_id}/candidate/{candidate.id}")
+
+
+@router.get("/mapping/{spec_id}/candidate/{candidate_id}")
+def review_mapping_candidate(
+    request: Request,
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    user: Any = Depends(require_ui_auth),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Display exact candidate script, source digests, and preview status."""
+    candidate = next(
+        (item for item in get_candidates(spec_id) if item.id == candidate_id), None
+    )
+    if candidate is None:
+        raise HTTPException(404, "Candidate not found")
+    return templates.TemplateResponse(
+        request,
+        "candidate.html",
+        {**_user_context(request, user), "candidate": candidate, "spec_id": spec_id},
+    )
+
+
+@router.post("/mapping/{spec_id}/candidate/{candidate_id}/approve")
+def approve_mapping_candidate(
+    request: Request,
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Publish the exact code and sampled output selected by the reviewer."""
+    try:
+        run_id = approve_candidate(spec_id, candidate_id, str(user.id))
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, f"/results/{run_id}")
+
+
+@router.get("/mapping/{spec_id}/candidate/{candidate_id}/outputs/{table_name}.csv")
+def download_candidate_preview(
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    table_name: str,
+    user: Any = Depends(require_ui_auth),
+    _: None = Depends(require_mapping_spec_access),
+) -> Response:
+    """Expose only this mapping's previewed CSV to its reviewer."""
+    candidate = next(
+        (item for item in get_candidates(spec_id) if item.id == candidate_id), None
+    )
+    filename = f"{table_name}.csv"
+    if candidate is None or filename not in candidate.result.get("outputs", []):
+        raise HTTPException(404, "Candidate output not found")
+    return Response(
+        get_artifact_store().read_artifact(candidate.id, filename),
+        media_type="text/csv",
+    )
 
 
 @router.post("/mapping/{spec_id}/reject")

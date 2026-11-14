@@ -163,6 +163,29 @@ The API is then available at `http://127.0.0.1:8000`. Visit
     curl http://127.0.0.1:8000/output-folders/<spec-id>/results.csv
     ```
 
+   **Deployed reviewable execution:** Terraform configures a separate Cloud Run
+   candidate worker with no app secrets, no project permissions, denied outbound
+   traffic, and one container per preview. Once the mapping is approved, use
+   the mapping review page's **Prepare candidate for review** action (or
+   `POST /mapping-specs/<spec-id>/candidates`), then inspect the code, input
+   hashes and preview results at the candidate page (or `GET` the candidates
+   endpoint). Explicitly approve the passing candidate to publish its exact
+   previewed results. Failed candidates are returned to the model as a failure
+   category and the system runs **at most three** candidate previews per mapping
+   version, including failed attempts. Editing after a preview requires a new
+   mapping version. Code, complete source snapshots, and their hashes are retained
+   for review and reproducibility. A candidate
+   with a failing validation test cannot be published.
+
+   The first rollout accepts complete source snapshots up to **2 MiB each / 4 MiB
+   total**, with outputs up to 4 MiB. Larger inputs are rejected *before* any
+   candidate runs; bounded sampling for those formats requires a follow-up.
+   The CLI's `pop run` directs users
+   to the browser review gate when the worker is enabled. Never run this worker
+   with the main API's service account, secrets, Cloud SQL mount or open egress.
+   Cloud Run egress blocking and one-shot response delivery must be verified in a
+   non-production deployment before this worker is enabled for real client data.
+
 ## CLI (development)
 
 Use `pop` locally against the development API. `pop init` defaults to localhost;

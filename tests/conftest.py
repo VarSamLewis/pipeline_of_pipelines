@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
+from fastapi.testclient import TestClient
 
 # Integration tests require a real, dedicated PostgreSQL test database.
 os.environ.setdefault(
@@ -20,7 +22,7 @@ os.environ.setdefault(
 os.environ.setdefault("AUTH_BYPASS_LOCAL", "true")
 os.environ.setdefault("BYOK_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
-from db_ops import get_engine, upgrade_database  # noqa: E402
+from db_ops import get_engine, get_session, upgrade_database  # noqa: E402
 
 
 def _postgres_available() -> bool:
@@ -37,6 +39,66 @@ def _postgres_available() -> bool:
 
 
 POSTGRES_AVAILABLE = _postgres_available()
+
+
+@pytest.fixture
+def client() -> TestClient:
+    """Return a FastAPI TestClient."""
+    from app import app
+
+    return TestClient(app)
+
+
+@pytest.fixture
+def registered_client(client: TestClient) -> dict:
+    """Create a client and return its record."""
+    from models import Organization
+
+    with get_session() as session:
+        organization = Organization(name=f"Test organization {uuid.uuid4()}")
+        session.add(organization)
+        session.commit()
+        session.refresh(organization)
+    response = client.post(
+        "/clients",
+        json={"name": "Test Client", "organization_id": str(organization.id)},
+    )
+    assert response.status_code == 200, response.text
+    return {**response.json(), "organization_id": str(organization.id)}
+
+
+@pytest.fixture
+def client_with_schema(
+    client: TestClient, registered_client: dict, simple_schema_file: Path
+) -> dict:
+    """Register a target schema for the test client."""
+    with simple_schema_file.open("rb") as source:
+        response = client.post(
+            f"/clients/{registered_client['id']}/target-schema",
+            files={"schema_file": ("target_schema.json", source, "application/json")},
+        )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.fixture
+def ingested_batch(
+    client: TestClient,
+    registered_client: dict,
+    simple_data_folder: Path,
+    mock_openai: None,
+) -> dict:
+    """Ingest the simple data folder."""
+    response = client.post(
+        f"/clients/{registered_client['id']}/ingest-folder",
+        data={"folder_path": str(simple_data_folder)},
+        headers={
+            "X-OpenAI-Api-Key": "test-byok-key",
+            "X-OpenAI-Base-Url": "https://api.openai.com/v1",
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 @pytest.fixture(scope="session", autouse=True)

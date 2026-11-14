@@ -32,6 +32,83 @@ resource "google_service_account" "runtime" {
   display_name = "${local.name} Cloud Run runtime"
 }
 
+resource "google_service_account" "candidate_worker" {
+  account_id   = "${local.name}-candidate"
+  display_name = "${local.name} unprivileged candidate worker"
+}
+
+# Candidate scripts must not reach provider or user-controlled exfiltration
+# endpoints. The worker has no project IAM roles and receives no Cloud SQL
+# mount or application secrets. Cloud metadata is protected by the unprivileged
+# service account rather than the VPC egress rule.
+resource "google_compute_firewall" "candidate_deny_egress" {
+  name      = "${local.name}-candidate-deny-egress"
+  network   = google_compute_network.main.name
+  direction = "EGRESS"
+  priority  = 900
+
+  destination_ranges = ["0.0.0.0/0"]
+  target_tags        = ["${local.name}-candidate"]
+
+  deny {
+    protocol = "all"
+  }
+}
+
+resource "google_cloud_run_v2_service" "candidate_worker" {
+  name     = "${local.name}-candidate"
+  location = var.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+  labels   = local.labels
+
+  template {
+    service_account                  = google_service_account.candidate_worker.email
+    timeout                          = "50s"
+    max_instance_request_concurrency = 1
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+      network_interfaces {
+        network    = google_compute_network.main.id
+        subnetwork = google_compute_subnetwork.serverless.id
+        tags       = ["${local.name}-candidate"]
+      }
+    }
+
+    containers {
+      image   = var.container_image
+      command = ["python", "-m", "uvicorn"]
+      args    = ["sandbox_worker:app", "--host", "0.0.0.0", "--port", "8000"]
+
+      ports {
+        container_port = 8000
+      }
+      resources {
+        limits = { cpu = "1", memory = "1Gi" }
+      }
+      env {
+        name  = "SANDBOX_WORKER"
+        value = "true"
+      }
+    }
+  }
+
+  depends_on = [google_compute_firewall.candidate_deny_egress]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "candidate_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.candidate_worker.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 resource "google_service_account" "github_deployer" {
   count = var.github_repository == "" ? 0 : 1
 
@@ -396,6 +473,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = google_storage_bucket.artifacts.name
       }
       env {
+        name  = "CANDIDATE_WORKER_URL"
+        value = google_cloud_run_v2_service.candidate_worker.uri
+      }
+      env {
         name  = "PIPELINE_EXECUTION_TIMEOUT_SECONDS"
         value = "240"
       }
@@ -487,6 +568,7 @@ resource "google_cloud_run_v2_service" "app" {
     google_project_iam_member.cloud_run_vpc_access,
     google_artifact_registry_repository_iam_member.cloud_run,
     google_artifact_registry_repository_iam_member.runtime,
+    google_cloud_run_v2_service_iam_member.candidate_invoker,
   ]
 }
 

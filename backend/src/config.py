@@ -54,6 +54,7 @@ class Settings:
     auth_bypass_local: bool
     ui_preview_local: bool
     pipeline_execution_timeout_seconds: int
+    candidate_worker_url: str
     max_upload_size_bytes: int
     max_source_files: int
     max_total_upload_size_bytes: int
@@ -106,6 +107,8 @@ class Settings:
                 raise ValueError("BYOK_ENCRYPTION_KEY is required in production")
             if not values.get("CLERK_SECRET_KEY"):
                 raise ValueError("CLERK_SECRET_KEY is required in production")
+            if not values.get("CANDIDATE_WORKER_URL", "").startswith("https://"):
+                raise ValueError("CANDIDATE_WORKER_URL must use HTTPS in production")
 
         return cls(
             project_root=root,
@@ -146,6 +149,7 @@ class Settings:
             pipeline_execution_timeout_seconds=int(
                 values.get("PIPELINE_EXECUTION_TIMEOUT_SECONDS", "120")
             ),
+            candidate_worker_url=values.get("CANDIDATE_WORKER_URL", ""),
             max_upload_size_bytes=int(values.get("MAX_UPLOAD_SIZE_BYTES", "52428800")),
             max_source_files=int(values.get("MAX_SOURCE_FILES", "10")),
             max_total_upload_size_bytes=int(
