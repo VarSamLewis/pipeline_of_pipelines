@@ -770,6 +770,8 @@ def results_review_page(
             **_user_context(request, user),
             "run_id": str(run_id),
             "csv_files": review["csv_files"],
+            "run": review["run"],
+            "validation_results": review["validation_results"],
         },
     )
 
