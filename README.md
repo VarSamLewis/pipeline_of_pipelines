@@ -238,13 +238,15 @@ and runs pytest in the CI image. GitHub CI and deployment workflows run this
 same script.
 The integration suite fails rather than silently skipping when PostgreSQL is
 unavailable. Tests exercise the API, website, and CLI against that database;
-only outbound LLM calls are stubbed. They do not run a browser or hit a deployed
-service.
+only outbound LLM calls are stubbed. The browser journey runs separately in CI
+with Chromium (`uv run playwright install --with-deps chromium` followed by
+`uv run pytest -q -m browser`). Development and production deployments validate
+the deployed `/health` endpoint after Terraform applies.
 
 Run the complete local quality suite:
 
 ```bash
-uv run ruff check backend/src tests scripts
+uv run ruff check backend/src migrations tests scripts
 uv run mypy backend/src
 uv run pytest
 git diff --check

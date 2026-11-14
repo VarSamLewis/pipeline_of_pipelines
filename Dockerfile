@@ -10,10 +10,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /uvx /bin/
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md alembic.ini ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend ./backend
+COPY migrations ./migrations
 RUN uv sync --frozen --no-dev
 
 EXPOSE 8000

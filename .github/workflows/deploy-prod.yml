@@ -69,3 +69,6 @@ jobs:
           fi
           terraform init -input=false -backend-config=environments/prod.backend.hcl
           terraform apply -input=false -auto-approve -var-file="environments/prod.tfvars" -var="container_image=$region-docker.pkg.dev/$project_id/$repository/app:$GITHUB_SHA" -var="bootstrap_admin_emails=$bootstrap_admin_emails"
+      - name: Post-deploy smoke check
+        working-directory: infra
+        run: python3 ../scripts/smoke-deploy.py "$(terraform output -raw cloud_run_url)"
