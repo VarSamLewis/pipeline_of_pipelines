@@ -131,7 +131,10 @@ def test_browser_uploads_two_schemas_and_reviews_each_mapping(
             for review in reviews:
                 page.goto(f"{live_app}{review}")
                 expect(
-                    page.get_by_role("heading", name="Mapping editor")
+                    page.get_by_role("heading", name="Review mapping", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Proposed fields")
                 ).to_be_visible()
             page.goto(f"{live_app}/clients/{client_id}/files")
             assert "data.csv" in page.locator("body").inner_text()
