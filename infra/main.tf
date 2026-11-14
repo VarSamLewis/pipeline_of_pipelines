@@ -80,6 +80,7 @@ resource "google_project_iam_member" "github_deployer" {
     "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
     "roles/iam.workloadIdentityPoolAdmin",
+    "roles/logging.configWriter",
     "roles/resourcemanager.projectIamAdmin",
     "roles/run.admin",
     "roles/secretmanager.admin",
@@ -259,6 +260,23 @@ resource "google_project_iam_member" "runtime" {
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+# Google redirects OAuth callbacks with a short-lived authorization code in the
+# query string. Cloud Run request logs include full URLs, so exclude this one
+# endpoint rather than retaining authorization codes in Cloud Logging.
+resource "google_logging_project_exclusion" "google_oauth_callback" {
+  name        = "${local.name}-google-oauth-callback"
+  description = "Exclude Google OAuth callback URLs containing authorization codes"
+  filter = join(" AND ", [
+    "resource.type=\"cloud_run_revision\"",
+    "resource.labels.service_name=\"${google_cloud_run_v2_service.app.name}\"",
+    "httpRequest.requestUrl=~\".*/google/callback([?].*)?$\"",
+  ])
+
+  depends_on = [
+    google_project_iam_member.github_deployer["roles/logging.configWriter"],
+  ]
 }
 
 data "google_project" "current" {}
