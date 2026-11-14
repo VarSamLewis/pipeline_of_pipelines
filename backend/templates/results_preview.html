@@ -25,10 +25,21 @@
           <div><h2>customers</h2><p id="results-row-count" class="muted">Showing 3 sample rows of 1,248 output rows</p></div>
           <button class="btn btn-sm" type="button" onclick="downloadPreviewCsv()">Download CSV</button>
         </div>
-        <label class="results-search" for="results-search-input">
-          <span>Search output</span>
-          <input id="results-search-input" type="search" placeholder="Search any column" oninput="filterResults()">
-        </label>
+        <div class="results-filter-controls">
+          <label class="results-search" for="results-column-filter">
+            <span>Column</span>
+            <select id="results-column-filter" onchange="filterResults()">
+              <option value="all">All columns</option>
+              <option value="0">customer_id</option>
+              <option value="1">customer_name</option>
+              <option value="2">delivery_region</option>
+            </select>
+          </label>
+          <label class="results-search" for="results-search-input">
+            <span>Search output</span>
+            <input id="results-search-input" type="search" placeholder="Search output" oninput="filterResults()">
+          </label>
+        </div>
         <div class="table-wrap">
           <table id="results-table">
             <thead><tr><th>customer_id</th><th>customer_name</th><th>delivery_region</th></tr></thead>
@@ -57,10 +68,14 @@
 <script>
 function filterResults() {
   const query = document.getElementById('results-search-input').value.trim().toLowerCase();
+  const column = document.getElementById('results-column-filter').value;
   const rows = Array.from(document.querySelectorAll('#results-table tbody tr'));
   let shown = 0;
   rows.forEach(row => {
-    const matches = row.textContent.toLowerCase().includes(query);
+    const searchableText = column === 'all'
+      ? row.textContent
+      : row.cells[Number(column)].textContent;
+    const matches = searchableText.toLowerCase().includes(query);
     row.hidden = !matches;
     if (matches) shown += 1;
   });
