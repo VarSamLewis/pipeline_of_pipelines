@@ -745,6 +745,8 @@ def results_csv_page(
     run_id: uuid.UUID,
     page: int = Query(1, ge=1),
     file: str | None = Query(None),
+    search: str = Query(""),
+    column: str | None = Query(None),
     user: Any = Depends(require_ui_auth),
     _: None = Depends(require_execution_run_access),
 ) -> Any:
@@ -765,6 +767,24 @@ def results_csv_page(
         return HTMLResponse("<p class='muted'>No results CSV found.</p>")
 
     df = pl.read_csv(io.BytesIO(csv_content))
+    if column is not None and column not in df.columns:
+        raise HTTPException(422, "Selected filter column is not in the result CSV")
+    search = search.strip()
+    if search:
+        searchable_columns = [column] if column else df.columns
+        matching_rows = [
+            row
+            for row in df.iter_rows(named=True)
+            if any(
+                search.casefold() in str(row[name]).casefold()
+                for name in searchable_columns
+            )
+        ]
+        df = (
+            pl.DataFrame(matching_rows, schema=df.schema)
+            if matching_rows
+            else df.head(0)
+        )
     total_rows = len(df)
     total_pages = max(1, (total_rows + CSV_DISP_COUNT - 1) // CSV_DISP_COUNT)
     page = min(page, total_pages)
@@ -787,7 +807,36 @@ def results_csv_page(
             "start_row": start + 1,
             "end_row": end,
             "total_rows": total_rows,
+            "search": search,
+            "selected_column": column,
         },
+    )
+
+
+@router.get("/results/{run_id}/csv/download")
+def download_results_csv(
+    run_id: uuid.UUID,
+    file: str | None = Query(None),
+    user: Any = Depends(require_ui_auth),
+    _: None = Depends(require_execution_run_access),
+) -> Response:
+    """Download one generated CSV after validating run access."""
+    paths = get_result_review(run_id)
+    if file is not None and file not in paths["csv_files"]:
+        raise HTTPException(404, "Result CSV not found")
+    filename = file or next(iter(paths["csv_files"]), None)
+    if filename is None:
+        raise HTTPException(404, "No result CSV found")
+    try:
+        content = get_artifact_store().read_artifact(
+            paths["run"].mapping_spec_id, filename
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Result CSV not found") from exc
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
