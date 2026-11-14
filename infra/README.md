@@ -70,6 +70,19 @@ The workflows use `environments/dev.tfvars` and `environments/prod.tfvars`,
 with their matching backend files. The immutable container image is the only
 value overridden by the workflow.
 
+## Cloud SQL Stop/Start Schedule
+
+`db_stop_schedule` and `db_start_schedule` accept Cloud Scheduler cron
+expressions in UTC. The dev environment stops its database at 00:00 and starts
+it at 07:00, pausing compute billing for the off window. Stopping preserves all
+data, backups, and settings; storage and backup charges continue. Keep the
+instance's backup window (`start_time` on the backup configuration) inside the
+on-hours because automated backups only run while the instance is up. Omit both
+variables to leave the instance always on. `db_tier` selects the machine tier;
+the default `db-custom-1-3840` is a dedicated-core machine, while shared-core
+tiers such as `db-g1-small` cost roughly half and suit development workloads
+(their 50-connection cap bounds Cloud Run instance count and pool overflow).
+
 ## Manual Deploy
 
 1. Authenticate Terraform to the target GCP project and ensure the deploying
