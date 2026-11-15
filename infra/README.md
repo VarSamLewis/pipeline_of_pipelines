@@ -126,6 +126,13 @@ intentionally unprivileged. Also, because this Terraform stack currently grants
 with the custom role requires a corresponding Terraform change; otherwise a
 later apply can restore the broad role.
 
+To test the deployer's effective permissions locally, an administrator must
+also grant the operator `roles/iam.serviceAccountTokenCreator` **on that one
+deployer service account**. This is a diagnostic permission, distinct from the
+firewall permission, and may be removed after testing. A failure to impersonate
+the deployer only means the local operator lacks token-creation access; it does
+not indicate that the deployer lacks firewall access.
+
 ## Cloud SQL Stop/Start Schedule
 
 `db_stop_schedule` and `db_start_schedule` accept Cloud Scheduler cron
