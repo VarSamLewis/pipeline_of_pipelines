@@ -70,6 +70,62 @@ The workflows use `environments/dev.tfvars` and `environments/prod.tfvars`,
 with their matching backend files. The immutable container image is the only
 value overridden by the workflow.
 
+## Candidate worker network permissions
+
+The optional candidate worker runs model-authored transformation code in a
+separate Cloud Run service. It uses Direct VPC egress and a targeted firewall
+rule which denies all outbound traffic. The denial prevents a candidate script
+from sending source data to arbitrary network endpoints; the worker has no app
+secrets, Cloud SQL mount, or project IAM roles.
+
+Terraform creates these resources even while `candidate_worker_enabled =
+false`; that flag only controls whether the API sends execution requests to the
+worker. The worker has `min_instance_count = 0`, so it has no idle Cloud Run
+instance cost.
+
+Creating and maintaining the targeted denial rule requires these Compute API
+permissions for the identity that runs Terraform:
+
+```text
+compute.firewalls.create
+compute.firewalls.delete
+compute.firewalls.get
+compute.firewalls.list
+compute.firewalls.update
+compute.networks.get
+```
+
+The Terraform-managed GitHub deployer is currently assigned the broader
+`roles/compute.networkAdmin` role, which includes the required firewall
+permissions. A `403 Required 'compute.firewalls.create' permission` therefore
+usually means that the workflow is authenticating as a *different* service
+account than the one configured by Terraform, or that its IAM change has not
+yet propagated. Check that the GitHub Environment variable
+`GCP_DEPLOYER_SERVICE_ACCOUNT` exactly equals the
+`github_deployer_service_account` Terraform output for that environment.
+
+For an externally managed least-privilege role, an administrator can create a
+custom role and bind it to the actual deployment service account:
+
+```bash
+gcloud iam roles create candidateFirewallDeployer \
+  --project=<project-id> \
+  --title="Candidate firewall deployer" \
+  --description="Manages the isolated candidate worker firewall rule" \
+  --permissions=compute.firewalls.create,compute.firewalls.delete,compute.firewalls.get,compute.firewalls.list,compute.firewalls.update,compute.networks.get \
+  --stage=GA
+
+gcloud projects add-iam-policy-binding <project-id> \
+  --member="serviceAccount:<actual-deployer-service-account>" \
+  --role="projects/<project-id>/roles/candidateFirewallDeployer"
+```
+
+Do not grant these permissions to the candidate worker service account. It is
+intentionally unprivileged. Also, because this Terraform stack currently grants
+`roles/compute.networkAdmin` to its GitHub deployer, replacing that broad grant
+with the custom role requires a corresponding Terraform change; otherwise a
+later apply can restore the broad role.
+
 ## Cloud SQL Stop/Start Schedule
 
 `db_stop_schedule` and `db_start_schedule` accept Cloud Scheduler cron
