@@ -6,9 +6,72 @@ import base64
 import json
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import select
+
+
+def _enable_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    import adaptive_pipeline
+    from config import get_settings
+
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "get_settings",
+        lambda: replace(get_settings(), candidate_worker_url="http://127.0.0.1:8001"),
+    )
+
+
+def _approved_spec(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+) -> str:
+    """Create an approved mapping spec with an organization key configured."""
+    from byok import save_organization_api_key
+    from db_ops import get_session
+
+    with get_session() as session:
+        save_organization_api_key(
+            session,
+            uuid.UUID(registered_client["organization_id"]),
+            "test-byok-key",
+            "https://api.openai.com/v1",
+        )
+    spec = client.post(
+        f"/clients/{registered_client['id']}/mapping-specs",
+        json={
+            "source_raw_file_ids": ingested_batch["raw_file_ids"],
+            "target_schema": client_with_schema["schema"],
+        },
+    )
+    assert spec.status_code == 200, spec.text
+    spec_id = spec.json()["id"]
+    assert client.post(f"/mapping-specs/{spec_id}/propose").status_code == 200
+    assert (
+        client.post(
+            f"/mapping-specs/{spec_id}/approve", json={"reviewer": "tester"}
+        ).status_code
+        == 200
+    )
+    return spec_id
+
+
+def _execution_runs(spec_id: str) -> list:
+    from db_ops import get_session
+    from models import ExecutionRun
+
+    with get_session() as session:
+        return list(
+            session.exec(
+                select(ExecutionRun).where(
+                    ExecutionRun.mapping_spec_id == uuid.UUID(spec_id)
+                )
+            ).all()
+        )
 
 
 def test_plan_may_not_change_approved_source_identity(simple_schema_file) -> None:
@@ -187,9 +250,7 @@ def test_three_candidate_previews_then_explicit_review(
         prompts.append(messages[-1]["content"])
         return {"mode": "plan", "overrides": []}
 
-    def preview(
-        script: str, mapping: dict, sources: dict[str, str]
-    ) -> CandidateResult:
+    def preview(script: str, mapping: dict, sources: dict[str, str]) -> CandidateResult:
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -202,9 +263,7 @@ def test_three_candidate_previews_then_explicit_review(
             failed_validation = b"record_id,full_name,score\n,Alice,88.5\n"
             return CandidateResult(
                 passed=True,
-                outputs={
-                    "records.csv": base64.b64encode(failed_validation).decode()
-                },
+                outputs={"records.csv": base64.b64encode(failed_validation).decode()},
             )
         monkeypatch.setenv("SANDBOX_WORKER", "true")
         return _execute(
@@ -231,9 +290,7 @@ def test_three_candidate_previews_then_explicit_review(
     assert client.post(f"/mapping-specs/{spec_id}/candidates").status_code == 422
     assert calls == 3
 
-    review_page = client.get(
-        f"/mapping/{spec_id}/candidate/{response.json()['id']}"
-    )
+    review_page = client.get(f"/mapping/{spec_id}/candidate/{response.json()['id']}")
     assert review_page.status_code == 200, review_page.text
     assert "Review candidate 3 of 3" in review_page.text
     assert "Download records.csv preview" in review_page.text
@@ -322,9 +379,12 @@ def test_candidate_budget_cannot_be_extended_after_three_failures(
     )
     spec_id = spec.json()["id"]
     assert client.post(f"/mapping-specs/{spec_id}/propose").status_code == 200
-    assert client.post(
-        f"/mapping-specs/{spec_id}/approve", json={"reviewer": "tester"}
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/mapping-specs/{spec_id}/approve", json={"reviewer": "tester"}
+        ).status_code
+        == 200
+    )
     monkeypatch.setattr(
         adaptive_pipeline,
         "get_settings",
@@ -356,3 +416,285 @@ def test_candidate_budget_cannot_be_extended_after_three_failures(
         ).status_code
         == 422
     )
+
+
+def test_stale_running_preview_is_reclaimed_and_budgeted(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prepare request that died is reclaimed as a failed attempt."""
+    import adaptive_pipeline
+    from db_ops import get_session
+    from sandbox_worker import CandidateResult
+
+    _enable_worker(monkeypatch)
+    spec_id = _approved_spec(
+        client, registered_client, client_with_schema, ingested_batch
+    )
+    stale_created = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        seconds=adaptive_pipeline.CANDIDATE_LEASE_SECONDS + 60
+    )
+    with get_session() as session:
+        session.add(
+            adaptive_pipeline.PipelineCandidate(
+                mapping_spec_id=uuid.UUID(spec_id),
+                attempt=1,
+                status="running",
+                mode="pending",
+                script="",
+                created_at=stale_created,
+            )
+        )
+        session.commit()
+
+    calls = 0
+
+    def propose(
+        _messages: list[dict[str, str]], **_kwargs: object
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"mode": "plan", "overrides": []}
+
+    monkeypatch.setattr(adaptive_pipeline, "call_mapping_llm", propose)
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "_request_preview",
+        lambda *_args, **_kwargs: CandidateResult(
+            passed=False, failure_type="ComputeError"
+        ),
+    )
+    response = client.post(f"/mapping-specs/{spec_id}/candidates")
+    assert response.status_code == 200, response.text
+    # The reclaimed attempt still consumed the budget: this request runs the
+    # remaining two attempts, both of which fail in the mocked preview.
+    assert response.json()["attempt"] == 3
+    assert response.json()["status"] == "failed"
+    assert calls == 2
+
+    candidates = client.get(f"/mapping-specs/{spec_id}/candidates").json()
+    assert candidates[0]["status"] == "failed"
+    assert "lease expired" in candidates[0]["result"]["error"]
+    assert client.post(f"/mapping-specs/{spec_id}/candidates").status_code == 422
+    assert calls == 2
+
+
+def test_fresh_running_candidate_blocks_new_preview(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lease that has not expired still serializes prepare requests."""
+    import adaptive_pipeline
+    from db_ops import get_session
+
+    _enable_worker(monkeypatch)
+    spec_id = _approved_spec(
+        client, registered_client, client_with_schema, ingested_batch
+    )
+    with get_session() as session:
+        session.add(
+            adaptive_pipeline.PipelineCandidate(
+                mapping_spec_id=uuid.UUID(spec_id),
+                attempt=1,
+                status="running",
+                mode="pending",
+                script="",
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+        )
+        session.commit()
+
+    response = client.post(f"/mapping-specs/{spec_id}/candidates")
+    assert response.status_code == 422
+    assert "already running" in response.json()["detail"]
+    assert len(_execution_runs(spec_id)) == 0
+
+
+def test_candidate_save_cannot_resurrect_a_reclaimed_row(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+    mock_openai: None,
+) -> None:
+    """Writes are conditional so a stale request cannot overwrite a reclaim."""
+    import adaptive_pipeline
+    from db_ops import get_session
+
+    spec_id = _approved_spec(
+        client, registered_client, client_with_schema, ingested_batch
+    )
+    with get_session() as session:
+        row = adaptive_pipeline.PipelineCandidate(
+            mapping_spec_id=uuid.UUID(spec_id),
+            attempt=1,
+            status="failed",
+            mode="plan",
+            script="",
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        drifted = adaptive_pipeline.PipelineCandidate(
+            id=row.id,
+            mapping_spec_id=row.mapping_spec_id,
+            attempt=1,
+            status="passed",
+            mode="plan",
+            script="reclaimed",
+        )
+    with pytest.raises(adaptive_pipeline.CandidateSupersededError):
+        adaptive_pipeline._save_candidate(drifted, expected_status="running")
+    with get_session() as session:
+        assert session.get(adaptive_pipeline.PipelineCandidate, row.id).status == (
+            "failed"
+        )
+
+
+def test_reconcile_resumes_interrupted_publication(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash between approval and publication resumes without new records."""
+    import adaptive_pipeline
+    import sandbox_worker
+    from db_ops import get_session
+    from models import PipelineCandidate, ValidationResult
+    from sandbox_worker import CandidateRequest
+
+    _enable_worker(monkeypatch)
+    monkeypatch.setenv("SANDBOX_WORKER", "true")
+    spec_id = _approved_spec(
+        client, registered_client, client_with_schema, ingested_batch
+    )
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "call_mapping_llm",
+        lambda *_args, **_kwargs: {"mode": "plan", "overrides": []},
+    )
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "_request_preview",
+        lambda script, mapping, sources: sandbox_worker._execute(
+            CandidateRequest(script=script, mapping=mapping, sources=sources)
+        ),
+    )
+    response = client.post(f"/mapping-specs/{spec_id}/candidates")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "passed"
+    candidate_id = response.json()["id"]
+
+    # Simulate a crash between creating the run and recording its results:
+    # SystemExit bypasses the exception handler, as a killed process would.
+    # The patch is scoped to the approve call so reconciliation is unaffected.
+    def crash(*_args: object, **_kwargs: object) -> None:
+        raise SystemExit(1)
+
+    with pytest.MonkeyPatch.context() as crash_patch:
+        crash_patch.setattr(adaptive_pipeline, "record_validation_results", crash)
+        with pytest.raises(SystemExit):
+            adaptive_pipeline.approve_candidate(
+                uuid.UUID(spec_id), uuid.UUID(candidate_id), "tester"
+            )
+
+    with get_session() as session:
+        row = session.get(PipelineCandidate, uuid.UUID(candidate_id))
+        assert row is not None and row.status == "publishing"
+    runs = _execution_runs(spec_id)
+    assert len(runs) == 1
+    stuck_run_id = runs[0].id
+
+    resumed = client.post(
+        f"/mapping-specs/{spec_id}/candidates/{candidate_id}/reconcile"
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["execution_run_id"] == str(stuck_run_id)
+
+    assert client.get(f"/execution-runs/{stuck_run_id}").json()["status"] == "success"
+    assert "Alice" in client.get(f"/output-folders/{spec_id}/results.csv").text
+    with get_session() as session:
+        row = session.get(PipelineCandidate, uuid.UUID(candidate_id))
+        assert row is not None and row.status == "approved"
+        # Completion records the operator who reconciled the publication.
+        assert row.approved_by == "00000000-0000-0000-0000-000000000000"
+        recorded = list(
+            session.exec(
+                select(ValidationResult).where(
+                    ValidationResult.execution_run_id == stuck_run_id
+                )
+            ).all()
+        )
+        assert len(recorded) == len(row.result["validation"])
+    assert len(_execution_runs(spec_id)) == 1
+
+
+def test_reconcile_rejects_tampered_artifacts(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reconciliation re-verifies hashes and rolls back on any mismatch."""
+    import adaptive_pipeline
+    import sandbox_worker
+    from db_ops import get_session
+    from dependencies import get_artifact_store
+    from models import PipelineCandidate
+    from sandbox_worker import CandidateRequest
+
+    _enable_worker(monkeypatch)
+    monkeypatch.setenv("SANDBOX_WORKER", "true")
+    spec_id = _approved_spec(
+        client, registered_client, client_with_schema, ingested_batch
+    )
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "call_mapping_llm",
+        lambda *_args, **_kwargs: {"mode": "plan", "overrides": []},
+    )
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "_request_preview",
+        lambda script, mapping, sources: sandbox_worker._execute(
+            CandidateRequest(script=script, mapping=mapping, sources=sources)
+        ),
+    )
+    response = client.post(f"/mapping-specs/{spec_id}/candidates")
+    assert response.status_code == 200, response.text
+    candidate_id = response.json()["id"]
+
+    # Simulate the crash before any publication checkpoint existed.
+    with get_session() as session:
+        row = session.get(PipelineCandidate, uuid.UUID(candidate_id))
+        assert row is not None
+        row.status = "publishing"
+        session.add(row)
+        session.commit()
+
+    store = get_artifact_store()
+    store.write_artifact(uuid.UUID(candidate_id), "records.csv", b"record_id\n999\n")
+    response = client.post(
+        f"/mapping-specs/{spec_id}/candidates/{candidate_id}/reconcile"
+    )
+    assert response.status_code == 422
+
+    with get_session() as session:
+        row = session.get(PipelineCandidate, uuid.UUID(candidate_id))
+        assert row is not None and row.status == "passed"
+        assert "publishing_run_id" not in row.result
+        assert adaptive_pipeline.PUBLISH_STAGE not in row.result
+    assert len(_execution_runs(spec_id)) == 0

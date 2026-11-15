@@ -18,6 +18,11 @@
   <form method="post" action="/mapping/{{ spec_id }}/candidate/{{ candidate.id }}/approve">
     <button class="btn btn-primary" type="submit">Approve code and publish results</button>
   </form>
+  {% elif candidate.status == "publishing" %}
+  <p class="muted">Publication was interrupted before it finished. An operator can re-verify the retained hashes and resume.</p>
+  <form method="post" action="/mapping/{{ spec_id }}/candidate/{{ candidate.id }}/reconcile">
+    <button class="btn btn-primary" type="submit">Re-verify and resume publication</button>
+  </form>
   {% endif %}
   <a href="/mapping/{{ spec_id }}">Back to mapping review</a>
 </section>

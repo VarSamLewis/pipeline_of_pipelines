@@ -186,6 +186,16 @@ The API is then available at `http://127.0.0.1:8000`. Visit
    Cloud Run egress blocking and one-shot response delivery must be verified in a
    non-production deployment before this worker is enabled for real client data.
 
+   **Interrupted runs recover automatically.** A preview request that dies
+   (timeout or crash) is reclaimed as a failed attempt after a lease expires,
+   freeing the mapping version without losing an attempt slot. A publication
+   interrupted between approval and completion checkpoints its progress on the
+   candidate row; an operator re-verifies every retained hash and resumes it
+   from the candidate page (or `POST
+   /mapping-specs/<spec-id>/candidates/<candidate-id>/reconcile`), which either
+   finishes publication or rolls the candidate back for review without
+   duplicating execution records.
+
 ## CLI (development)
 
 Use `pop` locally against the development API. `pop init` defaults to localhost;

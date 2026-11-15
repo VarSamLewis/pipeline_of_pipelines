@@ -35,9 +35,11 @@ from typing import Any, cast
 
 from access_control import require_execution_run_access, require_mapping_spec_access
 from adaptive_pipeline import (
+    CandidateSupersededError,
     approve_candidate,
     get_candidates,
     prepare_candidate,
+    reconcile_candidate,
 )
 from auth_service import (
     AUTH_BYPASS_LOCAL,
@@ -1786,7 +1788,24 @@ def approve_pipeline_candidate(
     """Explicitly approve reviewed code and publish only its previewed output."""
     try:
         run_id = approve_candidate(spec_id, candidate_id, str(user.id))
-    except ValueError as exc:
+    except (CandidateSupersededError, ValueError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    return {"execution_run_id": str(run_id)}
+
+
+@app.post(
+    "/mapping-specs/{spec_id}/candidates/{candidate_id}/reconcile",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def reconcile_pipeline_candidate(
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, str]:
+    """Finish or roll back a publication interrupted by a crash or timeout."""
+    try:
+        run_id = reconcile_candidate(spec_id, candidate_id, str(user.id))
+    except (CandidateSupersededError, ValueError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
     return {"execution_run_id": str(run_id)}
 

@@ -19,7 +19,13 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
-from adaptive_pipeline import approve_candidate, get_candidates, prepare_candidate
+from adaptive_pipeline import (
+    CandidateSupersededError,
+    approve_candidate,
+    get_candidates,
+    prepare_candidate,
+    reconcile_candidate,
+)
 from auth_service import require_client_membership, require_role, require_ui_auth
 from config import get_settings
 from db_ops import get_session
@@ -801,7 +807,27 @@ def approve_mapping_candidate(
     """Publish the exact code and sampled output selected by the reviewer."""
     try:
         run_id = approve_candidate(spec_id, candidate_id, str(user.id))
-    except ValueError as exc:
+    except (CandidateSupersededError, ValueError) as exc:
+        return templates.TemplateResponse(
+            request,
+            "partials/error.html",
+            {**_user_context(request, user), "message": str(exc)},
+        )
+    return _htmx_redirect(request, f"/results/{run_id}")
+
+
+@router.post("/mapping/{spec_id}/candidate/{candidate_id}/reconcile")
+def reconcile_mapping_candidate(
+    request: Request,
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+    _: None = Depends(require_mapping_spec_access),
+) -> Any:
+    """Resume an interrupted publication after re-verifying retained hashes."""
+    try:
+        run_id = reconcile_candidate(spec_id, candidate_id, str(user.id))
+    except (CandidateSupersededError, ValueError) as exc:
         return templates.TemplateResponse(
             request,
             "partials/error.html",

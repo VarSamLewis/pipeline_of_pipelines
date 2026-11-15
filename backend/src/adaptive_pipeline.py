@@ -9,7 +9,7 @@ import io
 import json
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -46,6 +46,14 @@ from sandbox_worker import (
 from sqlmodel import select
 
 MAX_CANDIDATE_RUNS = 3  # Per mapping version, including failed previews.
+# A prepare request runs at most one LLM call plus preview per attempt, and the
+# API caps requests at 300s. The lease must comfortably exceed that ceiling so
+# an in-flight request is never reclaimed by a concurrent one.
+CANDIDATE_LEASE_SECONDS = 600
+
+
+class CandidateSupersededError(RuntimeError):
+    """The candidate row changed state elsewhere; this writer must stop."""
 
 
 class PreviewExecutionError(ValueError):
@@ -199,6 +207,17 @@ def _reserve_attempt(spec_id: uuid.UUID) -> PipelineCandidate:
                 .order_by(cast(Any, PipelineCandidate.attempt))
             ).all()
         )
+        # A prepare request that timed out or crashed never reported back and
+        # would otherwise block this mapping version forever. Reclaim stale
+        # running rows as failed attempts; they still count toward the budget.
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            seconds=CANDIDATE_LEASE_SECONDS
+        )
+        for item in previous:
+            if item.status == "running" and item.created_at < cutoff:
+                item.status = "failed"
+                item.result = {"error": "Preview lease expired; no result was reported"}
+                session.add(item)
         if any(item.status == "running" for item in previous):
             raise ValueError("A candidate preview is already running")
         if any(
@@ -222,11 +241,52 @@ def _reserve_attempt(spec_id: uuid.UUID) -> PipelineCandidate:
         return candidate
 
 
-def _save_candidate(candidate: PipelineCandidate) -> None:
+def _save_candidate(candidate: PipelineCandidate, expected_status: str) -> None:
+    """Update candidate fields only while the row still holds expected_status.
+
+    The conditional update prevents a request whose row was reclaimed by the
+    lease expiry from resurrecting it after a concurrent request took over.
+    """
     with get_session() as session:
-        session.add(candidate)
+        row = session.exec(
+            select(PipelineCandidate)
+            .where(
+                PipelineCandidate.id == candidate.id,
+                PipelineCandidate.status == expected_status,
+            )
+            .with_for_update()
+        ).first()
+        if row is None:
+            raise CandidateSupersededError(
+                "Candidate was reclaimed or finalized elsewhere; no update applied"
+            )
+        row.status = candidate.status
+        row.mode = candidate.mode
+        row.plan = candidate.plan
+        row.script = candidate.script
+        row.source_hashes = candidate.source_hashes
+        row.result = candidate.result
+        row.approved_by = candidate.approved_by
+        row.approved_at = candidate.approved_at
+        session.add(row)
         session.commit()
-        session.refresh(candidate)
+        session.refresh(row)
+
+
+def _reload_candidate(candidate: PipelineCandidate) -> PipelineCandidate:
+    """Replace in-memory state with the row's authoritative database state."""
+    with get_session() as session:
+        fresh = session.get(PipelineCandidate, candidate.id)
+        if fresh is not None:
+            candidate.status = fresh.status
+            candidate.mode = fresh.mode
+            candidate.plan = fresh.plan
+            candidate.script = fresh.script
+            candidate.source_hashes = fresh.source_hashes
+            candidate.result = fresh.result
+            candidate.approved_by = fresh.approved_by
+            candidate.approved_at = fresh.approved_at
+    return candidate
 
 
 def prepare_candidate(spec_id: uuid.UUID) -> PipelineCandidate:
@@ -310,9 +370,7 @@ def prepare_candidate(spec_id: uuid.UUID) -> PipelineCandidate:
                     raise ValueError(
                         "Candidate output columns do not match the target schema"
                     )
-            validation = run_validation_tests(
-                frames, plan["columns"], target_schema
-            )
+            validation = run_validation_tests(frames, plan["columns"], target_schema)
             failures = [test["test_name"] for test in validation if not test["passed"]]
             if failures:
                 raise ValueError("Validation checks failed: " + ", ".join(failures))
@@ -340,12 +398,19 @@ def prepare_candidate(spec_id: uuid.UUID) -> PipelineCandidate:
                 "script_sha256": hashlib.sha256(script.encode()).hexdigest(),
             }
             candidate.status = "passed"
-            _save_candidate(candidate)
+            _save_candidate(candidate, expected_status="running")
             return candidate
+        except CandidateSupersededError:
+            # Another actor reclaimed or finalized this attempt; its state is
+            # already recorded. Stop without touching the attempt budget.
+            return _reload_candidate(candidate)
         except Exception as exc:
-            candidate.status = "failed"
-            candidate.result = {"error": str(exc)[:4000]}
-            _save_candidate(candidate)
+            try:
+                candidate.status = "failed"
+                candidate.result = {"error": str(exc)[:4000]}
+                _save_candidate(candidate, expected_status="running")
+            except CandidateSupersededError:
+                return _reload_candidate(candidate)
             # Only the exception category and failed check names may reach the LLM,
             # never a traceback, original rows, or worker stdout/stderr.
             checks = (
@@ -372,12 +437,190 @@ def get_candidates(spec_id: uuid.UUID) -> list[PipelineCandidate]:
         )
 
 
+PUBLISH_STAGE = "publish_stage"
+
+
+def _lock_candidate(
+    session: Any, candidate_id: uuid.UUID, status: str
+) -> PipelineCandidate | None:
+    """Lock the candidate row for update only while it holds `status`."""
+    return cast(
+        "PipelineCandidate | None",
+        session.exec(
+            select(PipelineCandidate)
+            .where(
+                PipelineCandidate.id == candidate_id,
+                PipelineCandidate.status == status,
+            )
+            .with_for_update()
+        ).first(),
+    )
+
+
+def _publish_candidate(candidate_id: uuid.UUID, reviewer: str) -> uuid.UUID:
+    """Publish a candidate whose row is in the `publishing` state.
+
+    Every stage checkpoints its progress on the candidate row, so an
+    interrupted publication can be reconciled without duplicating execution
+    runs or validation records. Verification happens before any side effect;
+    artifact writes are idempotent overwrites; the append-only record stage is
+    guarded by its checkpoint.
+    """
+    store = get_artifact_store()
+    run_id: uuid.UUID | None = None
+    try:
+        # Stage 1: verify every retained hash before touching anything shared.
+        with get_session() as session:
+            row = _lock_candidate(session, candidate_id, status="publishing")
+            if row is None:
+                raise CandidateSupersededError("Candidate is not awaiting publication")
+            spec_id = row.mapping_spec_id
+            if row.result.get("mapping_hash") != _mapping_hash(
+                load_mapping_spec(spec_id)
+            ):
+                raise ValueError(
+                    "Mapping changed since preview; create a new mapping version"
+                )
+            if (
+                row.result.get("script_sha256")
+                != hashlib.sha256(row.script.encode()).hexdigest()
+            ):
+                raise ValueError("Candidate code changed since preview")
+            for name in row.result["source_snapshots"]:
+                raw_file_id = name.split("_", 1)[0]
+                data = store.read_artifact(candidate_id, f"source_{name}")
+                if hashlib.sha256(data).hexdigest() != row.source_hashes[raw_file_id]:
+                    raise ValueError("Candidate source snapshot changed since review")
+            verified_outputs: dict[str, bytes] = {}
+            for name in row.result["outputs"]:
+                data = store.read_artifact(candidate_id, name)
+                if (
+                    hashlib.sha256(data).hexdigest()
+                    != row.result["output_hashes"][name]
+                ):
+                    raise ValueError("Candidate preview changed since review")
+                verified_outputs[name] = data
+            plan = row.plan
+            script = row.script
+            output_names = list(row.result["outputs"])
+            spec = get_mapping_spec(session, spec_id)
+            client = session.get(Client, spec.client_id) if spec else None
+            if spec is None or client is None or client.organization_id is None:
+                raise ValueError("Mapping organization not found")
+            client_id = client.id
+            organization_id = client.organization_id
+
+        # Stage 2: the execution run, checkpointed so a retry reuses it
+        # instead of creating a duplicate.
+        with get_session() as session:
+            row = _lock_candidate(session, candidate_id, status="publishing")
+            if row is None:
+                raise CandidateSupersededError("Candidate is not awaiting publication")
+            run_id_value = row.result.get("publishing_run_id")
+            if run_id_value:
+                run_id = uuid.UUID(run_id_value)
+            else:
+                run_id = record_execution_run(
+                    client_id, spec_id, organization_id, "local"
+                )
+                row.result = {
+                    **row.result,
+                    "publishing_run_id": str(run_id),
+                    PUBLISH_STAGE: "run_created",
+                }
+                session.add(row)
+                session.commit()
+
+        # Stage 3: write the published artifacts (idempotent overwrites).
+        schema = load_target_schema_from_spec(plan)
+        filenames = generated_artifact_filenames(
+            schema,
+            plan.get("client_name", "client"),
+            plan.get("created_at"),
+        )
+        store.write_artifact(spec_id, filenames["pipeline"], script.encode())
+        store.write_artifact(spec_id, filenames["mapping"], json.dumps(plan).encode())
+        frames: dict[str, pl.DataFrame] = {}
+        for name, data in verified_outputs.items():
+            store.write_artifact(spec_id, name, data)
+            frames[Path(name).stem] = pl.read_csv(io.BytesIO(data))
+        if len(output_names) == 1:
+            store.write_artifact(
+                spec_id, filenames["results"], verified_outputs[output_names[0]]
+            )
+
+        # Stage 4: append-only execution records, written exactly once under
+        # the row lock so a concurrent reconciler cannot double-record.
+        with get_session() as session:
+            row = _lock_candidate(session, candidate_id, status="publishing")
+            if row is None:
+                raise CandidateSupersededError(
+                    "Candidate publication was finalized elsewhere"
+                )
+            if row.result.get(PUBLISH_STAGE) != "records_written":
+                record_validation_results(run_id, row.result["validation"])
+                record_staging_metadata(run_id, frames, plan["columns"], schema)
+                store.write_log(
+                    run_id,
+                    json.dumps(
+                        {"candidate_id": str(candidate_id), "attempt": row.attempt}
+                    ).encode(),
+                )
+                row.result = {**row.result, PUBLISH_STAGE: "records_written"}
+                session.add(row)
+                session.commit()
+
+        # Stage 5: finalize the run and the candidate (both idempotent).
+        finish_execution_run(run_id, ExecutionStatus.SUCCESS)
+        with get_session() as session:
+            row = _lock_candidate(session, candidate_id, status="publishing")
+            if row is None:
+                # Another actor finalized the candidate; the run already
+                # finished successfully, so nothing is left to do.
+                return run_id
+            row.result = {**row.result, PUBLISH_STAGE: "finished"}
+            row.status = "approved"
+            row.approved_by = reviewer
+            row.approved_at = datetime.now(UTC).replace(tzinfo=None)
+            session.add(row)
+            session.commit()
+        return run_id
+    except Exception as exc:
+        # Only unwind when this publication still owns the row. If another
+        # actor finalized it, the run may already be a successful record.
+        if _rollback_publication(candidate_id) and run_id is not None:
+            finish_execution_run(run_id, ExecutionStatus.FAILED, str(exc)[:2000])
+        raise
+
+
+def _rollback_publication(candidate_id: uuid.UUID) -> bool:
+    """Return a stuck publishing candidate to review, clearing checkpoints.
+
+    A candidate whose publication reached the final checkpoint keeps its run
+    id so reconciliation can finish it without creating a duplicate run.
+    Returns True when the row was actually rolled back.
+    """
+    with get_session() as session:
+        row = _lock_candidate(session, candidate_id, status="publishing")
+        if row is None or row.result.get(PUBLISH_STAGE) == "finished":
+            return False
+        row.status = "passed"
+        row.result = {
+            key: value
+            for key, value in row.result.items()
+            if key not in {"publishing_run_id", PUBLISH_STAGE}
+        }
+        session.add(row)
+        session.commit()
+        return True
+
+
 def approve_candidate(
     spec_id: uuid.UUID, candidate_id: uuid.UUID, reviewer: str
 ) -> uuid.UUID:
     """Publish only the exact reviewed code and source snapshot results."""
     with get_session() as session:
-        candidate = session.exec(
+        row = session.exec(
             select(PipelineCandidate)
             .where(
                 PipelineCandidate.id == candidate_id,
@@ -385,90 +628,30 @@ def approve_candidate(
             )
             .with_for_update()
         ).first()
-        if candidate is None or candidate.status != "passed":
+        if row is None or row.status != "passed":
             raise ValueError("Candidate must pass preview and await review")
-        if candidate.result.get("mapping_hash") != _mapping_hash(
-            load_mapping_spec(spec_id)
-        ):
-            raise ValueError(
-                "Mapping changed since preview; create a new mapping version"
-            )
-        if candidate.result.get("script_sha256") != hashlib.sha256(
-            candidate.script.encode()
-        ).hexdigest():
-            raise ValueError("Candidate code changed since preview")
-        spec = get_mapping_spec(session, spec_id)
-        client = session.get(Client, spec.client_id) if spec else None
-        if spec is None or client is None or client.organization_id is None:
-            raise ValueError("Mapping organization not found")
-        client_id = client.id
-        organization_id = client.organization_id
-        candidate.status = "publishing"
-        session.add(candidate)
+        row.status = "publishing"
+        session.add(row)
         session.commit()
-        session.refresh(candidate)
+    return _publish_candidate(candidate_id, reviewer)
 
-    run_id: uuid.UUID | None = None
-    published = False
-    try:
-        run_id = record_execution_run(client_id, spec_id, organization_id, "local")
-        store = get_artifact_store()
-        schema = load_target_schema_from_spec(candidate.plan)
-        filenames = generated_artifact_filenames(
-            schema,
-            candidate.plan.get("client_name", "client"),
-            candidate.plan.get("created_at"),
-        )
-        outputs = candidate.result["outputs"]
-        for name in candidate.result["source_snapshots"]:
-            raw_file_id = name.split("_", 1)[0]
-            data = store.read_artifact(candidate.id, f"source_{name}")
-            if hashlib.sha256(data).hexdigest() != candidate.source_hashes[raw_file_id]:
-                raise ValueError("Candidate source snapshot changed since review")
-        verified_outputs: dict[str, bytes] = {}
-        for name in outputs:
-            data = store.read_artifact(candidate.id, name)
-            if (
-                hashlib.sha256(data).hexdigest()
-                != candidate.result["output_hashes"][name]
-            ):
-                raise ValueError("Candidate preview changed since review")
-            verified_outputs[name] = data
-        store.write_artifact(spec_id, filenames["pipeline"], candidate.script.encode())
-        store.write_artifact(
-            spec_id, filenames["mapping"], json.dumps(candidate.plan).encode()
-        )
-        frames: dict[str, pl.DataFrame] = {}
-        for name, data in verified_outputs.items():
-            store.write_artifact(
-                spec_id,
-                name,
-                data,
+
+def reconcile_candidate(
+    spec_id: uuid.UUID, candidate_id: uuid.UUID, reviewer: str
+) -> uuid.UUID:
+    """Finish or roll back a publication interrupted by a crash or timeout.
+
+    All retained hashes are re-verified before any shared artifact is touched.
+    """
+    with get_session() as session:
+        row = session.exec(
+            select(PipelineCandidate)
+            .where(
+                PipelineCandidate.id == candidate_id,
+                PipelineCandidate.mapping_spec_id == spec_id,
             )
-            frames[Path(name).stem] = pl.read_csv(io.BytesIO(data))
-        if len(outputs) == 1:
-            store.write_artifact(
-                spec_id, filenames["results"], store.read_artifact(spec_id, outputs[0])
-            )
-        record_validation_results(run_id, candidate.result["validation"])
-        record_staging_metadata(run_id, frames, candidate.plan["columns"], schema)
-        store.write_log(
-            run_id,
-            json.dumps(
-                {"candidate_id": str(candidate.id), "attempt": candidate.attempt}
-            ).encode(),
-        )
-        finish_execution_run(run_id, ExecutionStatus.SUCCESS)
-        published = True
-        candidate.status = "approved"
-        candidate.approved_by = reviewer
-        candidate.approved_at = datetime.now(UTC).replace(tzinfo=None)
-        _save_candidate(candidate)
-        return run_id
-    except Exception as exc:
-        if run_id is not None and not published:
-            finish_execution_run(run_id, ExecutionStatus.FAILED, str(exc))
-        if not published:
-            candidate.status = "passed"
-            _save_candidate(candidate)
-        raise
+            .with_for_update()
+        ).first()
+        if row is None or row.status != "publishing":
+            raise ValueError("Candidate is not awaiting publication")
+    return _publish_candidate(candidate_id, reviewer)
