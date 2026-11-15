@@ -173,3 +173,21 @@ variable "candidate_worker_enabled" {
   type        = bool
   default     = false
 }
+
+variable "db_tier" {
+  description = "Cloud SQL machine tier. Shared-core tiers (db-f1-micro, db-g1-small) are flat-rate and meant for development."
+  type        = string
+  default     = "db-custom-1-3840"
+}
+
+variable "db_stop_schedule" {
+  description = "Cloud Scheduler cron to stop the Cloud SQL instance (data preserved, compute billing paused). Empty disables scheduling."
+  type        = string
+  default     = ""
+}
+
+variable "db_start_schedule" {
+  description = "Cloud Scheduler cron to start the Cloud SQL instance. Empty disables scheduling."
+  type        = string
+  default     = ""
+}

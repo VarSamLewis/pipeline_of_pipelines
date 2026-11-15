@@ -14,6 +14,7 @@ locals {
     "secretmanager.googleapis.com",
     "servicenetworking.googleapis.com",
     "sqladmin.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "storage.googleapis.com",
     "aiplatform.googleapis.com",
     "drive.googleapis.com",
@@ -164,6 +165,7 @@ resource "google_project_iam_member" "github_deployer" {
     "roles/servicenetworking.networksAdmin",
     "roles/serviceusage.serviceUsageAdmin",
     "roles/cloudsql.admin",
+    "roles/cloudscheduler.admin",
     "roles/storage.admin",
   ])
 
@@ -250,7 +252,7 @@ resource "google_sql_database_instance" "main" {
 
   settings {
     edition           = "ENTERPRISE"
-    tier              = "db-custom-1-3840"
+    tier              = var.db_tier
     availability_type = var.environment == "prod" ? "REGIONAL" : "ZONAL"
     disk_type         = "PD_SSD"
     disk_size         = 20
@@ -260,6 +262,9 @@ resource "google_sql_database_instance" "main" {
     backup_configuration {
       enabled                        = true
       point_in_time_recovery_enabled = var.environment == "prod"
+      # Automated backups only run while the instance is up; keep the window
+      # inside the scheduled on-hours so nightly stop/start cannot skip them.
+      start_time = "12:00"
     }
 
     ip_configuration {
@@ -286,6 +291,99 @@ resource "google_sql_user" "app" {
   name     = "pipeline"
   instance = google_sql_database_instance.main.name
   password = var.postgres_password
+}
+
+# Scheduled stop/start keeps dev database data intact; only compute billing
+# pauses. Storage and backups continue to be charged while stopped.
+locals {
+  db_scheduler_enabled = var.db_stop_schedule != "" || var.db_start_schedule != ""
+}
+
+resource "google_service_account" "db_scheduler" {
+  count = local.db_scheduler_enabled ? 1 : 0
+
+  account_id   = "${local.name}-db-scheduler"
+  display_name = "${local.name} Cloud SQL stop/start scheduler"
+}
+
+resource "google_project_iam_member" "db_scheduler" {
+  count = local.db_scheduler_enabled ? 1 : 0
+
+  project = var.project_id
+  role    = "roles/cloudsql.admin"
+  member  = "serviceAccount:${google_service_account.db_scheduler[0].email}"
+}
+
+resource "google_cloud_scheduler_job" "db_stop" {
+  count = var.db_stop_schedule != "" ? 1 : 0
+
+  name             = "${local.name}-db-stop"
+  region           = var.region
+  description      = "Stop ${local.name} Cloud SQL instance (compute billing paused, data preserved)"
+  schedule         = var.db_stop_schedule
+  time_zone        = "UTC"
+  attempt_deadline = "320s"
+  paused           = false
+
+  retry_config {
+    retry_count = 2
+  }
+
+  http_target {
+    http_method = "PATCH"
+    uri         = "https://sqladmin.googleapis.com/sql/v1beta4/projects/${var.project_id}/instances/${google_sql_database_instance.main.name}"
+    body        = base64encode(jsonencode({ settings = { activationPolicy = "NEVER" } }))
+
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oauth_token {
+      service_account_email = google_service_account.db_scheduler[0].email
+      scope                 = "https://www.googleapis.com/auth/sqlservice.admin"
+    }
+  }
+
+  depends_on = [
+    google_project_service.required,
+    google_project_iam_member.db_scheduler,
+  ]
+}
+
+resource "google_cloud_scheduler_job" "db_start" {
+  count = var.db_start_schedule != "" ? 1 : 0
+
+  name             = "${local.name}-db-start"
+  region           = var.region
+  description      = "Start ${local.name} Cloud SQL instance"
+  schedule         = var.db_start_schedule
+  time_zone        = "UTC"
+  attempt_deadline = "320s"
+  paused           = false
+
+  retry_config {
+    retry_count = 2
+  }
+
+  http_target {
+    http_method = "PATCH"
+    uri         = "https://sqladmin.googleapis.com/sql/v1beta4/projects/${var.project_id}/instances/${google_sql_database_instance.main.name}"
+    body        = base64encode(jsonencode({ settings = { activationPolicy = "ALWAYS" } }))
+
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oauth_token {
+      service_account_email = google_service_account.db_scheduler[0].email
+      scope                 = "https://www.googleapis.com/auth/sqlservice.admin"
+    }
+  }
+
+  depends_on = [
+    google_project_service.required,
+    google_project_iam_member.db_scheduler,
+  ]
 }
 
 resource "google_secret_manager_secret" "runtime" {
