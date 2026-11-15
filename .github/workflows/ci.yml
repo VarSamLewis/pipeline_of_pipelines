@@ -36,8 +36,10 @@ jobs:
           docker run --rm --entrypoint python pipeline-of-pipelines:ci -c '
           from alembic.config import Config
           from alembic.script import ScriptDirectory
+          import sandbox_worker
           script = ScriptDirectory.from_config(Config("/app/alembic.ini"))
           assert len(script.get_heads()) == 1
+          assert sandbox_worker.app is not None
           '
 
   terraform:

@@ -168,6 +168,12 @@ variable "max_instances" {
   default     = 10
 }
 
+variable "candidate_worker_enabled" {
+  description = "Point the API at the isolated candidate worker. Keep false until the Cloud Run isolation checklist has been verified against a non-production deployment."
+  type        = bool
+  default     = false
+}
+
 variable "db_tier" {
   description = "Cloud SQL machine tier. Shared-core tiers (db-f1-micro, db-g1-small) are flat-rate and meant for development."
   type        = string

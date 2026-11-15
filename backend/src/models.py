@@ -16,6 +16,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from pydantic import BaseModel, Field
+from sqlalchemy import UniqueConstraint
 from sqlmodel import JSON, Column, SQLModel, Text
 from sqlmodel import Field as SQLField
 
@@ -647,6 +648,29 @@ class GeneratedArtifact(SQLModel, table=True):
     generated_at: datetime.datetime = SQLField(
         default_factory=datetime.datetime.utcnow,
     )
+
+
+class PipelineCandidate(SQLModel, table=True):
+    """Immutable code candidate with a bounded, isolated preview attempt."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "mapping_spec_id", "attempt", name="uq_pipelinecandidate_spec_attempt"
+        ),
+    )
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    mapping_spec_id: uuid.UUID = SQLField(foreign_key="mappingspec.id", index=True)
+    attempt: int
+    status: str = SQLField(default="running")
+    mode: str
+    plan: dict[str, Any] = SQLField(default={}, sa_column=Column(JSON))
+    script: str = SQLField(sa_column=Column(Text))
+    source_hashes: dict[str, str] = SQLField(default={}, sa_column=Column(JSON))
+    result: dict[str, Any] = SQLField(default={}, sa_column=Column(JSON))
+    approved_by: str | None = None
+    created_at: datetime.datetime = SQLField(default_factory=datetime.datetime.utcnow)
+    approved_at: datetime.datetime | None = None
 
 
 class ExecutionRun(SQLModel, table=True):

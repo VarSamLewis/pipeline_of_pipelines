@@ -34,6 +34,15 @@ from pathlib import Path
 from typing import Any, cast
 
 from access_control import require_execution_run_access, require_mapping_spec_access
+from adaptive_pipeline import (
+    CandidateSupersededError,
+    WorkerUnavailableError,
+    approve_candidate,
+    execute_candidate,
+    get_candidates,
+    prepare_candidate,
+    reconcile_candidate,
+)
 from auth_service import (
     AUTH_BYPASS_LOCAL,
     CLERK_JWT_TEMPLATE,
@@ -119,6 +128,12 @@ templates = Jinja2Templates(directory=str(get_settings().templates_dir))
 def health() -> dict[str, str]:
     """Return the liveness status used by local and Cloud Run probes."""
     return {"status": "ok"}
+
+
+@app.get("/capabilities")
+def capabilities() -> dict[str, bool]:
+    """Advertise whether code review must precede pipeline publication."""
+    return {"candidate_review": bool(get_settings().candidate_worker_url)}
 
 
 def require_client_id_access(
@@ -1574,6 +1589,8 @@ def generate_artifacts_endpoint(
     user: Any = Depends(require_role("approver")),
 ) -> dict[str, Any]:
     """Generate Polars artifacts from an approved mapping spec."""
+    if get_settings().candidate_worker_url:
+        raise HTTPException(409, "Review an isolated candidate before publishing")
     output_folder, artifacts = generate_artifacts(spec_id)
     return {
         "spec_id": str(spec_id),
@@ -1602,6 +1619,8 @@ def generate_output_folder_endpoint(
     payload = payload or {}
     if "output_folder" in payload:
         raise HTTPException(422, "output_folder is server managed")
+    if get_settings().candidate_worker_url:
+        raise HTTPException(409, "Review an isolated candidate before publishing")
     return create_output_folder(spec_id)
 
 
@@ -1708,12 +1727,110 @@ def execute_pipeline(
     if "output_folder" in payload:
         raise HTTPException(422, "output_folder is server managed")
     try:
+        if get_settings().candidate_worker_url:
+            run_id = execute_candidate(spec_id, str(user.id))
+            candidate = next(
+                item
+                for item in get_candidates(spec_id)
+                if item.result.get("publishing_run_id") == str(run_id)
+            )
+            output_names = candidate.result.get("outputs", [])
+            return {
+                "execution_run_id": str(run_id),
+                "spec_id": str(spec_id),
+                "target_environment": payload.get("target_environment", "local"),
+                "csv_paths": {
+                    Path(name).stem: str(get_artifact_store().folder(spec_id) / name)
+                    for name in output_names
+                },
+            }
         return execute_approved_mapping(
             spec_id,
             target_environment=payload.get("target_environment", "local"),
         )
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (CandidateSupersededError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/mapping-specs/{spec_id}/candidates",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def prepare_pipeline_candidate(
+    spec_id: uuid.UUID, user: Any = Depends(require_role("approver"))
+) -> dict[str, Any]:
+    """Run no more than three isolated previews before requesting code review."""
+    try:
+        candidate = prepare_candidate(spec_id)
+    except WorkerUnavailableError as exc:
+        raise HTTPException(503, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    return {
+        "id": str(candidate.id),
+        "attempt": candidate.attempt,
+        "status": candidate.status,
+    }
+
+
+@app.get(
+    "/mapping-specs/{spec_id}/candidates",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def list_pipeline_candidates(
+    spec_id: uuid.UUID, user: Any = Depends(require_auth)
+) -> list[dict[str, Any]]:
+    """Return candidate code and preview results for authorized human review."""
+    return [
+        {
+            "id": str(item.id),
+            "attempt": item.attempt,
+            "status": item.status,
+            "mode": item.mode,
+            "script": item.script,
+            "source_hashes": item.source_hashes,
+            "result": item.result,
+        }
+        for item in get_candidates(spec_id)
+    ]
+
+
+@app.post(
+    "/mapping-specs/{spec_id}/candidates/{candidate_id}/approve",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def approve_pipeline_candidate(
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    user: Any = Depends(require_role("approver")),
+) -> dict[str, str]:
+    """Explicitly approve reviewed code and publish only its previewed output."""
+    try:
+        run_id = approve_candidate(spec_id, candidate_id, str(user.id))
+    except (CandidateSupersededError, ValueError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    return {"execution_run_id": str(run_id)}
+
+
+@app.post(
+    "/mapping-specs/{spec_id}/candidates/{candidate_id}/reconcile",
+    dependencies=[Depends(require_mapping_spec_access)],
+)
+def reconcile_pipeline_candidate(
+    spec_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    user: Any = Depends(require_role("admin")),
+) -> dict[str, str]:
+    """Finish or roll back a publication interrupted by a crash or timeout."""
+    try:
+        run_id = reconcile_candidate(spec_id, candidate_id, str(user.id))
+    except (CandidateSupersededError, ValueError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    return {"execution_run_id": str(run_id)}
 
 
 @app.get(

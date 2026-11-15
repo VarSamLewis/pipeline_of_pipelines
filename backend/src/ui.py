@@ -19,6 +19,7 @@ from typing import Any
 
 import polars as pl
 from access_control import require_execution_run_access, require_mapping_spec_access
+from adaptive_pipeline import execute_candidate
 from auth_service import require_client_membership, require_role, require_ui_auth
 from config import get_settings
 from db_ops import get_session
@@ -55,6 +56,7 @@ from google_drive import (
 )
 from workflow import (
     PartialProposalError,
+    approve_mapping,
     approve_mapping_and_execute,
     approve_result,
     create_organization,
@@ -725,9 +727,13 @@ def mapping_confirm(
     user: Any = Depends(require_role("admin")),
     _: None = Depends(require_mapping_spec_access),
 ) -> Any:
-    """Approve the reviewed mapping, then generate and execute its pipeline."""
+    """Approve the reviewed mapping and produce its target-schema output."""
     try:
-        run_id = approve_mapping_and_execute(spec_id)
+        if get_settings().candidate_worker_url:
+            approve_mapping(spec_id, reviewer=str(user.id))
+            run_id = execute_candidate(spec_id, str(user.id))
+        else:
+            run_id = approve_mapping_and_execute(spec_id)
     except (RuntimeError, ValueError) as exc:
         return templates.TemplateResponse(
             request,

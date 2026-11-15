@@ -18,6 +18,11 @@ output "cloud_sql_connection_name" {
   value       = google_sql_database_instance.main.connection_name
 }
 
+output "candidate_worker_url" {
+  description = "Public URL of the isolated candidate worker service."
+  value       = google_cloud_run_v2_service.candidate_worker.uri
+}
+
 output "github_workload_identity_provider" {
   description = "GitHub Actions workload identity provider resource name."
   value       = var.github_repository == "" ? null : google_iam_workload_identity_pool_provider.github[0].name

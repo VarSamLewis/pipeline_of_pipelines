@@ -396,6 +396,7 @@ def call_mapping_llm(
     api_key: str | None,
     base_url: str | None,
     temperature: float = 0.2,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible chat completion endpoint to propose mappings."""
     if not api_key:
@@ -407,7 +408,10 @@ def call_mapping_llm(
 
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    options: dict[str, Any] = {}
+    if timeout_seconds is not None:
+        options = {"timeout": timeout_seconds, "max_retries": 0}
+    client = OpenAI(api_key=api_key, base_url=base_url, **options)
     response = client.chat.completions.create(
         model=model,
         messages=cast(Any, messages),
