@@ -473,8 +473,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = google_storage_bucket.artifacts.name
       }
       env {
-        name  = "CANDIDATE_WORKER_URL"
-        value = google_cloud_run_v2_service.candidate_worker.uri
+        name = "CANDIDATE_WORKER_URL"
+        # Empty URL keeps the legacy server-side execution flow; the worker
+        # service exists but stays unwired until deliberately enabled.
+        value = var.candidate_worker_enabled ? google_cloud_run_v2_service.candidate_worker.uri : ""
       }
       env {
         name  = "PIPELINE_EXECUTION_TIMEOUT_SECONDS"

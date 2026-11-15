@@ -418,6 +418,63 @@ def test_candidate_budget_cannot_be_extended_after_three_failures(
     )
 
 
+def test_worker_unavailable_does_not_consume_the_budget(
+    client: TestClient,
+    registered_client: dict,
+    client_with_schema: dict,
+    ingested_batch: dict,
+    mock_openai: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Infrastructural failures release the reserved attempt and retry clean."""
+    import adaptive_pipeline
+
+    _enable_worker(monkeypatch)
+    spec_id = _approved_spec(
+        client, registered_client, client_with_schema, ingested_batch
+    )
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "call_mapping_llm",
+        lambda *_args, **_kwargs: {"mode": "plan", "overrides": []},
+    )
+
+    def unreachable(*_args: object, **_kwargs: object) -> None:
+        import httpx
+
+        request = httpx.Request("POST", "http://127.0.0.1:8001/execute")
+        raise adaptive_pipeline.WorkerUnavailableError(
+            "Candidate worker is unavailable; no attempt was consumed"
+        ) from httpx.ConnectError("refused", request=request)
+
+    monkeypatch.setattr(adaptive_pipeline, "_request_preview", unreachable)
+    response = client.post(f"/mapping-specs/{spec_id}/candidates")
+    assert response.status_code == 503, response.text
+    assert "no attempt was consumed" in response.json()["detail"]
+    assert client.get(f"/mapping-specs/{spec_id}/candidates").json() == []
+
+    # A working preview starts from attempt 1: the outage was free.
+    from sandbox_worker import CandidateResult
+
+    monkeypatch.setattr(
+        adaptive_pipeline,
+        "_request_preview",
+        lambda *_args, **_kwargs: CandidateResult(
+            passed=False, failure_type="ComputeError"
+        ),
+    )
+    response = client.post(f"/mapping-specs/{spec_id}/candidates")
+    assert response.status_code == 200, response.text
+    # The fresh request uses the full budget: the outage consumed none of it.
+    assert response.json()["attempt"] == 3
+    attempts = [
+        item["attempt"]
+        for item in client.get(f"/mapping-specs/{spec_id}/candidates").json()
+    ]
+    assert attempts == [1, 2, 3]
+    assert len(_execution_runs(spec_id)) == 0
+
+
 def test_stale_running_preview_is_reclaimed_and_budgeted(
     client: TestClient,
     registered_client: dict,

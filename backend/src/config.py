@@ -107,7 +107,8 @@ class Settings:
                 raise ValueError("BYOK_ENCRYPTION_KEY is required in production")
             if not values.get("CLERK_SECRET_KEY"):
                 raise ValueError("CLERK_SECRET_KEY is required in production")
-            if not values.get("CANDIDATE_WORKER_URL", "").startswith("https://"):
+            worker_url = values.get("CANDIDATE_WORKER_URL", "")
+            if worker_url and not worker_url.startswith("https://"):
                 raise ValueError("CANDIDATE_WORKER_URL must use HTTPS in production")
 
         return cls(

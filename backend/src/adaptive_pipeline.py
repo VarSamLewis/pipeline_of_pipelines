@@ -56,6 +56,10 @@ class CandidateSupersededError(RuntimeError):
     """The candidate row changed state elsewhere; this writer must stop."""
 
 
+class WorkerUnavailableError(RuntimeError):
+    """The candidate worker could not be reached; attempts are not consumed."""
+
+
 class PreviewExecutionError(ValueError):
     """Keep worker details for human review but send only the type to the model."""
 
@@ -181,15 +185,21 @@ def _request_preview(
         headers["Authorization"] = f"Bearer {token}"
     elif not (get_settings().auth_bypass_local and url.startswith("http://127.0.0.1:")):
         raise RuntimeError("Candidate worker must use authenticated HTTPS")
-    response = httpx.post(
-        f"{url}/execute",
-        json=CandidateRequest(
-            script=script, mapping=mapping, sources=sources
-        ).model_dump(),
-        headers=headers,
-        timeout=48,
-    )
-    response.raise_for_status()
+    try:
+        response = httpx.post(
+            f"{url}/execute",
+            json=CandidateRequest(
+                script=script, mapping=mapping, sources=sources
+            ).model_dump(),
+            headers=headers,
+            timeout=48,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        # Timeouts, connection errors, and worker 5xx are infrastructural.
+        raise WorkerUnavailableError(
+            "Candidate worker is unavailable; no attempt was consumed"
+        ) from exc
     return CandidateResult.model_validate(response.json())
 
 
@@ -271,6 +281,18 @@ def _save_candidate(candidate: PipelineCandidate, expected_status: str) -> None:
         session.add(row)
         session.commit()
         session.refresh(row)
+
+
+def _discard_attempt(candidate: PipelineCandidate) -> None:
+    """Delete a reserved attempt row after an infrastructural failure.
+
+    The preview never ran, so the attempt budget stays intact for a retry.
+    """
+    with get_session() as session:
+        row = _lock_candidate(session, candidate.id, status="running")
+        if row is not None:
+            session.delete(row)
+            session.commit()
 
 
 def _reload_candidate(candidate: PipelineCandidate) -> PipelineCandidate:
@@ -404,6 +426,11 @@ def prepare_candidate(spec_id: uuid.UUID) -> PipelineCandidate:
             # Another actor reclaimed or finalized this attempt; its state is
             # already recorded. Stop without touching the attempt budget.
             return _reload_candidate(candidate)
+        except WorkerUnavailableError:
+            # Infrastructural failure, not a candidate failure: release the
+            # reserved attempt so an outage does not consume the budget.
+            _discard_attempt(candidate)
+            raise
         except Exception as exc:
             try:
                 candidate.status = "failed"

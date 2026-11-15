@@ -167,3 +167,9 @@ variable "max_instances" {
   type        = number
   default     = 10
 }
+
+variable "candidate_worker_enabled" {
+  description = "Point the API at the isolated candidate worker. Keep false until the Cloud Run isolation checklist has been verified against a non-production deployment."
+  type        = bool
+  default     = false
+}

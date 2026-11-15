@@ -36,6 +36,7 @@ from typing import Any, cast
 from access_control import require_execution_run_access, require_mapping_spec_access
 from adaptive_pipeline import (
     CandidateSupersededError,
+    WorkerUnavailableError,
     approve_candidate,
     get_candidates,
     prepare_candidate,
@@ -1745,6 +1746,8 @@ def prepare_pipeline_candidate(
     """Run no more than three isolated previews before requesting code review."""
     try:
         candidate = prepare_candidate(spec_id)
+    except WorkerUnavailableError as exc:
+        raise HTTPException(503, detail=str(exc)) from exc
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
     return {

@@ -755,7 +755,7 @@ def mapping_confirm(
 def prepare_mapping_candidate(
     request: Request,
     spec_id: uuid.UUID,
-    user: Any = Depends(require_role("admin")),
+    user: Any = Depends(require_role("approver")),
     _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Approve the mapping, preview bounded candidates, then show code for review."""
@@ -801,7 +801,7 @@ def approve_mapping_candidate(
     request: Request,
     spec_id: uuid.UUID,
     candidate_id: uuid.UUID,
-    user: Any = Depends(require_role("admin")),
+    user: Any = Depends(require_role("approver")),
     _: None = Depends(require_mapping_spec_access),
 ) -> Any:
     """Publish the exact code and sampled output selected by the reviewer."""
