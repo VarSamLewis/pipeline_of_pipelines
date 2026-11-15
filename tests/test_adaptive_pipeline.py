@@ -57,6 +57,10 @@ def _approved_spec(
         ).status_code
         == 200
     )
+    mapping_page = client.get(f"/mapping/{spec_id}")
+    assert mapping_page.status_code == 200, mapping_page.text
+    assert "Run mapping" in mapping_page.text
+    assert "Prepare candidate" not in mapping_page.text
     return spec_id
 
 
@@ -199,7 +203,7 @@ destination = Path(os.sys.argv[os.sys.argv.index('--output-folder') + 1])
     assert failure.json()["failure_type"] == "KeyError"
 
 
-def test_three_candidate_previews_then_explicit_review(
+def test_three_candidate_previews_publish_transparently(
     client: TestClient,
     registered_client: dict,
     client_with_schema: dict,
@@ -290,16 +294,6 @@ def test_three_candidate_previews_then_explicit_review(
     assert client.post(f"/mapping-specs/{spec_id}/candidates").status_code == 422
     assert calls == 3
 
-    review_page = client.get(f"/mapping/{spec_id}/candidate/{response.json()['id']}")
-    assert review_page.status_code == 200, review_page.text
-    assert "Review candidate 3 of 3" in review_page.text
-    assert "Download records.csv preview" in review_page.text
-    preview_csv = client.get(
-        f"/mapping/{spec_id}/candidate/{response.json()['id']}/outputs/records.csv"
-    )
-    assert preview_csv.status_code == 200
-    assert "Alice" in preview_csv.text
-
     from dependencies import get_artifact_store
 
     store = get_artifact_store()
@@ -331,14 +325,12 @@ def test_three_candidate_previews_then_explicit_review(
         "get_settings",
         lambda: replace(get_settings(), candidate_worker_url="http://127.0.0.1:8001"),
     )
-    for path in ("generate", "execute", "output-folder"):
+    for path in ("generate", "output-folder"):
         assert client.post(f"/mapping-specs/{spec_id}/{path}").status_code == 409
 
-    approval = client.post(
-        f"/mapping-specs/{spec_id}/candidates/{response.json()['id']}/approve"
-    )
-    assert approval.status_code == 200, approval.text
-    run_id = approval.json()["execution_run_id"]
+    execution = client.post(f"/mapping-specs/{spec_id}/execute")
+    assert execution.status_code == 200, execution.text
+    run_id = execution.json()["execution_run_id"]
     assert client.get(f"/execution-runs/{run_id}").json()["status"] == "success"
     assert "Alice" in client.get(f"/output-folders/{spec_id}/results.csv").text
     assert (

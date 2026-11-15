@@ -250,11 +250,6 @@ def run(api: Api, path: Path, reviewer: str, output_dir: Path) -> dict[str, Any]
     remote = api.json("GET", f"/mapping-specs/{spec_id}")
     if remote["status"] != "proposed":
         raise ValueError("Mapping must be proposed and reviewed before running")
-    if api.json("GET", "/capabilities").get("candidate_review"):
-        raise ValueError(
-            "This deployment requires code review before execution. "
-            "Open the mapping in the web UI to prepare and approve a candidate."
-        )
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"Output directory is not empty: {output_dir}")
     if not reviewer.strip():

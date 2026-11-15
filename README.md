@@ -166,12 +166,12 @@ The API is then available at `http://127.0.0.1:8000`. Visit
    **Deployed reviewable execution:** Terraform configures a separate Cloud Run
    candidate worker with no app secrets, no project permissions, denied outbound
    traffic, and one container per preview. Once the mapping is approved, use
-   the mapping review page's **Prepare candidate for review** action (or
-   `POST /mapping-specs/<spec-id>/candidates`), then inspect the code, input
-   hashes and preview results at the candidate page (or `GET` the candidates
-   endpoint). Explicitly approve the passing candidate to publish its exact
-   previewed results. Failed candidates are returned to the model as a failure
-   category and the system runs **at most three** candidate previews per mapping
+   the normal **Run mapping** action (or `POST /mapping-specs/<spec-id>/execute`)
+   transparently runs the bounded candidate loop and publishes the first valid
+   output. Candidate code, input hashes, validation results, preview outputs,
+   and the publishing identity are retained as audit artifacts; they do not add
+   another required UI step. Failed candidates are returned to the model as a
+   failure category and the system runs **at most three** candidate previews per mapping
    version, including failed attempts. Editing after a preview requires a new
    mapping version. Code, complete source snapshots, and their hashes are retained
    for review and reproducibility. A candidate
@@ -191,7 +191,7 @@ The API is then available at `http://127.0.0.1:8000`. Visit
    freeing the mapping version without losing an attempt slot. A publication
    interrupted between approval and completion checkpoints its progress on the
    candidate row; an operator re-verifies every retained hash and resumes it
-   from the candidate page (or `POST
+   through `POST
    /mapping-specs/<spec-id>/candidates/<candidate-id>/reconcile`), which either
    finishes publication or rolls the candidate back for review without
    duplicating execution records.

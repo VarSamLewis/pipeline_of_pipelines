@@ -38,6 +38,7 @@ from adaptive_pipeline import (
     CandidateSupersededError,
     WorkerUnavailableError,
     approve_candidate,
+    execute_candidate,
     get_candidates,
     prepare_candidate,
     reconcile_candidate,
@@ -1725,13 +1726,32 @@ def execute_pipeline(
     payload = payload or {}
     if "output_folder" in payload:
         raise HTTPException(422, "output_folder is server managed")
-    if get_settings().candidate_worker_url:
-        raise HTTPException(409, "Review an isolated candidate before publishing")
     try:
+        if get_settings().candidate_worker_url:
+            run_id = execute_candidate(spec_id, str(user.id))
+            candidate = next(
+                item
+                for item in get_candidates(spec_id)
+                if item.result.get("publishing_run_id") == str(run_id)
+            )
+            output_names = candidate.result.get("outputs", [])
+            return {
+                "execution_run_id": str(run_id),
+                "spec_id": str(spec_id),
+                "target_environment": payload.get("target_environment", "local"),
+                "csv_paths": {
+                    Path(name).stem: str(get_artifact_store().folder(spec_id) / name)
+                    for name in output_names
+                },
+            }
         return execute_approved_mapping(
             spec_id,
             target_environment=payload.get("target_environment", "local"),
         )
+    except WorkerUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (CandidateSupersededError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -663,6 +663,24 @@ def approve_candidate(
     return _publish_candidate(candidate_id, reviewer)
 
 
+def execute_candidate(spec_id: uuid.UUID, reviewer: str) -> uuid.UUID:
+    """Produce and publish a validated candidate without changing the user flow.
+
+    Candidate code, snapshots, hashes, and validation remain retained as audit
+    records.  The person who approved the mapping does not need to operate a
+    separate code-review screen to receive their target-schema output.
+    """
+    candidates = get_candidates(spec_id)
+    pending = next((item for item in candidates if item.status == "passed"), None)
+    if pending is None:
+        pending = prepare_candidate(spec_id)
+    if pending.status != "passed":
+        raise ValueError(
+            "Unable to produce a valid target-schema output after three attempts"
+        )
+    return approve_candidate(spec_id, pending.id, reviewer)
+
+
 def reconcile_candidate(
     spec_id: uuid.UUID, candidate_id: uuid.UUID, reviewer: str
 ) -> uuid.UUID:
